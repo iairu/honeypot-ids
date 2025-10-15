@@ -11,7 +11,7 @@
 
 **First time setup**
 
-1. Clone repo: `git clone https://github.com/iairu/dp.git`
+1. Clone repo: `git clone https://github.com/iairu/dp.git`, optionally setup bashrc (`cp .bashrc ~`)
 2. `cd openstack-work`
 3. Force Windows Git to not be CRLF but LF for Docker Shell Scripts to work: `echo "core.autocrlf=false" >> .git/config ; git rm --cached -r . ; git reset --hard`
 4. Go to a non-production branch where you will develop: `git checkout -b dev`
@@ -20,17 +20,19 @@
 7. Start the service chain: `docker compose up -d` in the root directory (`-d` for detached mode)
 8. Wait for `nginx` service to be up and running (last in chain)
 9. Work within container if applicable: `docker exec -it twin-servicename-1 /bin/bash`
+10. To access using browser: add openstack.dev to /etc/hosts if not already present for local development
+`grep -q "openstack.dev" /etc/hosts || echo "CHANGE_TO_SERVER_IP openstack.dev" | sudo tee -a /etc/hosts`
 
 ---
 
 Often used: **Restart** after minor config changes, inconsistencies or computer reboot:
 - Turn off: `docker compose down`
 - Stop and remove all remaining Docker containers and networks prefixed with "twin-": `docker stop $(docker ps -a -q -f name=twin-) ; docker rm -f $(docker ps -a -q -f name=twin-) ; docker network rm $(docker network ls -q -f name=twin_)`
-- Turn on again: `docker compose --profile dev up -d`
+- Turn on again: `docker compose up -d`
 
 **Here it is in one line** (you may be copy-pasting this a lot, recommended to add to .bashrc as an alias):
 ```bash
-docker compose down ; docker stop $(docker ps -a -q -f name=twin-) ; docker rm -f $(docker ps -a -q -f name=twin-) ; docker network rm $(docker network ls -q -f name=twin_) ; docker compose --profile dev up -d
+docker compose down ; docker stop $(docker ps -a -q -f name=twin-) ; docker rm -f $(docker ps -a -q -f name=twin-) ; docker network rm $(docker network ls -q -f name=twin_) ; docker compose up -d
 ```
 
 ---
@@ -39,11 +41,11 @@ Also often used: **Rebuild** after major changes:
 - Turn off: `docker compose down`
 - Stop and remove all remaining Docker containers and networks prefixed with "twin-": `docker stop $(docker ps -a -q -f name=twin-) ; docker rm -f $(docker ps -a -q -f name=twin-) ; docker network rm $(docker network ls -q -f name=twin_)`
 - Important step - Rebuild without cache: `docker compose build --no-cache`
-- Turn on: `docker compose --profile dev up -d`
+- Turn on: `docker compose up -d`
 
 **Here it is in one line** (you may be copy-pasting this a lot, recommended to add to .bashrc as an alias):
 ```bash
-docker compose down ; docker stop $(docker ps -a -q -f name=twin-) ; docker rm -f $(docker ps -a -q -f name=twin-) ; docker network rm $(docker network ls -q -f name=twin_) ; docker compose build --no-cache ; docker compose --profile dev up -d
+docker compose down ; docker stop $(docker ps -a -q -f name=twin-) ; docker rm -f $(docker ps -a -q -f name=twin-) ; docker network rm $(docker network ls -q -f name=twin_) ; docker compose build --no-cache ; docker compose up -d
 ```
 
 Also useful if you're only changing **nginx** configuration (`nginx.template.conf`) locally may be this selective restart:
@@ -56,7 +58,7 @@ docker compose -p twin stop nginx_reverse_proxy && docker compose -p twin build 
 If **broken**: Purge all containers and images (**WARNING**: this will remove **!!!ALL!!!** containers on your machine):
 - Stop and remove Docker containers then remove Docker images: `docker stop $(docker ps -a -q) ; docker rm -f $(docker ps -a -q) ; docker rmi $(docker images -q)`
 - Afterwards remove all Docker volumes and Docker networks: `docker system prune -a --volumes --force`
-- Start again from docker-compose.yml like fresh install: `docker compose --profile dev up -d`
+- Start again from docker-compose.yml like fresh install: `docker compose up -d`
 
 For debugging:
 - `docker container ls -a` to get container names and ids
