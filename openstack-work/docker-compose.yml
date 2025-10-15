@@ -1,69 +1,31 @@
 name: twin
 services:
   production_eshop:
-    image: prestashop/prestashop:8.0
+    image: wordpress:6.8.3-php8.1
     depends_on:
       - production_database
     environment:
-      - DB_SERVER=production_database
-      - DB_NAME=production_database
-      - DB_USER=production_user
-      - DB_PASSWD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
-      - PS_INSTALL_AUTO=1
-      - PS_DOMAIN=openstack.local
-      - PS_LANGUAGE=en
-      - PS_COUNTRY=US
-      - PS_FOLDER_ADMIN=admin123
-      - PS_FOLDER_INSTALL=install123
+      - WORDPRESS_DB_HOST=production_database:3306
+      - WORDPRESS_DB_NAME=production_database
+      - WORDPRESS_DB_USER=production_user
+      - WORDPRESS_DB_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
     volumes:
-      - production_prestashop80__eshop_data:/var/www/html
+      - ./production_eshop_files:/var/www/html
     networks:
       - production_network
 
   production_database:
     image: mysql:5.7
+    command: bash -c "rm -f /var/lib/mysql/placeholder && docker-entrypoint.sh mysqld"
     environment:
       - MYSQL_DATABASE=production_database
       - MYSQL_USER=production_user
       - MYSQL_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
       - MYSQL_ROOT_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
     volumes:
-      - production_mysql57__database_data:/var/lib/mysql
+      - ./production_database_data:/var/lib/mysql
     networks:
       - production_network
-
-  honeypot_eshop:
-    image: prestashop/prestashop:8.0
-    depends_on:
-      - honeypot_database
-    environment:
-      - DB_SERVER=honeypot_database
-      - DB_NAME=honeypot_database
-      - DB_USER=honeypot_user
-      - DB_PASSWD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
-      - PS_INSTALL_AUTO=1
-      - PS_DOMAIN=openstack.local
-      - PS_LANGUAGE=en
-      - PS_COUNTRY=US
-      - PS_FOLDER_ADMIN=admin123
-      - PS_FOLDER_INSTALL=install123
-    volumes:
-      - honeypot_prestashop80__eshop_data:/var/www/html
-    networks:
-      - honeypot_network
-
-  honeypot_database:
-    image: mysql:5.7
-    environment:
-      - MYSQL_DATABASE=honeypot_database
-      - MYSQL_USER=honeypot_user
-      - MYSQL_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
-      - MYSQL_ROOT_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
-    volumes:
-      - honeypot_mysql57__database_data:/var/lib/mysql
-    networks:
-      - honeypot_network
-
 
   reverse_proxy:
     image: nginx:1.27.2-alpine3.20-slim
@@ -72,10 +34,9 @@ services:
       - "8080:8080" # Temporary for testing honeypot access
       # - "443:443"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./reverse_proxy_configuration/nginx.conf:/etc/nginx/nginx.conf
     depends_on:
       - production_eshop
-      - honeypot_eshop
     networks:
       - production_network
       - honeypot_network
@@ -86,8 +47,8 @@ networks:
   honeypot_network:
     driver: bridge
 
-volumes:
-  production_prestashop80__eshop_data:
-  production_mysql57__database_data:
-  honeypot_prestashop80__eshop_data:
-  honeypot_mysql57__database_data:
+# volumes:
+#   production_wordpress__eshop_data:
+#   production_mysql57__database_data:
+#   honeypot_wordpress__eshop_data:
+#   honeypot_mysql57__database_data:
