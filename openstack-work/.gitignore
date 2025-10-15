@@ -2,3 +2,4 @@ production_database_data/*
 !production_database_data/placeholder
 production_eshop_files/*
 !production_eshop_files/placeholder
+*_diff*
