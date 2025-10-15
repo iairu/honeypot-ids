@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  production_eshop:
+    image: prestashop/prestashop:9.0.1
+    depends_on:
+      - production_database
+    environment:
+      - DB_SERVER=db
+      - DB_NAME=production_database
+      - DB_USER=production_user
+      - DB_PASSWD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
+      - PS_INSTALL_AUTO=1
+      - PS_DOMAIN=localhost:8080
+      - PS_LANGUAGE=en
+      - PS_COUNTRY=US
+      - PS_FOLDER_ADMIN=admin123
+      - PS_FOLDER_INSTALL=install123
+    volumes:
+      - production_eshop_data:/var/www/html
+    networks:
+      - production_network
+
+  production_database:
+    image: postgres:16.10-alpine
+    environment:
+      - POSTGRES_DB=production_database
+      - POSTGRES_USER=production_user
+      - POSTGRES_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
+    volumes:
+      - production_database_data:/var/lib/postgresql/data
+    networks:
+      - production_network
+
+  reverse_proxy:
+    image: nginx:1.27.2-alpine3.20-slim
+    ports:
+      - "80:80"
+      # - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - production_eshop
+    networks:
+      - production_network
+
+networks:
+  production_network:
+    driver: bridge
+
+volumes:
+  production_eshop_data:
+  production_database_data:
