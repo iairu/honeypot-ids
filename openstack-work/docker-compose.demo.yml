@@ -1,0 +1,125 @@
+name: demo-resource-usage
+services:
+  # Production WordPress database
+  production_database:
+    image: mysql:5.7
+    environment:
+      - MYSQL_DATABASE=production_database
+      - MYSQL_USER=production_user
+      - MYSQL_PASSWORD=demo_password
+      - MYSQL_ROOT_PASSWORD=demo_password
+    ports:
+      - "3306:3306"
+    networks:
+      - demo_network
+
+  # Production WordPress instance
+  production_eshop:
+    image: wordpress:6.8.3-php8.1
+    environment:
+      - WORDPRESS_DB_HOST=production_database:3306
+      - WORDPRESS_DB_NAME=production_database
+      - WORDPRESS_DB_USER=production_user
+      - WORDPRESS_DB_PASSWORD=demo_password
+    ports:
+      - "8080:80"
+    networks:
+      - demo_network
+
+  # Honeypot WordPress database
+  honeypot_database:
+    image: mysql:5.7
+    environment:
+      - MYSQL_DATABASE=honeypot_database
+      - MYSQL_USER=honeypot_user
+      - MYSQL_PASSWORD=demo_password
+      - MYSQL_ROOT_PASSWORD=demo_password
+    ports:
+      - "3307:3306"
+    networks:
+      - demo_network
+
+  # Honeypot WordPress instance
+  honeypot_eshop:
+    image: wordpress:6.8.3-php8.1
+    environment:
+      - WORDPRESS_DB_HOST=honeypot_database:3306
+      - WORDPRESS_DB_NAME=honeypot_database
+      - WORDPRESS_DB_USER=honeypot_user
+      - WORDPRESS_DB_PASSWORD=demo_password
+    ports:
+      - "8081:80"
+    networks:
+      - demo_network
+
+  # Redis for session management
+  session_store:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - demo_network
+
+  # Session management API service
+  session_manager:
+    image: node:18-alpine
+    command: sh -c "sleep infinity"
+    ports:
+      - "3001:3001"
+    networks:
+      - demo_network
+
+  # Snort IDS for traffic analysis
+  snort_ids:
+    image: ciscosecurity/snort3:latest
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    ports:
+      - "514:514/udp"
+    networks:
+      - demo_network
+
+  # Reverse proxy
+  reverse_proxy:
+    image: nginx:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - demo_network
+
+  # Traffic mirroring
+  traffic_mirror:
+    image: alpine/socat:latest
+    command: sh -c "sleep infinity"
+    ports:
+      - "9999:9999"
+    networks:
+      - demo_network
+
+  # Log aggregator
+  log_aggregator:
+    image: fluent/fluent-bit:latest
+    ports:
+      - "24224:24224"
+    networks:
+      - demo_network
+
+  # Threat intelligence updater
+  threat_intel:
+    image: python:3.11-alpine
+    command: sh -c "sleep infinity"
+    networks:
+      - demo_network
+
+  # File synchronization service
+  file_sync:
+    image: alpine:latest
+    command: sh -c "sleep infinity"
+    networks:
+      - demo_network
+
+networks:
+  demo_network:
+    driver: bridge
