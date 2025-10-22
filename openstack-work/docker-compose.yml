@@ -1,5 +1,6 @@
-name: twin
+name: honeypot-ids-system
 services:
+  # Production WordPress instance (clean, secure)
   production_eshop:
     image: wordpress:6.8.3-php8.1
     depends_on:
@@ -13,6 +14,7 @@ services:
       - ./production_eshop_files:/var/www/html
     networks:
       - production_network
+      - monitoring_network
 
   production_database:
     image: mysql:5.7
@@ -27,28 +29,192 @@ services:
     networks:
       - production_network
 
-  reverse_proxy:
-    image: nginx:1.27.2-alpine3.20-slim
-    ports:
-      - "80:80" # Temporary for testing production access
-      - "8080:8080" # Temporary for testing honeypot access
-      # - "443:443"
+  # Honeypot WordPress instance (vulnerable)
+  honeypot_eshop:
+    image: wordpress:6.8.3-php8.1
+    depends_on:
+      - honeypot_database
+    environment:
+      - WORDPRESS_DB_HOST=honeypot_database:3306
+      - WORDPRESS_DB_NAME=honeypot_database
+      - WORDPRESS_DB_USER=honeypot_user
+      - WORDPRESS_DB_PASSWORD=honeypot_db_password_vulnerable_instance
     volumes:
-      - ./reverse_proxy_configuration/nginx.conf:/etc/nginx/nginx.conf
+      - ./honeypot_eshop_files:/var/www/html
+    networks:
+      - honeypot_network
+      - monitoring_network
+
+  honeypot_database:
+    image: mysql:5.7
+    command: bash -c "rm -f /var/lib/mysql/placeholder && docker-entrypoint.sh mysqld"
+    environment:
+      - MYSQL_DATABASE=honeypot_database
+      - MYSQL_USER=honeypot_user
+      - MYSQL_PASSWORD=honeypot_db_password_vulnerable_instance
+      - MYSQL_ROOT_PASSWORD=honeypot_db_password_vulnerable_instance
+    volumes:
+      - ./honeypot_database_data:/var/lib/mysql
+    networks:
+      - honeypot_network
+
+  # Snort IDS for traffic analysis
+  snort_ids:
+    image: ciscosecurity/snort3:latest
+    volumes:
+      - ./snort_config:/usr/local/etc/snort
+      - ./snort_logs:/var/log/snort
+      - ./snort_rules:/usr/local/etc/rules/local.rules
+    environment:
+      - SNORT_INTERFACE=eth0
+    networks:
+      - monitoring_network
+      - ids_network
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    command: >
+      sh -c "
+      snort -c /usr/local/etc/snort/snort.conf 
+      -i eth0 
+      -A alert_fast 
+      -l /var/log/snort 
+      -k none 
+      -D
+      "
+
+  # Redis for session management and threat intelligence
+  session_store:
+    image: redis:7-alpine
+    volumes:
+      - ./redis_data:/data
+      - ./redis_config:/usr/local/etc/redis
+    networks:
+      - session_network
+    command: redis-server --appendonly yes --requirepass session_redis_password
+
+  # Session management API service
+  session_manager:
+    build:
+      context: ./session_manager
+      dockerfile: Dockerfile
+    depends_on:
+      - session_store
+    environment:
+      - REDIS_HOST=session_store
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=session_redis_password
+      - SNORT_LOG_PATH=/var/log/snort
+    volumes:
+      - ./snort_logs:/var/log/snort:ro
+      - ./session_manager:/app
+    networks:
+      - session_network
+      - monitoring_network
+    ports:
+      - "3001:3001"
+
+  # Enhanced reverse proxy with Lua support
+  reverse_proxy:
+    build:
+      context: ./reverse_proxy_enhanced
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./reverse_proxy_configuration:/etc/nginx
+      - ./ssl_certificates:/etc/ssl/certs
     depends_on:
       - production_eshop
+      - honeypot_eshop
+      - session_manager
     networks:
       - production_network
       - honeypot_network
+      - session_network
+      - monitoring_network
+      - ids_network
+    environment:
+      - SESSION_MANAGER_URL=http://session_manager:3001
+
+  # Traffic mirroring for IDS analysis
+  traffic_mirror:
+    image: alpine/socat:latest
+    depends_on:
+      - reverse_proxy
+      - snort_ids
+    networks:
+      - monitoring_network
+      - ids_network
+    command: >
+      sh -c "
+      socat -d -d UDP-LISTEN:514,reuseaddr,fork UDP:snort_ids:514 &
+      socat -d -d TCP-LISTEN:9999,reuseaddr,fork TCP:snort_ids:9999 &
+      wait
+      "
+
+  # Log aggregator for centralized logging
+  log_aggregator:
+    image: fluent/fluent-bit:latest
+    volumes:
+      - ./fluent_bit_config:/fluent-bit/etc
+      - ./snort_logs:/var/log/snort:ro
+      - ./nginx_logs:/var/log/nginx:ro
+    networks:
+      - monitoring_network
+    depends_on:
+      - snort_ids
+      - reverse_proxy
+
+  # Threat intelligence updater
+  threat_intel:
+    build:
+      context: ./threat_intelligence
+      dockerfile: Dockerfile
+    depends_on:
+      - session_store
+    environment:
+      - REDIS_HOST=session_store
+      - REDIS_PASSWORD=session_redis_password
+      - UPDATE_INTERVAL=3600
+    volumes:
+      - ./threat_intel_data:/data
+    networks:
+      - session_network
+    restart: unless-stopped
 
 networks:
   production_network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
   honeypot_network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+  monitoring_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/24
+  session_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.23.0.0/24
+  ids_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.24.0.0/24
 
-# volumes:
-#   production_wordpress__eshop_data:
-#   production_mysql57__database_data:
-#   honeypot_wordpress__eshop_data:
-#   honeypot_mysql57__database_data:
+volumes:
+  production_database_data:
+  honeypot_database_data:
+  redis_data:
+  snort_logs:
+  threat_intel_data:
+  nginx_logs:

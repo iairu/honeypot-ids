@@ -1,0 +1,221 @@
+-- init_worker.lua - Per-worker initialization for Nginx Lua
+-- This module initializes worker-specific components and background tasks
+
+local cjson = require "cjson"
+local http = require "resty.http"
+
+-- Worker-specific initialization
+local function init_worker()
+    -- Initialize random seed for this worker
+    math.randomseed(ngx.time() + ngx.worker.pid())
+    
+    -- Set up periodic tasks only in worker 0 to avoid duplication
+    if ngx.worker.id() == 0 then
+        -- Start threat intelligence updater
+        local function update_threat_intel()
+            local red, err = _G.redis_pool.get_connection()
+            if not red then
+                ngx.log(ngx.ERR, "Failed to connect to Redis for threat intel update: ", err)
+                return
+            end
+            
+            -- Update IP reputation data
+            local httpc = http.new()
+            local res, err = httpc:request_uri("https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt", {
+                method = "GET",
+                ssl_verify = false,
+                timeout = 5000
+            })
+            
+            if res and res.status == 200 then
+                local threat_ips = {}
+                for line in res.body:gmatch("[^\r\n]+") do
+                    if not line:match("^#") and line:match("%d+%.%d+%.%d+%.%d+") then
+                        local ip = line:match("(%d+%.%d+%.%d+%.%d+)")
+                        if ip then
+                            threat_ips[ip] = {
+                                score = 80,
+                                reason = "ipsum_feed",
+                                updated = ngx.time()
+                            }
+                        end
+                    end
+                end
+                
+                -- Store in Redis
+                red:set("threat_ips", cjson.encode(threat_ips))
+                ngx.log(ngx.INFO, "Updated threat intelligence with ", table.getn(threat_ips), " IPs")
+            end
+            
+            _G.redis_pool.close_connection(red)
+        end
+        
+        -- Start session cleanup task
+        local function cleanup_expired_sessions()
+            local red, err = _G.redis_pool.get_connection()
+            if not red then
+                ngx.log(ngx.ERR, "Failed to connect to Redis for session cleanup: ", err)
+                return
+            end
+            
+            local current_time = ngx.time()
+            local sessions_dict = ngx.shared.sessions
+            local keys = sessions_dict:get_keys(1000)
+            local cleaned = 0
+            
+            for _, key in ipairs(keys) do
+                local session_data = sessions_dict:get(key)
+                if session_data then
+                    local session = cjson.decode(session_data)
+                    if session.last_activity and (current_time - session.last_activity) > _G.config.session.max_idle_time then
+                        sessions_dict:delete(key)
+                        red:del("session:" .. key)
+                        cleaned = cleaned + 1
+                    end
+                end
+            end
+            
+            if cleaned > 0 then
+                ngx.log(ngx.INFO, "Cleaned up ", cleaned, " expired sessions")
+            end
+            
+            _G.redis_pool.close_connection(red)
+        end
+        
+        -- Start Snort log parser
+        local function parse_snort_logs()
+            local red, err = _G.redis_pool.get_connection()
+            if not red then
+                ngx.log(ngx.ERR, "Failed to connect to Redis for Snort log parsing: ", err)
+                return
+            end
+            
+            -- Parse alert_fast file for new alerts
+            local alert_file = "/var/log/snort/alert_fast"
+            local file = io.open(alert_file, "r")
+            if file then
+                local last_position = red:get("snort_log_position") or 0
+                file:seek("set", tonumber(last_position))
+                
+                local alerts_processed = 0
+                for line in file:lines() do
+                    -- Parse Snort alert format
+                    local timestamp, priority, classification, src_ip, src_port, dst_ip, dst_port = 
+                        line:match("(%d+/%d+%-%d+:%d+:%d+%.%d+)%s+%[%*%*%]%s+%[(%d+):(%d+):%d+%]%s+.-%s+%[Classification:%s+([^%]]+)%].-(%d+%.%d+%.%d+%.%d+):(%d+)%s+%-%>%s+(%d+%.%d+%.%d+%.%d+):(%d+)")
+                    
+                    if src_ip then
+                        local alert_data = {
+                            timestamp = timestamp,
+                            priority = tonumber(priority),
+                            classification = classification,
+                            src_ip = src_ip,
+                            src_port = tonumber(src_port),
+                            dst_ip = dst_ip,
+                            dst_port = tonumber(dst_port),
+                            processed_time = ngx.time()
+                        }
+                        
+                        -- Store alert in Redis
+                        red:lpush("snort_alerts", cjson.encode(alert_data))
+                        red:ltrim("snort_alerts", 0, 1000) -- Keep only last 1000 alerts
+                        
+                        -- Update threat intelligence
+                        local current_intel = red:get("threat_ips")
+                        local threat_ips = {}
+                        if current_intel then
+                            threat_ips = cjson.decode(current_intel)
+                        end
+                        
+                        threat_ips[src_ip] = {
+                            score = math.min((threat_ips[src_ip] and threat_ips[src_ip].score or 0) + 20, 100),
+                            reason = "snort_alert_" .. classification,
+                            updated = ngx.time(),
+                            alert_count = (threat_ips[src_ip] and threat_ips[src_ip].alert_count or 0) + 1
+                        }
+                        
+                        red:set("threat_ips", cjson.encode(threat_ips))
+                        alerts_processed = alerts_processed + 1
+                        
+                        ngx.log(ngx.WARN, "Snort alert processed: ", src_ip, " -> ", classification)
+                    end
+                end
+                
+                -- Update file position
+                red:set("snort_log_position", file:seek())
+                file:close()
+                
+                if alerts_processed > 0 then
+                    ngx.log(ngx.INFO, "Processed ", alerts_processed, " Snort alerts")
+                end
+            end
+            
+            _G.redis_pool.close_connection(red)
+        end
+        
+        -- Start rate limit cleanup
+        local function cleanup_rate_limits()
+            local rate_limit_dict = ngx.shared.rate_limit
+            local current_time = ngx.time()
+            local keys = rate_limit_dict:get_keys(1000)
+            local cleaned = 0
+            
+            for _, key in ipairs(keys) do
+                local data = rate_limit_dict:get(key)
+                if data then
+                    local rate_data = cjson.decode(data)
+                    if rate_data.expires and current_time > rate_data.expires then
+                        rate_limit_dict:delete(key)
+                        cleaned = cleaned + 1
+                    end
+                end
+            end
+            
+            if cleaned > 0 then
+                ngx.log(ngx.DEBUG, "Cleaned up ", cleaned, " expired rate limit entries")
+            end
+        end
+        
+        -- Schedule periodic tasks
+        local ok, err = ngx.timer.every(300, function() -- Every 5 minutes
+            pcall(update_threat_intel)
+        end)
+        if not ok then
+            ngx.log(ngx.ERR, "Failed to create threat intel timer: ", err)
+        end
+        
+        local ok, err = ngx.timer.every(_G.config.session.cleanup_interval, function()
+            pcall(cleanup_expired_sessions)
+        end)
+        if not ok then
+            ngx.log(ngx.ERR, "Failed to create session cleanup timer: ", err)
+        end
+        
+        local ok, err = ngx.timer.every(30, function() -- Every 30 seconds
+            pcall(parse_snort_logs)
+        end)
+        if not ok then
+            ngx.log(ngx.ERR, "Failed to create Snort log parser timer: ", err)
+        end
+        
+        local ok, err = ngx.timer.every(60, function() -- Every minute
+            pcall(cleanup_rate_limits)
+        end)
+        if not ok then
+            ngx.log(ngx.ERR, "Failed to create rate limit cleanup timer: ", err)
+        end
+        
+        ngx.log(ngx.INFO, "Background tasks initialized in worker 0")
+    end
+    
+    -- Initialize worker-specific data
+    local worker_info = {
+        worker_id = ngx.worker.id(),
+        worker_pid = ngx.worker.pid(),
+        start_time = ngx.time()
+    }
+    
+    ngx.log(ngx.INFO, "Worker ", worker_info.worker_id, " (PID: ", worker_info.worker_pid, ") initialized")
+end
+
+-- Execute worker initialization
+init_worker()
