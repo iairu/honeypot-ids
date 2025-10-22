@@ -1,4 +1,5 @@
 name: demo-resource-usage
+# docker compose -f docker-compose.demo.yml up
 services:
   # Production WordPress database
   production_database:
@@ -22,7 +23,7 @@ services:
       - WORDPRESS_DB_USER=production_user
       - WORDPRESS_DB_PASSWORD=demo_password
     ports:
-      - "8080:80"
+      - "8081:80"
     networks:
       - demo_network
 
@@ -48,13 +49,14 @@ services:
       - WORDPRESS_DB_USER=honeypot_user
       - WORDPRESS_DB_PASSWORD=demo_password
     ports:
-      - "8081:80"
+      - "8082:80"
     networks:
       - demo_network
 
   # Redis for session management
   session_store:
     image: redis:7-alpine
+    command: redis-server --loglevel verbose
     ports:
       - "6379:6379"
     networks:
@@ -63,15 +65,16 @@ services:
   # Session management API service
   session_manager:
     image: node:18-alpine
-    command: sh -c "sleep infinity"
+    working_dir: /app
+    command: sh -c "echo 'const http = require(\"http\"); const server = http.createServer((req, res) => { console.log(\"Request received:\", req.method, req.url); res.writeHead(200); res.end(\"Session Manager Active\"); }); server.listen(3001, () => console.log(\"Session manager listening on port 3001\"));' > server.js && node server.js"
     ports:
       - "3001:3001"
     networks:
       - demo_network
 
-  # Snort IDS for traffic analysis
-  snort_ids:
-    image: ciscosecurity/snort3:latest
+  # Suricata IDS for traffic analysis
+  suricata_ids:
+    image: jasonish/suricata:latest
     cap_add:
       - NET_ADMIN
       - SYS_ADMIN
@@ -84,15 +87,15 @@ services:
   reverse_proxy:
     image: nginx:latest
     ports:
-      - "80:80"
-      - "443:443"
+      - "8083:80"
+      - "4433:443"
     networks:
       - demo_network
 
   # Traffic mirroring
   traffic_mirror:
     image: alpine/socat:latest
-    command: sh -c "sleep infinity"
+    command: sh -c "while true; do echo '[Traffic Mirror] Monitoring traffic...'; sleep 5; done"
     ports:
       - "9999:9999"
     networks:
@@ -109,14 +112,14 @@ services:
   # Threat intelligence updater
   threat_intel:
     image: python:3.11-alpine
-    command: sh -c "sleep infinity"
+    command: sh -c "python -c \"import time; import sys; [print(f'[Threat Intel] Updating threat database... iteration {i}', flush=True) or time.sleep(3) for i in range(1000)]\""
     networks:
       - demo_network
 
   # File synchronization service
   file_sync:
     image: alpine:latest
-    command: sh -c "sleep infinity"
+    command: sh -c "while true; do echo '[File Sync] Synchronizing files...'; sleep 4; done"
     networks:
       - demo_network
 
