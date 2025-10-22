@@ -1,0 +1,393 @@
+# Suricata configuration file for Honeypot IDS System
+%YAML 1.1
+---
+
+# Define variables
+vars:
+  # Networks
+  address-groups:
+    HOME_NET: "[172.20.0.0/24,172.21.0.0/24,172.22.0.0/24,172.23.0.0/24,172.24.0.0/24]"
+    EXTERNAL_NET: "!$HOME_NET"
+    HTTP_SERVERS: "$HOME_NET"
+    SMTP_SERVERS: "$HOME_NET"
+    SQL_SERVERS: "$HOME_NET"
+    DNS_SERVERS: "$HOME_NET"
+    TELNET_SERVERS: "$HOME_NET"
+    AIM_SERVERS: "$EXTERNAL_NET"
+    DC_SERVERS: "$HOME_NET"
+    DNP3_SERVER: "$HOME_NET"
+    DNP3_CLIENT: "$HOME_NET"
+    MODBUS_CLIENT: "$HOME_NET"
+    MODBUS_SERVER: "$HOME_NET"
+    ENIP_CLIENT: "$HOME_NET"
+    ENIP_SERVER: "$HOME_NET"
+  
+  port-groups:
+    HTTP_PORTS: "80"
+    SHELLCODE_PORTS: "!80"
+    ORACLE_PORTS: 1521
+    SSH_PORTS: 22
+    DNP3_PORTS: 20000
+    MODBUS_PORTS: 502
+    FILE_DATA_PORTS: "[$HTTP_PORTS,110,143]"
+    FTP_PORTS: 21
+    GENEVE_PORTS: 6081
+    VXLAN_PORTS: 4789
+    TEREDO_PORTS: 3544
+
+# Default rule path
+default-rule-path: /var/lib/suricata/rules
+
+# Rule files
+rule-files:
+  - suricata.rules
+  - local.rules
+
+# Classification config
+classification-file: /etc/suricata/classification.config
+
+# Reference config
+reference-config-file: /etc/suricata/reference.config
+
+# Threshold config
+threshold-file: /etc/suricata/threshold.config
+
+# Stats configuration
+stats:
+  enabled: yes
+  interval: 8
+  decoder-events: true
+  decoder-events-prefix: "decoder.event"
+  stream-events: false
+
+# Logging configuration
+outputs:
+  # Fast log for real-time processing
+  - fast:
+      enabled: yes
+      filename: fast.log
+      append: yes
+
+  # EVE JSON output
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve.json
+      community-id: true
+      community-id-seed: 0
+      types:
+        - alert:
+            tagged-packets: yes
+        - anomaly:
+            enabled: yes
+            types:
+              decode: yes
+              stream: yes
+              applayer: yes
+        - http:
+            extended: yes
+        - dns:
+            query: yes
+            answer: yes
+        - tls:
+            extended: yes
+        - files:
+            force-magic: no
+        - smtp:
+        - ssh:
+        - stats:
+            totals: yes
+            threads: no
+            deltas: no
+        - flow
+        - netflow
+
+  # Unified2 output for compatibility
+  - unified2-alert:
+      enabled: yes
+      filename: unified2.alert
+      limit: 32MB
+      sensor-id: 0
+      sensor-name: honeypot-suricata
+
+  # HTTP log
+  - http-log:
+      enabled: yes
+      filename: http.log
+      append: yes
+      extended: yes
+
+  # TLS log
+  - tls-log:
+      enabled: yes
+      filename: tls.log
+      append: yes
+      extended: yes
+
+  # DNS log
+  - dns-log:
+      enabled: yes
+      filename: dns.log
+      append: yes
+
+  # Alert debug log
+  - alert-debug:
+      enabled: no
+      filename: alert-debug.log
+      append: yes
+
+  # Alert fast log with packet info
+  - alert-fastlog:
+      enabled: yes
+      filename: alert-fast.log
+      append: yes
+
+# Logging settings
+logging:
+  default-log-level: notice
+  default-output-filter:
+  outputs:
+    - console:
+        enabled: yes
+    - file:
+        enabled: yes
+        level: info
+        filename: suricata.log
+    - syslog:
+        enabled: no
+        facility: local5
+        format: "[%i] <%d> -- "
+
+# Application layer parsers
+app-layer:
+  protocols:
+    krb5:
+      enabled: yes
+    ikev2:
+      enabled: yes
+    tls:
+      enabled: yes
+      detection-ports:
+        dp: 443
+      ja3-fingerprints: auto
+    dcerpc:
+      enabled: yes
+    ftp:
+      enabled: yes
+    ssh:
+      enabled: yes
+    smtp:
+      enabled: yes
+      mime:
+        decode-mime: yes
+        decode-base64: yes
+        decode-quoted-printable: yes
+        header-value-depth: 2000
+        extract-urls: yes
+        body-md5: no
+      inspected-tracker:
+        content-limit: 100000
+        content-inspect-min-size: 32768
+        content-inspect-window: 4096
+    imap:
+      enabled: detection-only
+    http:
+      enabled: yes
+      libhtp:
+        default-config:
+          personality: IDS
+          request-body-limit: 100kb
+          response-body-limit: 100kb
+          request-body-minimal-inspect-size: 32kb
+          request-body-inspect-window: 4kb
+          response-body-minimal-inspect-size: 40kb
+          response-body-inspect-window: 16kb
+          response-body-decompress-layer-limit: 2
+          http-body-inline: auto
+          swf-decompression:
+            enabled: yes
+            type: both
+            compress-depth: 0
+            decompress-depth: 0
+          double-decode-path: no
+          double-decode-query: no
+          response-body-decompress-layer-limit: 2
+    smb:
+      enabled: yes
+      detection-ports:
+        dp: 139, 445
+    nfs:
+      enabled: yes
+    tftp:
+      enabled: yes
+    dns:
+      tcp:
+        enabled: yes
+        detection-ports:
+          dp: 53
+      udp:
+        enabled: yes
+        detection-ports:
+          dp: 53
+    http2:
+      enabled: yes
+
+# Advanced settings
+stream:
+  memcap: 64mb
+  checksum-validation: yes
+  inline: auto
+  max-synack-queued: 5
+  bypass: no
+  reassembly:
+    memcap: 256mb
+    depth: 1mb
+    toserver-chunk-size: 2560
+    toclient-chunk-size: 2560
+    randomize-chunk-size: yes
+
+# Flow settings
+flow:
+  memcap: 128mb
+  hash-size: 65536
+  prealloc: 10000
+  emergency-recovery: 30
+
+# Flow timeouts
+flow-timeouts:
+  default:
+    new: 30
+    established: 300
+    closed: 0
+    bypassed: 100
+    emergency-new: 10
+    emergency-established: 100
+    emergency-closed: 0
+    emergency-bypassed: 50
+  tcp:
+    new: 60
+    established: 600
+    closed: 60
+    bypassed: 100
+    emergency-new: 5
+    emergency-established: 100
+    emergency-closed: 10
+    emergency-bypassed: 50
+  udp:
+    new: 30
+    established: 300
+    bypassed: 100
+    emergency-new: 10
+    emergency-established: 100
+    emergency-bypassed: 50
+  icmp:
+    new: 30
+    established: 300
+    bypassed: 100
+    emergency-new: 10
+    emergency-established: 100
+    emergency-bypassed: 50
+
+# Defragmentation settings
+defrag:
+  memcap: 32mb
+  hash-size: 65536
+  trackers: 65535
+  max-frags: 65535
+  prealloc: yes
+  timeout: 60
+
+# Host table
+host-table:
+  host-os-policy:
+    windows: [0.0.0.0/0]
+    bsd: []
+    bsd-right: []
+    old-linux: []
+    linux: []
+    old-solaris: []
+    solaris: []
+    hpux10: []
+    hpux11: []
+    irix: []
+    macos: []
+    vista: []
+    windows2k3: []
+
+# Decoder settings
+decoder:
+  teredo:
+    enabled: true
+  vxlan:
+    enabled: true
+  geneve:
+    enabled: true
+
+# Threading
+threading:
+  set-cpu-affinity: no
+  cpu-affinity:
+    - management-cpu-set:
+        cpu: [ 0 ]
+    - receive-cpu-set:
+        cpu: [ 0 ]
+    - worker-cpu-set:
+        cpu: [ "all" ]
+  detect-thread-ratio: 1.0
+
+# Memory settings
+host:
+  hash-size: 4096
+  prealloc: 1000
+  memcap: 32mb
+
+# Profiling
+profiling:
+  rules:
+    enabled: yes
+    filename: rule_perf.log
+    append: yes
+    limit: 10
+    json: yes
+  keywords:
+    enabled: yes
+    filename: keyword_perf.log
+    append: yes
+  packets:
+    enabled: yes
+    filename: packet_stats.log
+    append: yes
+    csv:
+      enabled: no
+      filename: packet_stats.csv
+  locks:
+    enabled: no
+    filename: lock_stats.log
+    append: yes
+
+# Coredump configuration
+coredump:
+  max-dump: unlimited
+
+# napatech configuration
+napatech:
+  auto-config: yes
+  total-ports: 0
+  use-all-streams: yes
+
+# unix socket configuration
+unix-command:
+  enabled: auto
+
+# Magic file
+magic-file: /usr/share/file/magic
+
+# GeoIP database
+#geoip-database: /usr/share/GeoIP/GeoIP.dat
+
+# Rules update
+suricata-update:
+  enabled: yes
+
+# Include additional configuration
+include: /etc/suricata/suricata-local.yaml

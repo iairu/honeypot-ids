@@ -30,7 +30,7 @@ class SessionManager {
         this.initializeRedis();
         this.setupMiddleware();
         this.setupRoutes();
-        this.setupSnortLogMonitoring();
+        this.setupSuricataLogMonitoring();
         this.setupScheduledTasks();
         this.setupGracefulShutdown();
     }
@@ -193,9 +193,9 @@ class SessionManager {
         this.app.get('/analytics/threats', this.getThreatAnalytics.bind(this));
         this.app.get('/analytics/routing', this.getRoutingAnalytics.bind(this));
 
-        // Snort integration endpoints
-        this.app.get('/snort/alerts', this.getSnortAlerts.bind(this));
-        this.app.post('/snort/alert', this.processSnortAlert.bind(this));
+        // Suricata integration endpoints
+        this.app.get('/suricata/alerts', this.getSuricataAlerts.bind(this));
+        this.app.post('/suricata/alert', this.processSuricataAlert.bind(this));
 
         // Configuration endpoints
         this.app.get('/config/rules', this.getRoutingRules.bind(this));
@@ -614,30 +614,30 @@ class SessionManager {
         return decision;
     }
 
-    setupSnortLogMonitoring() {
-        const snortLogPath = process.env.SNORT_LOG_PATH || '/var/log/snort/alert_fast';
+    setupSuricataLogMonitoring() {
+        const suricataLogPath = process.env.SURICATA_LOG_PATH || '/var/log/suricata/fast.log';
         
         try {
-            this.snortTail = new Tail(snortLogPath, { follow: true, fromBeginning: false });
+            this.suricataTail = new Tail(suricataLogPath, { follow: true, fromBeginning: false });
             
-            this.snortTail.on('line', (line) => {
-                this.processSnortLogLine(line);
+            this.suricataTail.on('line', (line) => {
+                this.processSuricataLogLine(line);
             });
 
-            this.snortTail.on('error', (error) => {
-                this.logger.error('Snort log monitoring error:', error);
+            this.suricataTail.on('error', (error) => {
+                this.logger.error('Suricata log monitoring error:', error);
             });
 
-            this.logger.info(`Started monitoring Snort logs: ${snortLogPath}`);
+            this.logger.info(`Started monitoring Suricata logs: ${suricataLogPath}`);
         } catch (error) {
-            this.logger.warn('Failed to setup Snort log monitoring:', error);
+            this.logger.warn('Failed to setup Suricata log monitoring:', error);
         }
     }
 
-    async processSnortLogLine(line) {
+    async processSuricataLogLine(line) {
         try {
-            // Parse Snort fast alert format
-            const alertMatch = line.match(/(\d+\/\d+\-\d+:\d+:\d+\.\d+)\s+\[\*\*\]\s+\[(\d+):(\d+):\d+\]\s+(.+?)\s+\[Classification:\s+([^\]]+)\].*?(\d+\.\d+\.\d+\.\d+):(\d+)\s+\->\s+(\d+\.\d+\.\d+\.\d+):(\d+)/);
+            // Parse Suricata fast alert format
+            const alertMatch = line.match(/(\d+\/\d+\/\d+-\d+:\d+:\d+\.\d+)\s+\[\*\*\]\s+\[(\d+):(\d+):\d+\]\s+(.+?)\s+\[Classification:\s+([^\]]+)\].*?(\d+\.\d+\.\d+\.\d+):(\d+)\s+\->\s+(\d+\.\d+\.\d+\.\d+):(\d+)/);
             
             if (alertMatch) {
                 const [, timestamp, priority, sid, message, classification, srcIP, srcPort, dstIP, dstPort] = alertMatch;
@@ -655,18 +655,18 @@ class SessionManager {
                     processedTime: Date.now()
                 };
 
-                await this.handleSnortAlert(alertData);
+                await this.handleSuricataAlert(alertData);
             }
         } catch (error) {
-            this.logger.error('Error processing Snort log line:', error);
+            this.logger.error('Error processing Suricata log line:', error);
         }
     }
 
-    async handleSnortAlert(alertData) {
+    async handleSuricataAlert(alertData) {
         try {
             // Store alert in Redis
-            await this.redisClient.lPush('snort_alerts', JSON.stringify(alertData));
-            await this.redisClient.lTrim('snort_alerts', 0, 999); // Keep last 1000 alerts
+            await this.redisClient.lPush('suricata_alerts', JSON.stringify(alertData));
+            await this.redisClient.lTrim('suricata_alerts', 0, 999); // Keep last 1000 alerts
 
             // Update threat intelligence
             const threatScore = this.calculateThreatScore(alertData);
@@ -675,9 +675,9 @@ class SessionManager {
             // Check for active sessions from this IP
             await this.handleThreatForActiveSessions(alertData.srcIP, alertData);
 
-            this.logger.warn(`Snort alert processed: ${alertData.srcIP} -> ${alertData.classification} (Score: ${threatScore})`);
+            this.logger.warn(`Suricata alert processed: ${alertData.srcIP} -> ${alertData.classification} (Score: ${threatScore})`);
         } catch (error) {
-            this.logger.error('Error handling Snort alert:', error);
+            this.logger.error('Error handling Suricata alert:', error);
         }
     }
 
@@ -841,8 +841,8 @@ class SessionManager {
             process.on(signal, async () => {
                 this.logger.info(`Received ${signal}, shutting down gracefully...`);
                 
-                if (this.snortTail) {
-                    this.snortTail.unwatch();
+                if (this.suricataTail) {
+                    this.suricataTail.unwatch();
                 }
                 
                 if (this.redisClient) {
@@ -952,25 +952,25 @@ class SessionManager {
         }
     }
 
-    async getSnortAlerts(req, res) {
+    async getSuricataAlerts(req, res) {
         try {
-            const alerts = await this.redisClient.lRange('snort_alerts', 0, 99); // Last 100 alerts
+            const alerts = await this.redisClient.lRange('suricata_alerts', 0, 99); // Last 100 alerts
             const parsedAlerts = alerts.map(alert => JSON.parse(alert));
             res.json(parsedAlerts);
         } catch (error) {
-            this.logger.error('Error getting Snort alerts:', error);
-            res.status(500).json({ error: 'Failed to get Snort alerts' });
+            this.logger.error('Error getting Suricata alerts:', error);
+            res.status(500).json({ error: 'Failed to get Suricata alerts' });
         }
     }
 
-    async processSnortAlert(req, res) {
+    async processSuricataAlert(req, res) {
         try {
             const alertData = req.body;
-            await this.handleSnortAlert(alertData);
+            await this.handleSuricataAlert(alertData);
             res.json({ success: true });
         } catch (error) {
-            this.logger.error('Error processing Snort alert:', error);
-            res.status(500).json({ error: 'Failed to process Snort alert' });
+            this.logger.error('Error processing Suricata alert:', error);
+            res.status(500).json({ error: 'Failed to process Suricata alert' });
         }
     }
 
@@ -1007,8 +1007,8 @@ class SessionManager {
                         // Mark session for honeypot routing
                         session.honeypotBound = true;
                         session.routePreference = 'honeypot';
-                        session.compromiseReason = `snort_alert_${alertData.classification}`;
-                        session.snortAlertTriggered = alertData;
+                        session.compromiseReason = `suricata_alert_${alertData.classification}`;
+                        session.suricataAlertTriggered = alertData;
                         
                         await this.redisClient.setEx(
                             `session:${sessionId}`,
@@ -1018,7 +1018,7 @@ class SessionManager {
                         
                         this.sessionCache.set(sessionId, session);
                         
-                        this.logger.warn(`Session ${sessionId} marked for honeypot due to Snort alert`);
+                        this.logger.warn(`Session ${sessionId} marked for honeypot due to Suricata alert`);
                     }
                 }
             }

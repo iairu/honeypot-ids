@@ -183,11 +183,11 @@ services:
       - REDIS_HOST=session_store
       - REDIS_PORT=6379
       - REDIS_PASSWORD=session_redis_password
-      - SNORT_LOG_PATH=/var/log/snort
+      - SURICATA_LOG_PATH=/var/log/suricata
       - NODE_ENV=production
       - LOG_LEVEL=info
     volumes:
-      - ./snort_logs:/var/log/snort:ro
+      - ./suricata_logs:/var/log/suricata:ro
       - ./session_manager:/app
     networks:
       - session_network
@@ -201,18 +201,18 @@ services:
       retries: 3
       start_period: 30s
 
-  # Snort IDS for traffic analysis
-  snort_ids:
-    image: ciscosecurity/snort3:latest
+  # Suricata IDS for traffic analysis
+  suricata_ids:
+    image: jasonish/suricata:latest
     depends_on:
       init_setup:
         condition: service_completed_successfully
     volumes:
-      - ./snort_config:/usr/local/etc/snort
-      - ./snort_logs:/var/log/snort
-      - ./snort_rules:/usr/local/etc/rules
+      - ./suricata_config:/etc/suricata
+      - ./suricata_logs:/var/log/suricata
+      - ./suricata_rules:/var/lib/suricata/rules
     environment:
-      - SNORT_INTERFACE=eth0
+      - SURICATA_INTERFACE=eth0
     networks:
       - monitoring_network
       - ids_network
@@ -221,27 +221,28 @@ services:
       - SYS_ADMIN
     command: |
       sh -c "
-        echo 'Starting Snort IDS...'
+        echo 'Starting Suricata IDS...'
         
         # Ensure log directory exists
-        mkdir -p /var/log/snort
+        mkdir -p /var/log/suricata
         
-        # Copy rules to the expected location
-        cp /usr/local/etc/rules/local.rules /usr/local/etc/snort/local.rules 2>/dev/null || echo 'Rules file not found'
+        # Copy custom rules if they exist
+        if [ -f /var/lib/suricata/rules/local.rules ]; then
+          cp /var/lib/suricata/rules/local.rules /etc/suricata/rules/local.rules
+        fi
         
-        # Start Snort with configuration
-        snort -c /usr/local/etc/snort/snort.conf \
-              -i eth0 \
-              -A alert_fast \
-              -l /var/log/snort \
-              -k none \
-              -D || echo 'Snort failed to start, running in test mode'
+        # Start Suricata with configuration
+        suricata -c /etc/suricata/suricata.yaml \
+                 -i eth0 \
+                 -l /var/log/suricata \
+                 --init-errors-fatal \
+                 -v || echo 'Suricata failed to start, running in test mode'
         
         # Keep container running
         tail -f /dev/null
       "
     healthcheck:
-      test: ["CMD", "test", "-f", "/var/log/snort/alert_fast"]
+      test: ["CMD", "test", "-f", "/var/log/suricata/fast.log"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -259,7 +260,7 @@ services:
         condition: service_healthy
       session_manager:
         condition: service_healthy
-      snort_ids:
+      suricata_ids:
         condition: service_healthy
     ports:
       - "80:80"
@@ -289,7 +290,7 @@ services:
     depends_on:
       reverse_proxy:
         condition: service_healthy
-      snort_ids:
+      suricata_ids:
         condition: service_healthy
     networks:
       - monitoring_network
@@ -297,8 +298,8 @@ services:
     command: |
       sh -c "
         echo 'Starting traffic mirroring...'
-        socat -d -d UDP-LISTEN:514,reuseaddr,fork UDP:snort_ids:514 &
-        socat -d -d TCP-LISTEN:9999,reuseaddr,fork TCP:snort_ids:9999 &
+        socat -d -d UDP-LISTEN:514,reuseaddr,fork UDP:suricata_ids:514 &
+        socat -d -d TCP-LISTEN:9999,reuseaddr,fork TCP:suricata_ids:9999 &
         echo 'Traffic mirroring started'
         wait
       "
@@ -313,13 +314,13 @@ services:
   log_aggregator:
     image: fluent/fluent-bit:latest
     depends_on:
-      snort_ids:
+      suricata_ids:
         condition: service_healthy
       reverse_proxy:
         condition: service_healthy
     volumes:
       - ./fluent_bit_config:/fluent-bit/etc
-      - ./snort_logs:/var/log/snort:ro
+      - ./suricata_logs:/var/log/suricata:ro
       - ./nginx_logs:/var/log/nginx:ro
     networks:
       - monitoring_network
@@ -428,7 +429,7 @@ volumes:
     driver: local
   redis_data:
     driver: local
-  snort_logs:
+  suricata_logs:
     driver: local
   threat_intel_data:
     driver: local

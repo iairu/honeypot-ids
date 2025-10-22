@@ -265,25 +265,25 @@ test_ssl_certificates() {
     fi
 }
 
-# Test Snort IDS functionality
-test_snort_ids() {
-    log "INFO" "Testing Snort IDS functionality..."
+# Test Suricata IDS functionality
+test_suricata_ids() {
+    log "INFO" "Testing Suricata IDS functionality..."
     
-    # Check if Snort log files exist
-    if [[ -f "$SCRIPT_DIR/snort_logs/alert_fast" ]]; then
-        log "PASS" "Snort alert log file exists"
+    # Check if Suricata log files exist
+    if [[ -f "$SCRIPT_DIR/suricata_logs/fast.log" ]]; then
+        log "PASS" "Suricata alert log file exists"
         
         # Check if log file has recent entries (modified in last hour)
-        if [[ $(find "$SCRIPT_DIR/snort_logs/alert_fast" -mmin -60 2>/dev/null) ]]; then
-            log "PASS" "Snort alert log has recent activity"
+        if [[ $(find "$SCRIPT_DIR/suricata_logs/fast.log" -mmin -60 2>/dev/null) ]]; then
+            log "PASS" "Suricata alert log has recent activity"
         else
-            log "WARN" "Snort alert log may not have recent activity"
+            log "WARN" "Suricata alert log may not have recent activity"
         fi
     else
-        log "WARN" "Snort alert log file not found - may be starting up"
+        log "WARN" "Suricata alert log file not found - may be starting up"
     fi
     
-    # Check Snort container status
+    # Check Suricata container status
     local compose_cmd=""
     if command -v docker-compose >/dev/null 2>&1; then
         compose_cmd="docker-compose"
@@ -291,10 +291,10 @@ test_snort_ids() {
         compose_cmd="docker compose"
     fi
     
-    if $compose_cmd ps snort_ids | grep -q "Up"; then
-        log "PASS" "Snort IDS container is running"
+    if $compose_cmd ps suricata_ids | grep -q "Up"; then
+        log "PASS" "Suricata IDS container is running"
     else
-        log "FAIL" "Snort IDS container is not running"
+        log "FAIL" "Suricata IDS container is not running"
     fi
 }
 
@@ -376,6 +376,14 @@ test_threat_intelligence() {
         log "WARN" "Threat intelligence service may not be running"
     fi
     
+    # Test Suricata alerts API
+    local alerts_response=$(curl -s http://localhost:3001/suricata/alerts 2>/dev/null || echo "")
+    if echo "$alerts_response" | grep -q "timestamp\|sid\|[]"; then
+        log "PASS" "Suricata alerts API responding"
+    else
+        log "WARN" "Suricata alerts API may not be responding"
+    fi
+    
     # Test threat IP lookup
     local threat_response=$(curl -s http://localhost:3001/threat/ip/192.168.1.100 2>/dev/null || echo "")
     if echo "$threat_response" | grep -q "score"; then
@@ -428,7 +436,7 @@ main() {
     test_attack_patterns
     test_file_sync
     test_ssl_certificates
-    test_snort_ids
+    test_suricata_ids
     test_rate_limiting
     test_load_handling
     test_threat_intelligence
@@ -466,7 +474,7 @@ case "${1:-}" in
         test_threat_detection
         test_vulnerable_plugins
         test_attack_patterns
-        test_snort_ids
+        test_suricata_ids
         test_rate_limiting
         generate_test_report
         ;;

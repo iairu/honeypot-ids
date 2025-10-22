@@ -82,26 +82,26 @@ local function init_worker()
             _G.redis_pool.close_connection(red)
         end
         
-        -- Start Snort log parser
-        local function parse_snort_logs()
+        -- Start Suricata log parser
+        local function parse_suricata_logs()
             local red, err = _G.redis_pool.get_connection()
             if not red then
-                ngx.log(ngx.ERR, "Failed to connect to Redis for Snort log parsing: ", err)
+                ngx.log(ngx.ERR, "Failed to connect to Redis for Suricata log parsing: ", err)
                 return
             end
             
-            -- Parse alert_fast file for new alerts
-            local alert_file = "/var/log/snort/alert_fast"
+            -- Parse fast.log file for new alerts
+            local alert_file = "/var/log/suricata/fast.log"
             local file = io.open(alert_file, "r")
             if file then
-                local last_position = red:get("snort_log_position") or 0
+                local last_position = red:get("suricata_log_position") or 0
                 file:seek("set", tonumber(last_position))
                 
                 local alerts_processed = 0
                 for line in file:lines() do
-                    -- Parse Snort alert format
+                    -- Parse Suricata alert format
                     local timestamp, priority, classification, src_ip, src_port, dst_ip, dst_port = 
-                        line:match("(%d+/%d+%-%d+:%d+:%d+%.%d+)%s+%[%*%*%]%s+%[(%d+):(%d+):%d+%]%s+.-%s+%[Classification:%s+([^%]]+)%].-(%d+%.%d+%.%d+%.%d+):(%d+)%s+%-%>%s+(%d+%.%d+%.%d+%.%d+):(%d+)")
+                        line:match("(%d+/%d+/%d+%-%d+:%d+:%d+%.%d+)%s+%[%*%*%]%s+%[(%d+):(%d+):%d+%]%s+.-%s+%[Classification:%s+([^%]]+)%].-(%d+%.%d+%.%d+%.%d+):(%d+)%s+%-%>%s+(%d+%.%d+%.%d+%.%d+):(%d+)")
                     
                     if src_ip then
                         local alert_data = {
@@ -116,8 +116,8 @@ local function init_worker()
                         }
                         
                         -- Store alert in Redis
-                        red:lpush("snort_alerts", cjson.encode(alert_data))
-                        red:ltrim("snort_alerts", 0, 1000) -- Keep only last 1000 alerts
+                        red:lpush("suricata_alerts", cjson.encode(alert_data))
+                        red:ltrim("suricata_alerts", 0, 1000) -- Keep only last 1000 alerts
                         
                         -- Update threat intelligence
                         local current_intel = red:get("threat_ips")
@@ -135,17 +135,17 @@ local function init_worker()
                         
                         red:set("threat_ips", cjson.encode(threat_ips))
                         alerts_processed = alerts_processed + 1
-                        
-                        ngx.log(ngx.WARN, "Snort alert processed: ", src_ip, " -> ", classification)
+                            
+                        ngx.log(ngx.WARN, "Suricata alert processed: ", src_ip, " -> ", classification)
                     end
                 end
                 
                 -- Update file position
-                red:set("snort_log_position", file:seek())
+                red:set("suricata_log_position", file:seek())
                 file:close()
-                
+                    
                 if alerts_processed > 0 then
-                    ngx.log(ngx.INFO, "Processed ", alerts_processed, " Snort alerts")
+                    ngx.log(ngx.INFO, "Processed ", alerts_processed, " Suricata alerts")
                 end
             end
             
@@ -191,10 +191,10 @@ local function init_worker()
         end
         
         local ok, err = ngx.timer.every(30, function() -- Every 30 seconds
-            pcall(parse_snort_logs)
+            pcall(parse_suricata_logs)
         end)
         if not ok then
-            ngx.log(ngx.ERR, "Failed to create Snort log parser timer: ", err)
+            ngx.log(ngx.ERR, "Failed to create Suricata log parser timer: ", err)
         end
         
         local ok, err = ngx.timer.every(60, function() -- Every minute

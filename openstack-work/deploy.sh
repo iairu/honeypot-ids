@@ -261,8 +261,8 @@ setup_fluent_bit_config() {
 
 [INPUT]
     Name              tail
-    Path              /var/log/snort/alert_fast
-    Tag               snort.alerts
+    Path              /var/log/suricata/fast.log
+    Tag               suricata.alerts
     Refresh_Interval  5
 
 [INPUT]
@@ -273,9 +273,9 @@ setup_fluent_bit_config() {
 
 [FILTER]
     Name              parser
-    Match             snort.alerts
+    Match             suricata.alerts
     Key_Name          log
-    Parser            snort_alert
+    Parser            suricata_alert
 
 [OUTPUT]
     Name              stdout
@@ -285,11 +285,11 @@ EOF
 
     cat > "$SCRIPT_DIR/fluent_bit_config/parsers.conf" << EOF
 [PARSER]
-    Name        snort_alert
+    Name        suricata_alert
     Format      regex
-    Regex       ^(?<timestamp>\d+\/\d+\-\d+:\d+:\d+\.\d+)\s+\[\*\*\]\s+\[(?<priority>\d+):(?<sid>\d+):\d+\]\s+(?<message>.*?)\s+\[Classification:\s+(?<classification>[^\]]+)\].*?(?<src_ip>\d+\.\d+\.\d+\.\d+):(?<src_port>\d+)\s+\-\>\s+(?<dst_ip>\d+\.\d+\.\d+\.\d+):(?<dst_port>\d+)
+    Regex       ^(?<timestamp>\d+\/\d+\/\d+\-\d+:\d+:\d+\.\d+)\s+\[\*\*\]\s+\[(?<priority>\d+):(?<sid>\d+):\d+\]\s+(?<message>.*?)\s+\[Classification:\s+(?<classification>[^\]]+)\].*?(?<src_ip>\d+\.\d+\.\d+\.\d+):(?<src_port>\d+)\s+\-\>\s+(?<dst_ip>\d+\.\d+\.\d+\.\d+):(?<dst_port>\d+)
     Time_Key    timestamp
-    Time_Format %m/%d-%H:%M:%S.%L
+    Time_Format %m/%d/%Y-%H:%M:%S.%L
 EOF
     
     log "INFO" "Fluent Bit configuration completed"
@@ -480,17 +480,17 @@ check_service_health() {
         log "WARN" "Redis: Not responding"
     fi
     
-    # Check if Snort is running
-    if $compose_cmd ps snort_ids | grep -q "Up"; then
-        log "INFO" "Snort IDS: Running"
-        # Check if Snort is actually generating logs
-        if [[ -f "$SCRIPT_DIR/snort_logs/alert_fast" ]]; then
-            log "INFO" "Snort IDS: Log file created"
+    # Check if Suricata is running
+    if $compose_cmd ps suricata_ids | grep -q "Up"; then
+        log "INFO" "Suricata IDS: Running"
+        # Check if Suricata is actually generating logs
+        if [[ -f "$SCRIPT_DIR/suricata_logs/fast.log" ]]; then
+            log "INFO" "Suricata IDS: Log file created"
         else
-            log "WARN" "Snort IDS: No log file found yet"
+            log "WARN" "Suricata IDS: No log file found yet"
         fi
     else
-        log "WARN" "Snort IDS: Not running"
+        log "WARN" "Suricata IDS: Not running"
     fi
     
     # Check reverse proxy
@@ -601,7 +601,7 @@ display_summary() {
     echo "  - View logs: docker-compose logs -f [service_name]"
     echo "  - Stop system: docker-compose down"
     echo "  - Restart: docker-compose restart [service_name]"
-    echo "  - View Snort alerts: tail -f snort_logs/alert_fast"
+    echo "  - View Suricata alerts: tail -f suricata_logs/fast.log"
     echo "  - Check session analytics: curl http://localhost:3001/analytics/sessions"
     echo "  - Check service health: docker-compose ps"
     echo "  - Force file sync: docker-compose restart file_sync"
@@ -610,7 +610,7 @@ display_summary() {
     echo -e "${YELLOW}Important Security Notes:${NC}"
     echo "  - Change default passwords in .env file"
     echo "  - Replace self-signed SSL certificates for production use"
-    echo "  - Review and customize Snort rules for your environment"
+    echo "  - Review and customize Suricata rules for your environment"
     echo "  - Monitor log files regularly for security events"
     echo "  - Files are automatically copied from production to honeypot on startup"
     echo "  - SSL certificates are regenerated on each deployment"

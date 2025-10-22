@@ -1,0 +1,213 @@
+###################################################
+# Suricata Rules for WordPress Vulnerability Detection
+# and Honeypot Traffic Analysis
+###################################################
+
+#--------------------------------------------------------------------------
+# CVE-2023-28121: WooCommerce Payments Unauthorized Admin Access
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2023-28121 WooCommerce Payments Unauthorized Admin Access Attempt"; flow:established,to_server; content:"X-WCPAY-PLATFORM-CHECKOUT-USER"; http_header; content:"wp/v2/users"; http_uri; classtype:web-application-attack; sid:1000001; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2023-28121 WooCommerce Admin User Creation"; flow:established,to_server; http_method; content:"POST"; content:"rest_route"; http_client_body; content:"wp/v2/users"; http_client_body; classtype:web-application-attack; sid:1000002; rev:1;)
+
+#--------------------------------------------------------------------------
+# CVE-2023-2986: Abandoned Cart Lite Hardcoded Encryption Key
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2023-2986 Abandoned Cart Lite Exploit Attempt"; flow:established,to_server; content:"wcal_action=checkout_link"; http_uri; content:"validate="; http_uri; classtype:web-application-attack; sid:1000003; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2023-2986 Abandoned Cart Encryption Key Usage"; flow:established,to_server; content:"qJB0rGtIn5UB1xG03efyCp"; http_client_body; classtype:web-application-attack; sid:1000004; rev:1;)
+
+#--------------------------------------------------------------------------
+# CVE-2025-4403: User-Controlled File Upload Type
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2025-4403 DnD File Upload Exploit"; flow:established,to_server; http_method; content:"POST"; content:"dnd-wc-upload-file"; http_client_body; content:"supported_type"; http_client_body; pcre:"/supported_type[^&]*\./i"; classtype:web-application-attack; sid:1000005; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2025-4403 Suspicious File Extension Upload"; flow:established,to_server; content:"dnd_codedropz_upload_wc"; http_uri; content:".php"; http_client_body; classtype:web-application-attack; sid:1000006; rev:1;)
+
+#--------------------------------------------------------------------------
+# CVE-2025-2266: Unauthenticated WordPress Options Update
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2025-2266 WordPress Options Update Exploit"; flow:established,to_server; http_method; content:"POST"; content:"cwmpUpdateOptions"; http_client_body; content:"users_can_register=1"; http_client_body; classtype:web-application-attack; sid:1000007; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2025-2266 Admin Role Assignment"; flow:established,to_server; content:"cwmpUpdateOptions"; http_uri; content:"default_role=administrator"; http_client_body; classtype:web-application-attack; sid:1000008; rev:1;)
+
+#--------------------------------------------------------------------------
+# CVE-2025-47577 & CVE-2024-8425: Unauthenticated File Upload with RCE
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2025-47577 Gift Voucher File Upload RCE"; flow:established,to_server; http_method; content:"POST"; content:"mwb_wgm_preview_mail"; http_uri; content:"multipart/form-data"; http_header; pcre:"/filename[^;]*\.php/i"; classtype:web-application-attack; sid:1000009; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2024-8425 Malicious PHP Upload"; flow:established,to_server; content:"mwb_wgm_preview_mail"; http_uri; content:"tempId"; http_client_body; content:"<?php"; http_client_body; classtype:web-application-attack; sid:1000010; rev:1;)
+
+#--------------------------------------------------------------------------
+# CVE-2024-2387: SQL Injection via URL Parameter
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2024-2387 AFI SQL Injection Attempt"; flow:established,to_server; content:"advanced-form-integration-log"; http_uri; content:"integration_id"; http_uri; pcre:"/integration_id[^&]*'/i"; classtype:web-application-attack; sid:1000011; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2024-2387 Time-based SQL Injection"; flow:established,to_server; content:"integration_id"; http_uri; content:"SLEEP"; http_uri; nocase; classtype:web-application-attack; sid:1000012; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2024-2387 Union-based SQL Injection"; flow:established,to_server; content:"integration_id"; http_uri; content:"UNION"; http_uri; nocase; content:"SELECT"; http_uri; nocase; classtype:web-application-attack; sid:1000013; rev:1;)
+
+#--------------------------------------------------------------------------
+# CVE-2025-10142 & CVE-2024-50508: File Download/Upload Vulnerabilities
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2025-10142 Unauthorized File Upload"; flow:established,to_server; content:"pc_added_uploaded_image"; http_uri; content:"file[path]"; http_uri; pcre:"/file\[path\][^&]*\//i"; classtype:web-application-attack; sid:1000014; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2024-50508 Sensitive File Access"; flow:established,to_server; content:"file[path]=/etc/passwd"; http_uri; classtype:web-application-attack; sid:1000015; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2024-50508 System File Download"; flow:established,to_server; content:"file[path]"; http_uri; pcre:"/file\[path\]=[^&]*\/etc\//i"; classtype:web-application-attack; sid:1000016; rev:1;)
+
+#--------------------------------------------------------------------------
+# General WordPress Attack Patterns
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Admin Brute Force Attempt"; flow:established,to_server; http_method; content:"POST"; content:"wp-login.php"; http_uri; content:"log="; http_client_body; content:"pwd="; http_client_body; threshold:type limit, track by_src, count 5, seconds 60; classtype:web-application-attack; sid:1000017; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress User Enumeration"; flow:established,to_server; content:"wp-json/wp/v2/users"; http_uri; classtype:web-application-attack; sid:1000018; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Config File Access Attempt"; flow:established,to_server; content:"wp-config.php"; http_uri; classtype:web-application-attack; sid:1000019; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Backup File Access"; flow:established,to_server; content:".sql"; http_uri; content:"backup"; http_uri; nocase; classtype:web-application-attack; sid:1000020; rev:1;)
+
+#--------------------------------------------------------------------------
+# Plugin-Specific Detection
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WooCommerce Payments Plugin Access"; flow:established,to_server; content:"woocommerce-payments"; http_uri; classtype:web-application-activity; sid:1000021; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Abandoned Cart Lite Plugin Access"; flow:established,to_server; content:"abandoned-cart-lite"; http_uri; classtype:web-application-activity; sid:1000022; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Drag Drop File Upload Plugin Access"; flow:established,to_server; content:"drag-and-drop-multiple-file-upload"; http_uri; classtype:web-application-activity; sid:1000023; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CWMP Plugin Access"; flow:established,to_server; content:"/wp-content/plugins/cwmp/"; http_uri; classtype:web-application-activity; sid:1000024; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Gift Voucher Plugin Access"; flow:established,to_server; content:"gift-voucher"; http_uri; classtype:web-application-activity; sid:1000025; rev:1;)
+
+#--------------------------------------------------------------------------
+# SQL Injection Detection
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"SQL Injection - Union Select"; flow:established,to_server; pcre:"/union[^a-zA-Z]+select/iU"; classtype:web-application-attack; sid:1000026; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"SQL Injection - Information Schema"; flow:established,to_server; content:"information_schema"; nocase; classtype:web-application-attack; sid:1000027; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"SQL Injection - MySQL Functions"; flow:established,to_server; pcre:"/(concat|substring|database|version|user)\s*\(/iU"; classtype:web-application-attack; sid:1000028; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"SQL Injection - Time Delay"; flow:established,to_server; pcre:"/(sleep|waitfor|benchmark)\s*\(/iU"; classtype:web-application-attack; sid:1000029; rev:1;)
+
+#--------------------------------------------------------------------------
+# XSS Detection
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"XSS Script Tag"; flow:established,to_server; content:"<script"; nocase; classtype:web-application-attack; sid:1000030; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"XSS JavaScript Event"; flow:established,to_server; pcre:"/on(load|error|click|mouse|focus|blur|change|submit)\s*=/iU"; classtype:web-application-attack; sid:1000031; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"XSS JavaScript Protocol"; flow:established,to_server; content:"javascript:"; nocase; classtype:web-application-attack; sid:1000032; rev:1;)
+
+#--------------------------------------------------------------------------
+# Command Injection Detection
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Command Injection - System Commands"; flow:established,to_server; pcre:"/(;|&&|\|\|)\s*(cat|ls|ps|id|whoami|uname)/iU"; classtype:web-application-attack; sid:1000033; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Command Injection - Pipe Commands"; flow:established,to_server; pcre:"/\|\s*(nc|netcat|curl|wget|bash|sh)/iU"; classtype:web-application-attack; sid:1000034; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Command Injection - Backticks"; flow:established,to_server; content:"`"; classtype:web-application-attack; sid:1000035; rev:1;)
+
+#--------------------------------------------------------------------------
+# Directory Traversal Detection
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Directory Traversal - Dot Dot Slash"; flow:established,to_server; content:"../"; classtype:web-application-attack; sid:1000036; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Directory Traversal - URL Encoded"; flow:established,to_server; pcre:"/%2e%2e[%2f%5c]/iU"; classtype:web-application-attack; sid:1000037; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Directory Traversal - Double Encoded"; flow:established,to_server; pcre:"/%252e%252e/iU"; classtype:web-application-attack; sid:1000038; rev:1;)
+
+#--------------------------------------------------------------------------
+# File Inclusion Detection
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"PHP Wrapper Usage"; flow:established,to_server; pcre:"/php:\/\/(filter|input|output|fd|memory|temp|stdin)/iU"; classtype:web-application-attack; sid:1000039; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Data URI Scheme"; flow:established,to_server; content:"data://"; nocase; classtype:web-application-attack; sid:1000040; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"File URI Scheme"; flow:established,to_server; content:"file://"; nocase; classtype:web-application-attack; sid:1000041; rev:1;)
+
+#--------------------------------------------------------------------------
+# Malicious User Agents
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Malicious User Agent - SQLMap"; flow:established,to_server; content:"sqlmap"; http_user_agent; nocase; classtype:web-application-attack; sid:1000042; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Malicious User Agent - Nikto"; flow:established,to_server; content:"nikto"; http_user_agent; nocase; classtype:web-application-attack; sid:1000043; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Malicious User Agent - Nmap"; flow:established,to_server; content:"nmap"; http_user_agent; nocase; classtype:web-application-attack; sid:1000044; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Malicious User Agent - WPScan"; flow:established,to_server; content:"wpscan"; http_user_agent; nocase; classtype:web-application-attack; sid:1000045; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Malicious User Agent - Gobuster"; flow:established,to_server; content:"gobuster"; http_user_agent; nocase; classtype:web-application-attack; sid:1000046; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Malicious User Agent - Dirb"; flow:established,to_server; content:"dirb"; http_user_agent; nocase; classtype:web-application-attack; sid:1000047; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Malicious User Agent - Burp Suite"; flow:established,to_server; content:"burpsuite"; http_user_agent; nocase; classtype:web-application-attack; sid:1000048; rev:1;)
+
+#--------------------------------------------------------------------------
+# Scanning and Reconnaissance
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Version Detection"; flow:established,to_server; content:"wp-includes/version.php"; http_uri; classtype:web-application-attack; sid:1000049; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Theme Detection"; flow:established,to_server; content:"wp-content/themes/"; http_uri; content:"style.css"; http_uri; classtype:web-application-attack; sid:1000050; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Plugin Enumeration"; flow:established,to_server; content:"wp-content/plugins/"; http_uri; content:"readme.txt"; http_uri; classtype:web-application-attack; sid:1000051; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Admin Panel Discovery"; flow:established,to_server; pcre:"/\/(admin|administrator|wp-admin|phpmyadmin|cpanel)/iU"; classtype:web-application-attack; sid:1000052; rev:1;)
+
+#--------------------------------------------------------------------------
+# Suspicious File Uploads
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Suspicious PHP File Upload"; flow:established,to_server; content:"multipart/form-data"; http_header; content:".php"; http_client_body; classtype:web-application-attack; sid:1000053; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Executable File Upload Attempt"; flow:established,to_server; content:"multipart/form-data"; http_header; pcre:"/filename[^;]*\.(exe|bat|cmd|sh|jar)/iU"; classtype:web-application-attack; sid:1000054; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Script File Upload Attempt"; flow:established,to_server; content:"multipart/form-data"; http_header; pcre:"/filename[^;]*\.(jsp|asp|aspx|pl|py|rb)/iU"; classtype:web-application-attack; sid:1000055; rev:1;)
+
+#--------------------------------------------------------------------------
+# Rate Limiting and DoS Detection
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"High Rate HTTP Requests"; flow:established,to_server; detection_filter:track by_src, count 50, seconds 60; classtype:attempted-dos; sid:1000056; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Login Brute Force"; flow:established,to_server; content:"wp-login.php"; http_uri; detection_filter:track by_src, count 10, seconds 60; classtype:web-application-attack; sid:1000057; rev:1;)
+
+#--------------------------------------------------------------------------
+# Honeypot Specific Rules
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Honeypot Trigger - Multiple Vulnerability Attempts"; flow:established,to_server; content:"wp-content/plugins/"; http_uri; detection_filter:track by_src, count 3, seconds 300; classtype:web-application-attack; priority:1; sid:1000058; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Honeypot Trigger - Automated Tool Detection"; flow:established,to_server; pcre:"/(sqlmap|nikto|nmap|wpscan|gobuster|dirb|burpsuite|nuclei|whatweb)/iU"; classtype:web-application-attack; priority:1; sid:1000059; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Honeypot Trigger - Rapid Vulnerability Scanning"; flow:established,to_server; pcre:"/\/(wp-admin|wp-login|wp-config|xmlrpc\.php)/iU"; detection_filter:track by_src, count 5, seconds 60; classtype:web-application-attack; priority:1; sid:1000060; rev:1;)
+
+#--------------------------------------------------------------------------
+# Session Management Integration Rules
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Session Anomaly - IP Change"; flow:established,to_server; content:"PHPSESSID="; http_header; classtype:policy-violation; sid:1000061; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Session Anomaly - User Agent Change"; flow:established,to_server; content:"PHPSESSID="; http_header; classtype:policy-violation; sid:1000062; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Suspicious Session Cookie Manipulation"; flow:established,to_server; pcre:"/PHPSESSID=[^;]{0,10}[^a-zA-Z0-9][^;]*;/iU"; classtype:web-application-attack; sid:1000063; rev:1;)
+
+#--------------------------------------------------------------------------
+# Zero-Day and Generic Attack Patterns  
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Generic Code Injection Attempt"; flow:established,to_server; pcre:"/(eval|exec|system|passthru|shell_exec|assert|create_function)\s*\(/iU"; classtype:web-application-attack; sid:1000064; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Generic Deserialization Attack"; flow:established,to_server; pcre:"/(a:|O:|s:|i:|b:|d:|r:|C:|N:)\d+:/iU"; classtype:web-application-attack; sid:1000065; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Generic Template Injection"; flow:established,to_server; pcre:"/\{\{|\}\}|\{%|%\}/iU"; classtype:web-application-attack; sid:1000066; rev:1;)
+
+#--------------------------------------------------------------------------
+# API Abuse Detection
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress REST API Abuse"; flow:established,to_server; content:"wp-json"; http_uri; detection_filter:track by_src, count 20, seconds 60; classtype:web-application-attack; sid:1000067; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"XMLRPC Amplification Attack"; flow:established,to_server; content:"xmlrpc.php"; http_uri; content:"system.multicall"; http_client_body; classtype:web-application-attack; sid:1000068; rev:1;)
+
+#--------------------------------------------------------------------------
+# Custom Malware and Backdoor Detection
+#--------------------------------------------------------------------------
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"PHP Webshell Detection"; flow:established,to_server; pcre:"/\$_(GET|POST|REQUEST)\[.*\]\s*\(\s*\$_(GET|POST|REQUEST)/iU"; classtype:web-application-attack; sid:1000069; rev:1;)
+
+alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Encoded PHP Payload"; flow:established,to_server; pcre:"/(base64_decode|gzinflate|str_rot13|gzuncompress)\s*\(/iU"; classtype:web-application-attack; sid:1000070; rev:1;)
