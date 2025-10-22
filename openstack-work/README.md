@@ -12,36 +12,43 @@ Local development/testing system:
 
 ## Architecture
 
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Internet      │───▶│  Reverse Proxy   │───▶│   Production    │
-│   Traffic       │    │  (Nginx + Lua)   │    │   WordPress     │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                │                         │
-                                ▼                         │
-                       ┌──────────────────┐              │
-                       │ Session Manager  │              │
-                       │    (Node.js)     │              │
-                       └──────────────────┘              │
-                                │                         │
-                                ▼                         │
-                       ┌──────────────────┐              │
-                       │     Snort IDS    │              │
-                       │  (Threat Intel)  │              │
-                       └──────────────────┘              │
-                                │                         │
-                                ▼                         │
-                       ┌──────────────────┐              │
-                       │     Redis        │              │
-                       │ (Session Store)  │              │
-                       └──────────────────┘              │
-                                │                         │
-                                ▼                         │
-                       ┌──────────────────┐              │
-                       │   Honeypot       │◀─────────────┘
-                       │   WordPress      │
+todo: show that saved threat and suricata data from redis is used for immediate routing by reverse proxy so we do not wait for suricata but have realtime protection
+
+┌─────────────────┐    ┌──────────────────┐
+│   Internet      │───▶│  Reverse Proxy   │
+│   Traffic       │    │  (Nginx + Lua)   │
+└─────────────────┘    └──────────────────┘
+                                │
+                                │
+                       ┌────────┴──────────┐
+                       │                   │
+                       ▼                   ▼
+              ┌──────────────────┐    ┌──────────────────┐
+              │ Session Manager  │    │  Threat Intel    │
+              │    (Node.js)     │    │    (Python)      │
+              └──────────────────┘    └──────────────────┘
+                       │                       │
+                       └────────┬──────────────┘
+                                ▼
+                       ┌──────────────────┐
+                       │   Suricata IDS   │
+                       │ (Traffic Monitor)│
                        └──────────────────┘
-```
+                                │
+                                ▼
+                       ┌──────────────────┐
+                       │      Redis       │
+                       │  (Session Store  │
+                       │ + Threat Intel)  │
+                       └──────────────────┘
+                                │
+                       ┌────────┴──────────┐
+                       │                   │
+                       ▼                   ▼
+              ┌─────────────────┐  ┌──────────────────┐
+              │   Production    │  │   Honeypot       │
+              │   WordPress     │  │   WordPress      │
+              └─────────────────┘  └──────────────────┘
 
 ## Local development setup
 
@@ -226,4 +233,133 @@ curl -I http://localhost/ | grep X-Route-Target
 - **Regular updates** of threat intelligence feeds and vulnerability signatures
 - **Backup configuration and logs** for forensic analysis and system recovery
 
-⚠️ **Remember**: This system is designed for security research and threat analysis. Ensure proper authorization and legal compliance before deployment!
+## Service integration architecture
+
+### How Node.js Session Manager connects to Nginx Lua Session Handler
+
+The Node.js Session Manager and Nginx Lua Session Handler integrate through Redis and HTTP API calls:
+
+**1. Redis as Shared Data Store:**
+```bash
+# Both services connect to the same Redis instance
+REDIS_HOST=session_store
+REDIS_PORT=6379
+REDIS_PASSWORD=session_redis_password
+```
+
+**2. Session Data Flow:**
+- **Nginx Lua** (`lua/session_handler.lua`) creates/retrieves sessions from Redis using `session:${sessionId}` keys
+- **Node.js API** manages the same Redis keys through the `/session/*` endpoints
+- Both services use identical session data structure ensuring consistency
+
+**3. Routing Decision Process:**
+```
+Nginx Request → Lua script → Check Redis session → Make routing decision
+                    ↓
+Node.js API ← HTTP call ← Lua script (if complex analysis needed)
+                    ↓
+Redis session update ← Node.js API ← Lua script decision
+```
+
+**4. Real-time Communication:**
+- **Nginx to Node.js**: HTTP calls to `http://session_manager:3001/routing/decide` for complex routing decisions
+- **Node.js to Redis**: Direct Redis connection for session storage and retrieval
+- **Lua to Redis**: Direct Redis connection via `_G.redis_pool.get_connection()` for fast session lookups
+
+**5. Key Integration Points:**
+```lua
+-- In Nginx Lua (router.lua)
+local routing_decision = router.decide_route(session_data, threat_result, ngx.var.remote_addr)
+
+-- Makes HTTP call to Node.js when needed:
+local httpc = http.new()
+local res = httpc:request_uri("http://session_manager:3001/routing/decide", {
+    method = "POST",
+    body = cjson.encode(request_data)
+})
+```
+
+```javascript
+// In Node.js (server.js)
+app.post('/routing/decide', this.makeRoutingDecision.bind(this));
+
+async makeRoutingDecision(req, res) {
+    // Analyzes request data and updates Redis session
+    const routingDecision = await this.decideRouting(sessionData, threatAnalysis, uri);
+    await this.redisClient.setEx(`session:${sessionId}`, 86400, JSON.stringify(sessionData));
+}
+```
+
+### How Python Threat Intel connects to Nginx Lua Threat Analyzer
+
+The Python Threat Intelligence service and Nginx Lua Threat Analyzer integrate through Redis data sharing:
+
+**1. Shared Threat Data in Redis:**
+- **Python service** updates Redis keys: `threat_ips`, `malicious_agents`, `attack_patterns`, `cve_signatures`
+- **Lua scripts** read the same Redis keys for real-time threat analysis
+
+**2. Data Update Cycle:**
+```
+Python Threat Intel Service (every 1 hour)
+    ↓
+Fetch threat feeds (ipsum, feodo, blocklist.de)
+    ↓
+Update Redis keys: threat_ips, malicious_agents, cve_signatures
+    ↓
+Nginx Lua scripts read updated data in real-time
+```
+
+**3. Threat Intelligence Flow:**
+```python
+# Python threat_intel.py updates Redis
+def update_threat_ips(self):
+    threat_ips = self.fetch_external_feeds()
+    self.redis_client.set('threat_ips', json.dumps(threat_ips))
+    self.redis_client.set('malicious_agents', json.dumps(malicious_agents))
+    self.redis_client.set('cve_signatures', json.dumps(cve_data))
+```
+
+```lua
+-- Lua threat_analyzer.lua reads Redis data
+function _M.analyze_request(uri, headers, remote_ip)
+    local threat_intel = ngx.shared.threat_intel
+    local threat_ips_json = threat_intel:get("threat_ips")
+    local threats = cjson.decode(threat_ips_json)
+    
+    if threats[remote_ip] then
+        threat_result.ip_reputation = threats[remote_ip].score
+    end
+end
+```
+
+**4. Real-time Threat Analysis Integration:**
+- **Python service** runs background tasks every hour updating threat intelligence
+- **Lua scripts** cache threat data in `ngx.shared.threat_intel` for microsecond access times
+- **Redis** acts as persistent storage bridging Python updates and Lua consumption
+- **Suricata alerts** processed by both Node.js and Lua through Redis `suricata_alerts` list
+
+**5. Data Synchronization Points:**
+```python
+# Python service populates Redis with threat data
+self.redis_client.set('threat_ips', json.dumps({
+    '192.168.1.100': {'score': 85, 'reason': 'malware_c2', 'updated': time.time()}
+}))
+```
+
+```lua
+-- Lua scripts consume threat data in real-time
+local function check_ip_reputation(ip)
+    local threat_intel = ngx.shared.threat_intel
+    local threat_ips_json = threat_intel:get("threat_ips")
+    if threat_ips_json then
+        local threats = cjson.decode(threat_ips_json)
+        return threats[ip] or {score = 0, reason = "clean"}
+    end
+end
+```
+
+**6. Integration Benefits:**
+- **Sub-millisecond response times** for Lua-based routing decisions
+- **Hourly threat intelligence updates** without service restart
+- **Consistent threat data** across all system components
+- **Scalable architecture** supporting high-traffic environments
