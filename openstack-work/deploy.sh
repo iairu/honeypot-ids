@@ -355,22 +355,102 @@ start_services() {
         compose_cmd="docker compose"
     fi
     
-    # Start services
+    # Start services with proper dependency order
+    log "INFO" "Starting initialization service..."
+    $compose_cmd up -d init_setup 2>&1 | tee -a "$LOG_FILE"
+    
+    # Wait for init to complete
+    log "INFO" "Waiting for initialization to complete..."
+    $compose_cmd logs -f init_setup | tee -a "$LOG_FILE" &
+    LOGS_PID=$!
+    
+    while ! $compose_cmd ps init_setup | grep -q "Exit 0"; do
+        if $compose_cmd ps init_setup | grep -q "Exit"; then
+            log "ERROR" "Initialization failed"
+            kill $LOGS_PID 2>/dev/null || true
+            exit 1
+        fi
+        sleep 5
+    done
+    kill $LOGS_PID 2>/dev/null || true
+    
+    log "INFO" "Starting databases..."
+    $compose_cmd up -d production_database honeypot_database 2>&1 | tee -a "$LOG_FILE"
+    
+    # Wait for databases to be healthy
+    log "INFO" "Waiting for databases to be healthy..."
+    wait_for_healthy "production_database" 60
+    wait_for_healthy "honeypot_database" 60
+    
+    log "INFO" "Starting core services..."
+    $compose_cmd up -d session_store session_manager 2>&1 | tee -a "$LOG_FILE"
+    
+    # Wait for session services
+    wait_for_healthy "session_store" 30
+    wait_for_healthy "session_manager" 60
+    
+    log "INFO" "Starting WordPress instances..."
+    $compose_cmd up -d production_eshop honeypot_eshop 2>&1 | tee -a "$LOG_FILE"
+    
+    # Wait for WordPress instances
+    wait_for_healthy "production_eshop" 120
+    wait_for_healthy "honeypot_eshop" 120
+    
+    log "INFO" "Starting security services..."
+    $compose_cmd up -d snort_ids 2>&1 | tee -a "$LOG_FILE"
+    wait_for_healthy "snort_ids" 60
+    
+    log "INFO" "Starting reverse proxy..."
+    $compose_cmd up -d reverse_proxy 2>&1 | tee -a "$LOG_FILE"
+    wait_for_healthy "reverse_proxy" 60
+    
+    log "INFO" "Starting remaining services..."
     $compose_cmd up -d 2>&1 | tee -a "$LOG_FILE"
     
     if [[ ${PIPESTATUS[0]} -eq 0 ]]; then
-        log "INFO" "Services started successfully"
+        log "INFO" "All services started successfully"
     else
-        log "ERROR" "Failed to start services"
+        log "ERROR" "Failed to start some services"
         exit 1
     fi
     
-    # Wait for services to be ready
-    log "INFO" "Waiting for services to be ready..."
-    sleep 30
-    
-    # Check service health
+    # Final health check
+    log "INFO" "Performing final health checks..."
     check_service_health
+}
+
+# Wait for service to be healthy
+wait_for_healthy() {
+    local service_name=$1
+    local timeout=${2:-60}
+    local compose_cmd=""
+    
+    if command_exists docker-compose; then
+        compose_cmd="docker-compose"
+    else
+        compose_cmd="docker compose"
+    fi
+    
+    log "INFO" "Waiting for $service_name to be healthy (timeout: ${timeout}s)..."
+    
+    local count=0
+    while [[ $count -lt $timeout ]]; do
+        if $compose_cmd ps $service_name | grep -q "healthy"; then
+            log "INFO" "$service_name is healthy"
+            return 0
+        fi
+        
+        if $compose_cmd ps $service_name | grep -q "unhealthy"; then
+            log "WARN" "$service_name is unhealthy, checking logs..."
+            $compose_cmd logs --tail=10 $service_name | tee -a "$LOG_FILE"
+        fi
+        
+        sleep 5
+        count=$((count + 5))
+    done
+    
+    log "WARN" "$service_name did not become healthy within ${timeout}s"
+    return 1
 }
 
 # Check service health
@@ -387,13 +467,14 @@ check_service_health() {
     # Check session manager health
     local session_health=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3001/health 2>/dev/null || echo "000")
     if [[ "$session_health" == "200" ]]; then
-        log "INFO" "Session Manager: Healthy"
+        log "INFO" "Session Manager: Healthy (HTTP $session_health)"
     else
         log "WARN" "Session Manager: Not responding (HTTP $session_health)"
     fi
     
     # Check Redis connectivity
-    if docker exec "${PROJECT_NAME}_session_store_1" redis-cli ping >/dev/null 2>&1; then
+    local redis_container=$($compose_cmd ps -q session_store)
+    if [[ -n "$redis_container" ]] && docker exec "$redis_container" redis-cli ping >/dev/null 2>&1; then
         log "INFO" "Redis: Healthy"
     else
         log "WARN" "Redis: Not responding"
@@ -402,6 +483,12 @@ check_service_health() {
     # Check if Snort is running
     if $compose_cmd ps snort_ids | grep -q "Up"; then
         log "INFO" "Snort IDS: Running"
+        # Check if Snort is actually generating logs
+        if [[ -f "$SCRIPT_DIR/snort_logs/alert_fast" ]]; then
+            log "INFO" "Snort IDS: Log file created"
+        else
+            log "WARN" "Snort IDS: No log file found yet"
+        fi
     else
         log "WARN" "Snort IDS: Not running"
     fi
@@ -409,9 +496,31 @@ check_service_health() {
     # Check reverse proxy
     local nginx_health=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/nginx-health 2>/dev/null || echo "000")
     if [[ "$nginx_health" == "200" ]]; then
-        log "INFO" "Reverse Proxy: Healthy"
+        log "INFO" "Reverse Proxy: Healthy (HTTP $nginx_health)"
     else
         log "WARN" "Reverse Proxy: Not responding (HTTP $nginx_health)"
+    fi
+    
+    # Check WordPress instances
+    local prod_wp=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/ 2>/dev/null || echo "000")
+    if [[ "$prod_wp" =~ ^[23] ]]; then
+        log "INFO" "Production WordPress: Accessible (HTTP $prod_wp)"
+    else
+        log "WARN" "Production WordPress: Not accessible (HTTP $prod_wp)"
+    fi
+    
+    # Check SSL certificates
+    if [[ -f "$SCRIPT_DIR/ssl_certificates/server.crt" ]] && [[ -f "$SCRIPT_DIR/ssl_certificates/server.key" ]]; then
+        log "INFO" "SSL Certificates: Present"
+    else
+        log "WARN" "SSL Certificates: Missing"
+    fi
+    
+    # Check file synchronization
+    if [[ -d "$SCRIPT_DIR/honeypot_eshop_files" ]] && [[ -n "$(ls -A $SCRIPT_DIR/honeypot_eshop_files 2>/dev/null)" ]]; then
+        log "INFO" "File Synchronization: WordPress files copied to honeypot"
+    else
+        log "WARN" "File Synchronization: Honeypot files directory empty"
     fi
 }
 
@@ -491,15 +600,21 @@ display_summary() {
     echo -e "${BLUE}Useful Commands:${NC}"
     echo "  - View logs: docker-compose logs -f [service_name]"
     echo "  - Stop system: docker-compose down"
-    echo "  - Restart: docker-compose restart"
+    echo "  - Restart: docker-compose restart [service_name]"
     echo "  - View Snort alerts: tail -f snort_logs/alert_fast"
     echo "  - Check session analytics: curl http://localhost:3001/analytics/sessions"
+    echo "  - Check service health: docker-compose ps"
+    echo "  - Force file sync: docker-compose restart file_sync"
+    echo "  - Regenerate SSL: docker-compose up -d --force-recreate init_setup"
     echo ""
     echo -e "${YELLOW}Important Security Notes:${NC}"
     echo "  - Change default passwords in .env file"
     echo "  - Replace self-signed SSL certificates for production use"
     echo "  - Review and customize Snort rules for your environment"
     echo "  - Monitor log files regularly for security events"
+    echo "  - Files are automatically copied from production to honeypot on startup"
+    echo "  - SSL certificates are regenerated on each deployment"
+    echo "  - Health checks ensure proper service startup order"
     echo ""
     echo -e "${GREEN}System is ready for testing and monitoring!${NC}"
 }
