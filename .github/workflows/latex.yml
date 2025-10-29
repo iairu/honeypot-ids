@@ -1,0 +1,91 @@
+name: Build LaTeX Thesis
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'master-thesis-latex/**'
+      - '.github/workflows/latex.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'master-thesis-latex/**'
+      - '.github/workflows/latex.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+    
+    - name: Install Pygments (for minted package)
+      run: |
+        python -m pip install --upgrade pip
+        pip install Pygments
+    
+    - name: Install TeXLive
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          texlive-full \
+          texlive-latex-extra \
+          texlive-fonts-extra \
+          texlive-bibtex-extra \
+          texlive-science \
+          biber \
+          latexmk
+    
+    - name: Compile LaTeX document
+      working-directory: master-thesis-latex
+      run: |
+        # First pass with pdflatex
+        pdflatex -shell-escape -interaction=nonstopmode main.tex || true
+        
+        # Run bibtex for bibliography
+        bibtex main || true
+        
+        # Second pass with pdflatex
+        pdflatex -shell-escape -interaction=nonstopmode main.tex || true
+        
+        # Third pass to resolve all references
+        pdflatex -shell-escape -interaction=nonstopmode main.tex
+    
+    - name: Check if PDF was created
+      working-directory: master-thesis-latex
+      run: |
+        if [ -f "main.pdf" ]; then
+          echo "✓ PDF successfully generated"
+          ls -lh main.pdf
+        else
+          echo "✗ PDF generation failed"
+          exit 1
+        fi
+    
+    - name: Upload PDF artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: thesis-pdf
+        path: master-thesis-latex/main.pdf
+        retention-days: 90
+    
+    - name: Upload LaTeX logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: latex-logs
+        path: |
+          master-thesis-latex/*.log
+          master-thesis-latex/*.blg
+        retention-days: 30
