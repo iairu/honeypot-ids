@@ -7,8 +7,78 @@ local str = require "resty.string"
 
 local _M = {}
 
+-- Check if admin-ajax.php call is legitimate (not suspicious)
+function _M.is_legitimate_ajax_call(uri, method)
+    local uri_lower = string.lower(uri or "")
+    
+    -- Only check if this is admin-ajax.php
+    if not string.find(uri_lower, "admin%-ajax%.php") then
+        return false
+    end
+    
+    -- Admin-ajax.php is legitimate for GET and most POST actions
+    -- We only flag specific suspicious POST actions
+    if method == "POST" then
+        -- Read POST body to check for suspicious actions
+        ngx.req.read_body()
+        local post_data = ngx.req.get_body_data()
+        
+        if post_data then
+            local post_lower = string.lower(post_data)
+            
+            -- Suspicious actions that should be flagged
+            local suspicious_actions = {
+                "action=upload%-plugin",
+                "action=install%-plugin",
+                "action=activate",
+                "action=delete%-plugin",
+                "action=edit%-theme%-plugin%-file",
+                "action=update%-plugin",
+                "action=update%-theme",
+                "action=delete%-theme",
+                "file=%.%./"  -- Directory traversal attempt
+            }
+            
+            for _, action in ipairs(suspicious_actions) do
+                if string.find(post_lower, action) then
+                    ngx.log(ngx.WARN, "[ADMIN] 🚨 Suspicious action in admin-ajax.php: ", action)
+                    return false  -- This is suspicious
+                end
+            end
+        end
+    end
+    
+    -- Check GET parameters for suspicious patterns
+    local args = ngx.req.get_uri_args()
+    if args then
+        local action = args.action or ""
+        local action_lower = string.lower(action)
+        
+        -- Suspicious GET actions
+        local suspicious_get_actions = {
+            "upload%-plugin",
+            "install%-plugin", 
+            "delete%-plugin",
+            "edit%-theme%-plugin%-file",
+            "update%-plugin",
+            "update%-theme"
+        }
+        
+        for _, sus_action in ipairs(suspicious_get_actions) do
+            if string.find(action_lower, sus_action) then
+                ngx.log(ngx.WARN, "[ADMIN] 🚨 Suspicious GET action in admin-ajax.php: ", action)
+                return false  -- This is suspicious
+            end
+        end
+    end
+    
+    -- If we get here, it's a legitimate admin-ajax.php call
+    return true
+end
+
 -- Process admin access requests
-function _M.process_admin_request(remote_ip, uri)
+function _M.process_admin_request(remote_ip, uri)</parameter>
+</invoke>
     local admin_info = {
         ip = remote_ip,
         uri = uri,
@@ -26,19 +96,34 @@ function _M.process_admin_request(remote_ip, uri)
     
     ngx.log(ngx.INFO, "[ADMIN] 🔐 Admin area access attempt | IP: ", remote_ip, " | URI: ", uri, " | Method: ", admin_info.method)
     
-    -- Check for brute force attempts
-    local brute_force_score = _M.check_brute_force_attempts(remote_ip)
-    if brute_force_score > 50 then
-        ngx.log(ngx.ERR, "[ADMIN] 🚨 BRUTE FORCE DETECTED | IP: ", remote_ip, " | Score: ", brute_force_score, " | URI: ", uri)
-        _M.log_admin_access(admin_info, "blocked", "brute_force_detected")
-        _M.increment_threat_score(remote_ip, 30)
+    -- Check if this is a legitimate admin-ajax.php call (WordPress AJAX handler)
+    local is_legitimate_ajax = _M.is_legitimate_ajax_call(uri, admin_info.method)
+    
+    if is_legitimate_ajax then
+        ngx.log(ngx.INFO, "[ADMIN] ✅ Legitimate admin-ajax.php call | IP: ", remote_ip)
+        _M.log_admin_access(admin_info, "monitored", "legitimate_ajax")
         return
-    elseif brute_force_score > 0 then
-        ngx.log(ngx.WARN, "[ADMIN] ⚠️  Multiple admin attempts detected | IP: ", remote_ip, " | Score: ", brute_force_score)
+    end
+    
+    -- Check for brute force attempts (only for actual login endpoints)
+    local is_login = _M.is_login_attempt(uri, admin_info.method)
+    if is_login then
+        local brute_force_score = _M.check_brute_force_attempts(remote_ip)
+        if brute_force_score > 50 then
+            ngx.log(ngx.ERR, "[ADMIN] 🚨 BRUTE FORCE DETECTED | IP: ", remote_ip, " | Score: ", brute_force_score, " | URI: ", uri)
+            _M.log_admin_access(admin_info, "blocked", "brute_force_detected")
+            _M.increment_threat_score(remote_ip, 30)
+            return
+        elseif brute_force_score > 0 then
+            ngx.log(ngx.WARN, "[ADMIN] ⚠️  Multiple admin attempts detected | IP: ", remote_ip, " | Score: ", brute_force_score)
+        end
+        
+        -- Track login attempts
+        _M.track_admin_attempt(remote_ip, uri)
     end
     
     -- Analyze admin request patterns
-    local pattern_analysis = _M.analyze_admin_patterns(uri, admin_info.user_agent)
+    local pattern_analysis = _M.analyze_admin_patterns(uri, admin_info.user_agent, admin_info.method)
     if pattern_analysis.suspicious then
         ngx.log(ngx.WARN, "[ADMIN] 🔍 Suspicious admin pattern detected | IP: ", remote_ip, 
                 " | Reason: ", pattern_analysis.reason, " | Score: +", pattern_analysis.score)
@@ -46,13 +131,10 @@ function _M.process_admin_request(remote_ip, uri)
         _M.increment_threat_score(remote_ip, pattern_analysis.score)
     else
         ngx.log(ngx.INFO, "[ADMIN] ✅ Admin access pattern appears legitimate | IP: ", remote_ip)
+        _M.log_admin_access(admin_info, "monitored", "legitimate_access")
     end
-    
-    -- Track admin attempts
-    _M.track_admin_attempt(remote_ip, uri)
-    
-    -- Log legitimate admin access
-    _M.log_admin_access(admin_info, "monitored", "legitimate_access")
+</parameter>
+</invoke>
 end
 
 -- Check for brute force login attempts
@@ -110,7 +192,7 @@ function _M.check_brute_force_attempts(ip)
 end
 
 -- Analyze admin access patterns for suspicious behavior
-function _M.analyze_admin_patterns(uri, user_agent)
+function _M.analyze_admin_patterns(uri, user_agent, method)
     local analysis = {
         suspicious = false,
         reason = "clean",
@@ -121,12 +203,14 @@ function _M.analyze_admin_patterns(uri, user_agent)
     local ua_lower = string.lower(user_agent or "")
     
     -- Check for direct admin file access (bypassing login)
+    -- NOTE: admin-ajax.php is handled separately and not flagged here as it's a legitimate AJAX handler
     local direct_access_patterns = {
-        "/wp%-admin/admin%-ajax%.php",
         "/wp%-admin/admin%-post%.php",
         "/wp%-admin/users%.php",
         "/wp%-admin/user%-new%.php",
-        "/wp%-admin/options%.php"
+        "/wp%-admin/options%.php",
+        "/wp%-admin/install%.php",
+        "/wp%-admin/setup%-config%.php"
     }
     
     for _, pattern in ipairs(direct_access_patterns) do
@@ -226,34 +310,64 @@ end
 
 -- Increment threat score for IP based on admin activity
 function _M.increment_threat_score(ip, additional_score)
+    -- Update Redis for persistence
     local red, err = _G.redis_pool.get_connection()
     if not red then
         ngx.log(ngx.ERR, "Failed to connect to Redis for threat score update: ", err)
-        return
+        -- Continue to update shared memory even if Redis fails
     end
     
-    local threat_data = red:get('threat_ips') or '{}'
-    local threats = cjson.decode(threat_data)
+    local threats = {}
+    local old_score = 0
     
-    if not threats[ip] then
-        threats[ip] = {
-            score = 0,
-            reason = "clean",
-            updated = ngx.time()
-        }
+    if red then
+        local threat_data = red:get('threat_ips') or '{}'
+        threats = cjson.decode(threat_data)
+        
+        if not threats[ip] then
+            threats[ip] = {
+                score = 0,
+                reason = "clean",
+                updated = ngx.time()
+            }
+        end
+        
+        old_score = threats[ip].score
+        threats[ip].score = math.min(threats[ip].score + additional_score, 100)
+        threats[ip].admin_activity = (threats[ip].admin_activity or 0) + 1
+        threats[ip].updated = ngx.time()
+        threats[ip].reason = "suspicious_admin_activity"
+        
+        red:set('threat_ips', cjson.encode(threats))
+        _G.redis_pool.close_connection(red)
     end
     
-    local old_score = threats[ip].score
-    threats[ip].score = math.min(threats[ip].score + additional_score, 100)
-    threats[ip].admin_activity = (threats[ip].admin_activity or 0) + 1
-    threats[ip].updated = ngx.time()
-    threats[ip].reason = "suspicious_admin_activity"
+    -- Also update shared memory for immediate effect in threat_analyzer
+    local threat_intel = ngx.shared.threat_intel
+    if threat_intel then
+        local shared_threats_json = threat_intel:get("threat_ips") or '{}'
+        local shared_threats = cjson.decode(shared_threats_json)
+        
+        if not shared_threats[ip] then
+            shared_threats[ip] = {
+                score = 0,
+                reason = "clean",
+                updated = ngx.time()
+            }
+        end
+        
+        old_score = shared_threats[ip].score
+        shared_threats[ip].score = math.min(shared_threats[ip].score + additional_score, 100)
+        shared_threats[ip].admin_activity = (shared_threats[ip].admin_activity or 0) + 1
+        shared_threats[ip].updated = ngx.time()
+        shared_threats[ip].reason = "suspicious_admin_activity"
+        
+        threat_intel:set("threat_ips", cjson.encode(shared_threats))
+    end
     
     ngx.log(ngx.WARN, "[ADMIN] 📈 Threat score increased | IP: ", ip, " | Old: ", old_score, 
-            " | New: ", threats[ip].score, " | Added: +", additional_score)
-    
-    red:set('threat_ips', cjson.encode(threats))
-    _G.redis_pool.close_connection(red)
+            " | New: ", (threats[ip] and threats[ip].score or (shared_threats and shared_threats[ip] and shared_threats[ip].score or 0)), 
+            " | Added: +", additional_score)
 end
 
 -- Log admin access events
@@ -298,9 +412,9 @@ function _M.is_login_attempt(uri, method)
         return false
     end
     
+    -- Only actual login endpoints, not admin-ajax which handles general AJAX
     local login_endpoints = {
         "wp%-login%.php",
-        "wp%-admin/admin%-ajax%.php",
         "xmlrpc%.php"
     }
     
