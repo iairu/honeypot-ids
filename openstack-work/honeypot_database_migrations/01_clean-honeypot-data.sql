@@ -19,32 +19,32 @@ TRUNCATE TABLE `wp_users`;
 TRUNCATE TABLE `wp_usermeta`;
 
 -- Clean Comments
-DELETE FROM `wp_comments` WHERE `comment_ID` > 0;
-DELETE FROM `wp_commentmeta` WHERE `meta_id` > 0;
+TRUNCATE TABLE `wp_comments`;
+TRUNCATE TABLE `wp_commentmeta`;
 
 -- Clean WooCommerce Orders
-DELETE FROM `wp_wc_orders` WHERE `id` > 0;
-DELETE FROM `wp_wc_orders_meta` WHERE `id` > 0;
-DELETE FROM `wp_woocommerce_order_items` WHERE `order_item_id` > 0;
-DELETE FROM `wp_woocommerce_order_itemmeta` WHERE `meta_id` > 0;
+TRUNCATE TABLE `wp_wc_orders`;
+TRUNCATE TABLE `wp_wc_orders_meta`;
+TRUNCATE TABLE `wp_woocommerce_order_items`;
+TRUNCATE TABLE `wp_woocommerce_order_itemmeta`;
 
 -- Clean Customer Data
-DELETE FROM `wp_wc_customer_lookup` WHERE `customer_id` > 0;
+TRUNCATE TABLE `wp_wc_customer_lookup`;
 
 -- Clean Payment Tokens and API Keys
-DELETE FROM `wp_woocommerce_payment_tokens` WHERE `token_id` > 0;
-DELETE FROM `wp_woocommerce_payment_tokenmeta` WHERE `meta_id` > 0;
-DELETE FROM `wp_woocommerce_api_keys` WHERE `key_id` > 0;
+TRUNCATE TABLE `wp_woocommerce_payment_tokens`;
+TRUNCATE TABLE `wp_woocommerce_payment_tokenmeta`;
+TRUNCATE TABLE `wp_woocommerce_api_keys`;
 
 -- Clean Sessions
-DELETE FROM `wp_woocommerce_sessions` WHERE `session_id` > 0;
+TRUNCATE TABLE `wp_woocommerce_sessions`;
 
 -- Clean Logs
-DELETE FROM `wp_woocommerce_log` WHERE `log_id` > 0;
+TRUNCATE TABLE `wp_woocommerce_log`;
 
 -- Clean Action Scheduler (keep structure, remove completed actions)
 DELETE FROM `wp_actionscheduler_actions` WHERE `status` = 'complete';
-DELETE FROM `wp_actionscheduler_logs` WHERE `log_id` > 0;
+TRUNCATE TABLE `wp_actionscheduler_logs`;
 
 -- Clean post meta that might contain sensitive data
 DELETE FROM `wp_postmeta` WHERE `meta_key` LIKE '%_customer_%';
@@ -163,9 +163,9 @@ INSERT INTO `wp_wc_orders_meta` (`order_id`, `meta_key`, `meta_value`) VALUES
 -- ============================================
 -- Insert dummy customer lookup data
 INSERT INTO `wp_wc_customer_lookup` (`customer_id`, `user_id`, `username`, `first_name`, `last_name`, `email`, `date_last_active`, `date_registered`, `country`, `postcode`, `city`, `state`) VALUES
-(1, 0, '', 'Marián', 'Varga', 'zakaznik1@example.com', NOW(), NOW(), 'SK', '81101', 'Bratislava', 'Bratislavský kraj'),
-(2, 0, '', 'Zuzana', 'Tkáčová', 'zakaznik2@example.com', NOW(), NOW(), 'SK', '04001', 'Košice', 'Košický kraj'),
-(3, 0, '', 'Ján', 'Baláž', 'zakaznik3@example.com', NOW(), NOW(), 'SK', '01001', 'Žilina', 'Žilinský kraj');
+(1, 1, 'admin', 'Marián', 'Varga', 'zakaznik1@example.com', NOW(), NOW(), 'SK', '81101', 'Bratislava', 'Bratislavský kraj'),
+(2, 2, 'webmaster', 'Zuzana', 'Tkáčová', 'zakaznik2@example.com', NOW(), NOW(), 'SK', '04001', 'Košice', 'Košický kraj'),
+(3, 3, 'editor', 'Ján', 'Baláž', 'zakaznik3@example.com', NOW(), NOW(), 'SK', '01001', 'Žilina', 'Žilinský kraj');
 
 -- ============================================
 -- Update options and posts
