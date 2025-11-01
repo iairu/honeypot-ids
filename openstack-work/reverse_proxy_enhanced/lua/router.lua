@@ -296,10 +296,17 @@ function _M.is_static_asset(uri)
     
     local uri_lower = string.lower(uri)
     
+    -- Strip query string for pattern matching
+    local uri_path = uri_lower:match("^([^?]+)")
+    if not uri_path then
+        uri_path = uri_lower
+    end
+    
     -- Check against static asset patterns
     if _G.config.threat.static_asset_patterns then
         for _, pattern in ipairs(_G.config.threat.static_asset_patterns) do
-            if string.find(uri_lower, pattern) then
+            if string.find(uri_path, pattern) then
+                ngx.log(ngx.INFO, "Static asset matched: ", uri, " (pattern: ", pattern, ")")
                 return true
             end
         end

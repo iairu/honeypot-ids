@@ -13,3 +13,4 @@ redis_config/*
 ssl_certificates/*
 !ssl_certificates/placeholder
 *_diff*
+*.har
