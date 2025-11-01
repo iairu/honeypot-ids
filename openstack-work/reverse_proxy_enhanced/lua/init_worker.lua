@@ -3,11 +3,73 @@
 
 local cjson = require "cjson"
 local http = require "resty.http"
+local health_check = require "health_check"
 
 -- Worker-specific initialization
 local function init_worker()
     -- Initialize random seed for this worker
     math.randomseed(ngx.time() + ngx.worker.pid())
+    
+    -- Pre-warm connection pools to prevent 503 on first requests
+    local function prewarm_connections()
+        ngx.log(ngx.INFO, "[PREWARM] Starting connection pool pre-warming for worker ", ngx.worker.id())
+        
+        -- Wait for backends to be ready first
+        local production_ready = health_check.wait_for_backend("production_backend", "http://production_eshop", 30)
+        local honeypot_ready = health_check.wait_for_backend("honeypot_backend", "http://honeypot_eshop", 30)
+        
+        if not production_ready then
+            ngx.log(ngx.ERR, "[PREWARM] Production backend not ready, pre-warming may fail")
+        end
+        
+        if not honeypot_ready then
+            ngx.log(ngx.WARN, "[PREWARM] Honeypot backend not ready, pre-warming may fail")
+        end
+        
+        -- Pre-warm production backend connections (more connections for high traffic)
+        if production_ready then
+            local success, failed = health_check.prewarm_backend_connections(
+                "production_backend", 
+                "http://production_eshop", 
+                20  -- 20 connections for production
+            )
+            ngx.log(ngx.INFO, "[PREWARM] Production backend: ", success, " connections established, ", failed, " failed")
+        end
+        
+        -- Pre-warm honeypot backend connections (fewer connections needed)
+        if honeypot_ready then
+            local success, failed = health_check.prewarm_backend_connections(
+                "honeypot_backend", 
+                "http://honeypot_eshop", 
+                10  -- 10 connections for honeypot
+            )
+            ngx.log(ngx.INFO, "[PREWARM] Honeypot backend: ", success, " connections established, ", failed, " failed")
+        end
+        
+        ngx.log(ngx.INFO, "[PREWARM] Connection pool pre-warming completed for worker ", ngx.worker.id())
+    end
+    
+    -- Schedule pre-warming after a short delay to let services start
+    local ok, err = ngx.timer.at(3, function()
+        local success, err = pcall(prewarm_connections)
+        if not success then
+            ngx.log(ngx.ERR, "[PREWARM] Connection pre-warming failed: ", err)
+        end
+    end)
+    if not ok then
+        ngx.log(ngx.ERR, "Failed to schedule connection pre-warming: ", err)
+    end
+    
+    -- Schedule periodic health checks for backends
+    local ok, err = ngx.timer.every(10, function()
+        pcall(function()
+            health_check.perform_health_check("production_backend", "http://production_eshop")
+            health_check.perform_health_check("honeypot_backend", "http://honeypot_eshop")
+        end)
+    end)
+    if not ok then
+        ngx.log(ngx.ERR, "Failed to schedule health checks: ", err)
+    end
     
     -- Set up periodic tasks only in worker 0 to avoid duplication
     if ngx.worker.id() == 0 then
@@ -44,7 +106,7 @@ local function init_worker()
                 
                 -- Store in Redis
                 red:set("threat_ips", cjson.encode(threat_ips))
-                ngx.log(ngx.INFO, "Updated threat intelligence with ", table.getn(threat_ips), " IPs")
+                ngx.log(ngx.INFO, "Updated threat intelligence with ", #threat_ips, " IPs")
             end
             
             _G.redis_pool.close_connection(red)

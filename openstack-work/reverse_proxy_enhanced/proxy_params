@@ -16,12 +16,13 @@ proxy_set_header Connection $connection_upgrade;
 #     '' close;
 # }
 
-# Timeouts (reduced for better performance)
-proxy_connect_timeout 10s;
-proxy_send_timeout 30s;
-proxy_read_timeout 30s;
-proxy_next_upstream_timeout 10s;
-proxy_next_upstream error timeout http_502 http_503 http_504;
+# Timeouts (increased for reliability and connection pool warmup)
+proxy_connect_timeout 30s;
+proxy_send_timeout 60s;
+proxy_read_timeout 60s;
+proxy_next_upstream_timeout 20s;
+proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+proxy_next_upstream_tries 3;
 
 # Buffering
 proxy_buffering on;
