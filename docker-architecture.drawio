@@ -1,0 +1,130 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/28.2.8 Chrome/140.0.7339.240 Electron/38.4.0 Safari/537.36" version="28.2.8">
+  <diagram name="Page-1" id="5HvjjyuSFmfTnD-Ido2s">
+    <mxGraphModel dx="1584" dy="896" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-26" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="Aclirs8d1weJ0qlzPAl9-1" target="Aclirs8d1weJ0qlzPAl9-11">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-1" value="docker compose up" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="200" y="120" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-2" value="init_setup &lt;b&gt;service&lt;/b&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="200" y="240" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-3" value="Hardcopy production DB + Wordpress to honeypot (pre-setup data as dump, no SQL)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="200" y="500" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-4" value="Setup SSL certificate (self-signed)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="200" y="580" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-5" value="production_database after init" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="410" y="240" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-6" value="production_eshop after DB up" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="620" y="240" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-7" value="honeypot_database after init" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="410" y="320" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-8" value="honeypot_eshop after migrate done" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="830" y="320" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-9" value="honeypot_db_migrate after DB up" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="620" y="320" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-10" value="Honeypot online but not accessible yet (until reverse proxy)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="830" y="500" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-27" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="Aclirs8d1weJ0qlzPAl9-11" target="Aclirs8d1weJ0qlzPAl9-12">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-11" value="STAGE 1" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#ffff88;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="200" y="200" width="190" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-28" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="Aclirs8d1weJ0qlzPAl9-12" target="Aclirs8d1weJ0qlzPAl9-13">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-12" value="STAGE 1 concurently" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#ffff88;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="410" y="200" width="190" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-29" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="Aclirs8d1weJ0qlzPAl9-13" target="Aclirs8d1weJ0qlzPAl9-19">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-13" value="STAGE 2 concurently" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#ffff88;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="620" y="200" width="190" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-14" value="reverse_proxy after eshops" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="320" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-15" value="Turn on database with existing files (pre-setup woocommerce manually instead of CLI) or empty for honeypot" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="410" y="500" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-16" value="Production online but not accessible yet (until reverse proxy)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="620" y="500" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-17" value="Honeypot SQL DB migrations to copy production data and use dummy values where sensitive" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="620" y="580" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-18" value="Access through ports 80 (redirect to 443) and 443 with behavioral analysis, pattern matching and internal honeypot redirection (unnoticeable by end user) based on patterns&lt;br&gt;&lt;br&gt;&lt;br&gt;Threat scores saved to redis&lt;br&gt;Access/Error/Security logs saved into files" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="500" width="190" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-31" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="Aclirs8d1weJ0qlzPAl9-19" target="Aclirs8d1weJ0qlzPAl9-20">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-19" value="STAGE 3" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#ffff88;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="830" y="200" width="190" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-20" value="STAGE 4" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#ffff88;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="200" width="190" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-21" value="Docker Compose services" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="50" y="240" width="130" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-22" value="Healthchecks" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#ffff88;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="50" y="200" width="130" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-23" value="Service actions" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="50" y="500" width="130" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-24" value="session_store (redis) after init" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="410" y="400" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-25" value="Session store for reverse proxy assignment of threat levels etc. (Can not reuse WP sessions to keep directly upgradeable)" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="410" y="580" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-32" value="Connection to reverse_proxy, session_store or other service over VLAN to gather logs from main server" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="500" width="190" height="180" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-33" value="STAGE 1 (anytime)" style="rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;fillColor=#ffff88;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="200" width="190" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-34" value="elastic" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="260" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-36" value="logstash" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="1330" y="305" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-35" value="kibana" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="1360" y="355" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-37" value="..." style="rounded=0;whiteSpace=wrap;html=1;fillColor=#cce5ff;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="1390" y="400" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-39" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="Aclirs8d1weJ0qlzPAl9-38" target="Aclirs8d1weJ0qlzPAl9-33">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-38" value="docker compose up" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="120" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-40" value="Virtual Machine A" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="200" y="80" width="1030" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="Aclirs8d1weJ0qlzPAl9-41" value="Virtual Machine B" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#36393d;" vertex="1" parent="1">
+          <mxGeometry x="1300" y="80" width="190" height="30" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
