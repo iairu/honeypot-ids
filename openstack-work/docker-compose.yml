@@ -95,7 +95,7 @@ services:
       - production_network
       - monitoring_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/wp-admin/install.php", "||", "curl", "-f", "http://localhost/"]
+      test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -145,7 +145,7 @@ services:
       - honeypot_network
       - monitoring_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/wp-admin/install.php", "||", "curl", "-f", "http://localhost/"]
+      test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
       timeout: 10s
       retries: 3
