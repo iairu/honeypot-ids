@@ -220,9 +220,10 @@ function _M.should_route_to_honeypot(session_data)
     end
     
     -- Check for rapid requests (potential automated tool)
+    -- Increased threshold to 20 requests per second to avoid false positives
     if session_data.request_count and session_data.created_at then
         local session_duration = ngx.time() - session_data.created_at
-        if session_duration > 0 and (session_data.request_count / session_duration) > 10 then
+        if session_duration > 0 and (session_data.request_count / session_duration) > 20 then
             return true
         end
     end

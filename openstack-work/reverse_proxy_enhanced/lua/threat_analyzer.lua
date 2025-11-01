@@ -204,7 +204,7 @@ function _M.analyze_headers(headers)
     
     for _, ua in ipairs(malicious_uas) do
         if string.find(ua_lower, ua) then
-            result.score = result.score + 30
+            result.score = result.score + 50
             table.insert(result.suspicious_headers, "malicious_user_agent: " .. ua)
             break
         end
@@ -222,18 +222,13 @@ function _M.analyze_headers(headers)
         table.insert(result.suspicious_headers, "cve_2023_28121_header")
     end
     
-    -- Suspicious accept headers
-    local accept = headers["Accept"] or headers["accept"] or ""
-    if accept == "*/*" and not string.find(ua_lower, "curl") and not string.find(ua_lower, "wget") then
-        result.score = result.score + 5
-        table.insert(result.suspicious_headers, "generic_accept_header")
-    end
+    -- Suspicious accept headers (removed - many legitimate browsers send */* for certain requests)
     
-    -- Missing referer on POST requests
+    -- Missing referer on POST requests (reduced score from 10 to 5)
     if ngx.var.request_method == "POST" then
         local referer = headers["Referer"] or headers["referer"]
         if not referer then
-            result.score = result.score + 10
+            result.score = result.score + 5
             table.insert(result.suspicious_headers, "missing_referer_on_post")
         end
     end

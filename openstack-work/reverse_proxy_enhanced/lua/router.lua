@@ -138,8 +138,8 @@ function _M.decide_route(session_data, threat_result, remote_ip)
         return routing_decision
     end
     
-    -- Check for suspicious activities accumulation
-    if session_data.suspicious_activities and #session_data.suspicious_activities >= 3 then
+    -- Check for suspicious activities accumulation (increased threshold from 3 to 5)
+    if session_data.suspicious_activities and #session_data.suspicious_activities >= 5 then
         routing_decision.target = "honeypot"
         routing_decision.upstream = "honeypot_backend"
         routing_decision.update_session = true
@@ -280,12 +280,12 @@ function _M.is_rapid_automation(session_data, threat_result)
     
     local current_time = ngx.time()
     
-    -- Check request frequency
+    -- Check request frequency (increased threshold from 5 to 20 to avoid false positives)
     if session_data.created_at and session_data.request_count then
         local session_duration = current_time - session_data.created_at
         if session_duration > 0 then
             local requests_per_second = session_data.request_count / session_duration
-            if requests_per_second > 5 then
+            if requests_per_second > 20 then
                 return true
             end
         end
@@ -300,10 +300,10 @@ function _M.is_rapid_automation(session_data, threat_result)
         end
     end
     
-    -- Check timing patterns
+    -- Check timing patterns (increased threshold from 10 to 50 to avoid false positives)
     if session_data.last_activity then
         local time_diff = current_time - session_data.last_activity
-        if time_diff < 1 and session_data.request_count and session_data.request_count > 10 then
+        if time_diff < 1 and session_data.request_count and session_data.request_count > 50 then
             return true
         end
     end

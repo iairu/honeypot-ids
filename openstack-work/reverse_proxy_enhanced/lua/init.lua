@@ -27,7 +27,7 @@ _G.config = {
             "10.0.0.0/8"        -- Private networks
         },
         max_threat_score = 100,
-        honeypot_threshold = 50,
+        honeypot_threshold = 80,  -- Raised from 50 to prevent false positives
         suspicious_patterns = {
             "%.%.%/",           -- Directory traversal
             "union.*select",    -- SQL injection
