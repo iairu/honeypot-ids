@@ -1,11 +1,13 @@
 FROM openresty/openresty:alpine
 
-# Install additional packages
+# Install additional packages including perl for opm
 RUN apk add --no-cache \
     curl \
     jq \
     openssl \
-    git
+    git \
+    perl \
+    make
 
 # Install OpenResty packages using opm
 RUN /usr/local/openresty/bin/opm get ledgetech/lua-resty-http
