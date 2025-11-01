@@ -190,23 +190,23 @@ function _M.decide_route(session_data, threat_result, remote_ip)
         return routing_decision
     end
     
-    -- Probabilistic routing for moderate threat scores
-    if threat_result.score >= 25 and threat_result.score < _G.config.threat.honeypot_threshold then
-        local probability = (threat_result.score - 25) / (_G.config.threat.honeypot_threshold - 25)
-        if math.random() < probability then
-            routing_decision.target = "honeypot"
-            routing_decision.upstream = "honeypot_backend"
-            routing_decision.update_session = true
-            routing_decision.session_data = {
-                honeypot_bound = true,
-                route_preference = "honeypot",
-                threat_score = threat_result.score,
-                honeypot_reason = "probabilistic_routing"
-            }
-            
-            return routing_decision
-        end
-    end
+    -- Probabilistic routing for moderate threat scores (Commented out - change math.random for something else or remove)
+    -- if threat_result.score >= 25 and threat_result.score < _G.config.threat.honeypot_threshold then
+    --     local probability = (threat_result.score - 25) / (_G.config.threat.honeypot_threshold - 25)
+    --     if math.random() < probability then
+    --         routing_decision.target = "honeypot"
+    --         routing_decision.upstream = "honeypot_backend"
+    --         routing_decision.update_session = true
+    --         routing_decision.session_data = {
+    --             honeypot_bound = true,
+    --             route_preference = "honeypot",
+    --             threat_score = threat_result.score,
+    --             honeypot_reason = "probabilistic_routing"
+    --         }
+    --         
+    --         return routing_decision
+    --     end
+    -- end
     
     -- Update session with current threat information if staying on production
     if threat_result.suspicious or threat_result.score > 10 then
