@@ -106,6 +106,22 @@ function _M.create_session(ip_address, user_agent, initial_route)
     return session_data
 end
 
+-- Check if current request is for a static asset
+function _M.is_static_asset_request()
+    local uri = ngx.var.request_uri or ""
+    local uri_lower = string.lower(uri)
+    
+    if _G.config.threat.static_asset_patterns then
+        for _, pattern in ipairs(_G.config.threat.static_asset_patterns) do
+            if string.find(uri_lower, pattern) then
+                return true
+            end
+        end
+    end
+    
+    return false
+end
+
 -- Update existing session data
 function _M.update_session(session_id, updates)
     local session_data = _M.get_session(session_id)
@@ -122,7 +138,11 @@ function _M.update_session(session_id, updates)
     -- Update timestamps
     session_data.last_activity = ngx.time()
     session_data.expires = ngx.time() + _G.config.session.max_idle_time
-    session_data.request_count = (session_data.request_count or 0) + 1
+    
+    -- Only increment request count for non-static assets to avoid false positives
+    if not _M.is_static_asset_request() then
+        session_data.request_count = (session_data.request_count or 0) + 1
+    end
     
     -- Store updated session
     local red, err = _G.redis_pool.get_connection()

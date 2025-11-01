@@ -14,6 +14,13 @@ function _M.decide_route(session_data, threat_result, remote_ip)
         session_data = {}
     }
     
+    -- Check if request is for static assets - always route to production
+    if _M.is_static_asset(ngx.var.request_uri) then
+        routing_decision.target = "production"
+        routing_decision.upstream = "production_backend"
+        return routing_decision
+    end
+    
     -- Initialize session if not exists
     if not session_data then
         local session_handler = require "session_handler"
@@ -230,6 +237,26 @@ function _M.decide_route(session_data, threat_result, remote_ip)
     return routing_decision
 end
 
+-- Check if request is for static assets (CSS, JS, images, fonts)
+function _M.is_static_asset(uri)
+    if not uri then
+        return false
+    end
+    
+    local uri_lower = string.lower(uri)
+    
+    -- Check against static asset patterns
+    if _G.config.threat.static_asset_patterns then
+        for _, pattern in ipairs(_G.config.threat.static_asset_patterns) do
+            if string.find(uri_lower, pattern) then
+                return true
+            end
+        end
+    end
+    
+    return false
+end
+
 -- Check if the request is accessing vulnerable plugins
 function _M.is_vulnerable_plugin_access(uri)
     if not uri then
@@ -237,6 +264,11 @@ function _M.is_vulnerable_plugin_access(uri)
     end
     
     local uri_lower = string.lower(uri)
+    
+    -- Don't flag static assets from plugins as vulnerable
+    if _M.is_static_asset(uri) then
+        return false
+    end
     
     for _, plugin in ipairs(_G.config.vulnerability.plugins) do
         if string.find(uri_lower, "/wp%-content/plugins/" .. plugin .. "/") then

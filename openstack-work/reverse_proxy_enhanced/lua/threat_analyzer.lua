@@ -18,6 +18,12 @@ function _M.analyze_request(uri, headers, remote_ip)
         details = {}
     }
     
+    -- Check if request is for static assets - skip threat analysis
+    if _M.is_static_asset(uri) then
+        return threat_result  -- Return zero score for static assets
+    end
+    
+    -- Analyze URI for suspicious patterns</parameter>
     -- Analyze URI for suspicious patterns
     local uri_score = _M.analyze_uri_patterns(uri)
     threat_result.score = threat_result.score + uri_score.score
@@ -460,6 +466,26 @@ function _M.analyze_rate_limiting(ip)
     rate_limit_dict:set(rate_key, cjson.encode(rate_data), window_size)
     
     return rate_data
+end
+
+-- Check if request is for static assets (CSS, JS, images, fonts)
+function _M.is_static_asset(uri)
+    if not uri then
+        return false
+    end
+    
+    local uri_lower = string.lower(uri)
+    
+    -- Check against static asset patterns
+    if _G.config.threat.static_asset_patterns then
+        for _, pattern in ipairs(_G.config.threat.static_asset_patterns) do
+            if string.find(uri_lower, pattern) then
+                return true
+            end
+        end
+    end
+    
+    return false
 end
 
 return _M

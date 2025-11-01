@@ -28,6 +28,26 @@ _G.config = {
         },
         max_threat_score = 100,
         honeypot_threshold = 80,  -- Raised from 50 to prevent false positives
+        static_asset_patterns = {
+            "%.css",
+            "%.js",
+            "%.jpg",
+            "%.jpeg",
+            "%.png",
+            "%.gif",
+            "%.svg",
+            "%.woff",
+            "%.woff2",
+            "%.ttf",
+            "%.eot",
+            "%.ico",
+            "%.webp",
+            "/fonts/",
+            "/images/",
+            "/assets/",
+            "%.min%.css",
+            "%.min%.js"
+        },
         suspicious_patterns = {
             "%.%.%/",           -- Directory traversal
             "union.*select",    -- SQL injection
