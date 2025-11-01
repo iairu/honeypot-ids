@@ -2,8 +2,19 @@
 -- This module initializes worker-specific components and background tasks
 
 local cjson = require "cjson"
-local http = require "resty.http"
-local health_check = require "health_check"
+
+-- Try to load optional modules
+local http_ok, http = pcall(require, "resty.http")
+if not http_ok then
+    ngx.log(ngx.WARN, "lua-resty-http not available, connection pre-warming will be disabled")
+    http = nil
+end
+
+local health_check_ok, health_check = pcall(require, "health_check")
+if not health_check_ok then
+    ngx.log(ngx.WARN, "health_check module not available, health checks will be disabled")
+    health_check = nil
+end
 
 -- Worker-specific initialization
 local function init_worker()
@@ -12,6 +23,11 @@ local function init_worker()
     
     -- Pre-warm connection pools to prevent 503 on first requests
     local function prewarm_connections()
+        if not http or not health_check then
+            ngx.log(ngx.WARN, "[PREWARM] Required modules not available, skipping pre-warming")
+            return
+        end
+        
         ngx.log(ngx.INFO, "[PREWARM] Starting connection pool pre-warming for worker ", ngx.worker.id())
         
         -- Wait for backends to be ready first
@@ -61,14 +77,16 @@ local function init_worker()
     end
     
     -- Schedule periodic health checks for backends
-    local ok, err = ngx.timer.every(10, function()
-        pcall(function()
-            health_check.perform_health_check("production_backend", "http://production_eshop")
-            health_check.perform_health_check("honeypot_backend", "http://honeypot_eshop")
+    if health_check then
+        local ok, err = ngx.timer.every(10, function()
+            pcall(function()
+                health_check.perform_health_check("production_backend", "http://production_eshop")
+                health_check.perform_health_check("honeypot_backend", "http://honeypot_eshop")
+            end)
         end)
-    end)
-    if not ok then
-        ngx.log(ngx.ERR, "Failed to schedule health checks: ", err)
+        if not ok then
+            ngx.log(ngx.ERR, "Failed to schedule health checks: ", err)
+        end
     end
     
     -- Set up periodic tasks only in worker 0 to avoid duplication
@@ -82,6 +100,12 @@ local function init_worker()
             end
             
             -- Update IP reputation data
+            if not http then
+                ngx.log(ngx.DEBUG, "Skipping threat intel update - lua-resty-http not available")
+                _G.redis_pool.close_connection(red)
+                return
+            end
+            
             local httpc = http.new()
             local res, err = httpc:request_uri("https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt", {
                 method = "GET",
