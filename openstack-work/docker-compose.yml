@@ -15,7 +15,7 @@ services:
       echo 'Starting initialization setup...'
       
       # Copy production files to honeypot (overwrite existing)
-      if [ -d '/source_files' ] && [ -n \"\$$(find /source_files -mindepth 1 -maxdepth 1)\" ]; then
+      if [ -d '/source_files' ] && [ -n \"$$(find /source_files -mindepth 1 -maxdepth 1)\" ]; then
         echo 'Copying production WordPress files to honeypot...'
         find /dest_files -mindepth 1 -delete
         cp -a /source_files/. /dest_files/ 2>/dev/null || echo 'No files to copy yet'
@@ -24,7 +24,7 @@ services:
       fi
       
       # Copy production database to honeypot (overwrite existing)
-      if [ -d '/source_db' ] && [ -n \"\$$(find /source_db -mindepth 1 -maxdepth 1)\" ]; then
+      if [ -d '/source_db' ] && [ -n \"$$(find /source_db -mindepth 1 -maxdepth 1)\" ]; then
         echo 'Copying production database to honeypot...'
         find /dest_db -mindepth 1 -delete
         cp -a /source_db/. /dest_db/ 2>/dev/null || echo 'No database files to copy yet'
@@ -72,16 +72,16 @@ services:
       echo 'Applying honeypot database migrations...'
       
       # Check if migrations directory exists and has SQL files
-      if [ -d '/migrations' ] && [ -n \"\$$(find /migrations -name '*.sql' -type f)\" ]; then
+      if [ -d '/migrations' ] && [ -n \"$$(find /migrations -name '*.sql' -type f)\" ]; then
         # Apply migrations in order
         for migration in /migrations/*.sql; do
-          if [ -f \"\$migration\" ]; then
-            echo \"Applying migration: \$migration\"
-            mysql -h\$MYSQL_HOST -u\$MYSQL_USER -p\$MYSQL_PASSWORD \$MYSQL_DATABASE < \"\$migration\"
-            if [ \$? -eq 0 ]; then
-              echo \"✓ Migration \$migration applied successfully\"
+          if [ -f \"$$migration\" ]; then
+            echo \"Applying migration: $$migration\"
+            mysql -h$$MYSQL_HOST -u$$MYSQL_USER -p$$MYSQL_PASSWORD $$MYSQL_DATABASE < \"$$migration\"
+            if [ $$? -eq 0 ]; then
+              echo \"✓ Migration $$migration applied successfully\"
             else
-              echo \"✗ Migration \$migration failed\"
+              echo \"✗ Migration $$migration failed\"
               exit 1
             fi
           fi
