@@ -30,7 +30,7 @@ local function init_worker()
         
         ngx.log(ngx.INFO, "[PREWARM] Starting connection pool pre-warming for worker ", ngx.worker.id())
         
-        -- Wait for backends to be ready first
+        -- Wait for backends to be ready first (using root path since WordPress doesn't have /nginx-health)
         local production_ready = health_check.wait_for_backend("production_backend", "http://production_eshop", 30)
         local honeypot_ready = health_check.wait_for_backend("honeypot_backend", "http://honeypot_eshop", 30)
         
@@ -80,6 +80,7 @@ local function init_worker()
     if health_check then
         local ok, err = ngx.timer.every(10, function()
             pcall(function()
+                -- Health checks now use root path which returns 200-399 for WordPress
                 health_check.perform_health_check("production_backend", "http://production_eshop")
                 health_check.perform_health_check("honeypot_backend", "http://honeypot_eshop")
             end)

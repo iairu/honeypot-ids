@@ -20,7 +20,8 @@ function _M.check_backend(backend_name, backend_url)
     local httpc = http.new()
     httpc:set_timeouts(2000, 2000, 2000) -- 2s for all operations
     
-    local health_endpoint = backend_url .. "/nginx-health"
+    -- Use root path instead of /nginx-health since WordPress doesn't have that endpoint
+    local health_endpoint = backend_url .. "/"
     
     -- Try to connect to backend
     local res, err = httpc:request_uri(health_endpoint, {
@@ -34,7 +35,8 @@ function _M.check_backend(backend_name, backend_url)
         return false, err
     end
     
-    if res.status >= 200 and res.status < 300 then
+    -- Accept 200-399 status codes (including redirects) as healthy
+    if res.status >= 200 and res.status < 400 then
         ngx.log(ngx.DEBUG, "[HEALTH] Backend ", backend_name, " is healthy (status: ", res.status, ")")
         return true
     else
