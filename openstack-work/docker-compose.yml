@@ -132,6 +132,8 @@ services:
       - WORDPRESS_DB_NAME=production_database
       - WORDPRESS_DB_USER=production_user
       - WORDPRESS_DB_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
+    ports:
+      - "80:80" # temporary port for direct access
     volumes:
       - ./production_eshop_files:/var/www/html
     networks:
@@ -184,6 +186,8 @@ services:
       - WORDPRESS_DB_NAME=production_database
       - WORDPRESS_DB_USER=production_user
       - WORDPRESS_DB_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
+    ports:
+      - "8080:80" # temporary port for direct access
     volumes:
       - ./honeypot_eshop_files:/var/www/html
     networks:
@@ -309,7 +313,7 @@ services:
       #suricata_ids:
       #  condition: service_healthy
     ports:
-      - "80:80"
+      # - "80:80"
       - "443:443"
     volumes:
       - ./reverse_proxy_enhanced:/etc/nginx
