@@ -16,12 +16,16 @@ function _M.analyze_upload(headers, args)
         upload_type = "unknown"
     }
     
+    ngx.log(ngx.INFO, "[UPLOAD] 📤 Analyzing potential upload request | IP: ", ngx.var.remote_addr, " | URI: ", ngx.var.request_uri)
+    
     -- Check if this is actually a file upload
     local content_type = headers["Content-Type"] or headers["content-type"] or ""
     if not _M.is_file_upload(content_type, args) then
+        ngx.log(ngx.INFO, "[UPLOAD] ℹ️  Not a file upload request")
         return analysis
     end
     
+    ngx.log(ngx.INFO, "[UPLOAD] 📎 File upload detected | Content-Type: ", content_type:sub(1, 50))
     analysis.upload_type = "file_upload"
     
     -- Analyze content type for suspicious patterns
@@ -29,6 +33,7 @@ function _M.analyze_upload(headers, args)
     analysis.threat_score = analysis.threat_score + ct_analysis.score
     if ct_analysis.suspicious then
         table.insert(analysis.risk_factors, ct_analysis.reason)
+        ngx.log(ngx.WARN, "[UPLOAD] ⚠️  Suspicious content type (+", ct_analysis.score, ") | Reason: ", ct_analysis.reason)
     end
     
     -- Analyze upload parameters
@@ -36,6 +41,7 @@ function _M.analyze_upload(headers, args)
     analysis.threat_score = analysis.threat_score + param_analysis.score
     for _, factor in ipairs(param_analysis.risk_factors) do
         table.insert(analysis.risk_factors, factor)
+        ngx.log(ngx.WARN, "[UPLOAD] ⚠️  Suspicious parameter (+", param_analysis.score, ") | Factor: ", factor)
     end
     
     -- Check for known vulnerable upload endpoints
@@ -43,6 +49,7 @@ function _M.analyze_upload(headers, args)
     analysis.threat_score = analysis.threat_score + endpoint_analysis.score
     for _, factor in ipairs(endpoint_analysis.risk_factors) do
         table.insert(analysis.risk_factors, factor)
+        ngx.log(ngx.ERR, "[UPLOAD] 🎯 Vulnerable endpoint detected (+", endpoint_analysis.score, ") | Factor: ", factor)
     end
     
     -- Analyze user agent for automation tools
@@ -50,6 +57,7 @@ function _M.analyze_upload(headers, args)
     analysis.threat_score = analysis.threat_score + ua_analysis.score
     for _, factor in ipairs(ua_analysis.risk_factors) do
         table.insert(analysis.risk_factors, factor)
+        ngx.log(ngx.WARN, "[UPLOAD] 🤖 Automated tool detected (+", ua_analysis.score, ") | Factor: ", factor)
     end
     
     -- Check for file upload bypass techniques
@@ -57,14 +65,20 @@ function _M.analyze_upload(headers, args)
     analysis.threat_score = analysis.threat_score + bypass_analysis.score
     for _, factor in ipairs(bypass_analysis.risk_factors) do
         table.insert(analysis.risk_factors, factor)
+        ngx.log(ngx.ERR, "[UPLOAD] 🚨 Upload bypass technique detected (+", bypass_analysis.score, ") | Factor: ", factor)
     end
     
     -- Determine if upload is suspicious
     analysis.is_suspicious = analysis.threat_score >= 30 or #analysis.risk_factors >= 2
     
-    -- Log suspicious uploads
+    -- Log final analysis
     if analysis.is_suspicious then
+        ngx.log(ngx.ERR, "[UPLOAD] 🚨 SUSPICIOUS UPLOAD DETECTED | Score: ", analysis.threat_score, 
+                " | Risk Factors: ", #analysis.risk_factors, " | Factors: ", table.concat(analysis.risk_factors, ", "))
         _M.log_suspicious_upload(analysis, headers, args)
+    else
+        ngx.log(ngx.INFO, "[UPLOAD] ✅ Upload appears clean | Score: ", analysis.threat_score, 
+                " | Risk Factors: ", #analysis.risk_factors)
     end
     
     return analysis.is_suspicious

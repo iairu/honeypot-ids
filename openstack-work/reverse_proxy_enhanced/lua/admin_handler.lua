@@ -19,23 +19,33 @@ function _M.process_admin_request(remote_ip, uri)
     
     -- Check if IP is whitelisted for admin access
     if _G.utils.is_ip_whitelisted(remote_ip) then
+        ngx.log(ngx.INFO, "[ADMIN] ✅ Whitelisted IP accessing admin area | IP: ", remote_ip, " | URI: ", uri)
         _M.log_admin_access(admin_info, "allowed", "whitelisted_ip")
         return
     end
     
+    ngx.log(ngx.INFO, "[ADMIN] 🔐 Admin area access attempt | IP: ", remote_ip, " | URI: ", uri, " | Method: ", admin_info.method)
+    
     -- Check for brute force attempts
     local brute_force_score = _M.check_brute_force_attempts(remote_ip)
     if brute_force_score > 50 then
+        ngx.log(ngx.ERR, "[ADMIN] 🚨 BRUTE FORCE DETECTED | IP: ", remote_ip, " | Score: ", brute_force_score, " | URI: ", uri)
         _M.log_admin_access(admin_info, "blocked", "brute_force_detected")
         _M.increment_threat_score(remote_ip, 30)
         return
+    elseif brute_force_score > 0 then
+        ngx.log(ngx.WARN, "[ADMIN] ⚠️  Multiple admin attempts detected | IP: ", remote_ip, " | Score: ", brute_force_score)
     end
     
     -- Analyze admin request patterns
     local pattern_analysis = _M.analyze_admin_patterns(uri, admin_info.user_agent)
     if pattern_analysis.suspicious then
+        ngx.log(ngx.WARN, "[ADMIN] 🔍 Suspicious admin pattern detected | IP: ", remote_ip, 
+                " | Reason: ", pattern_analysis.reason, " | Score: +", pattern_analysis.score)
         _M.log_admin_access(admin_info, "suspicious", pattern_analysis.reason)
         _M.increment_threat_score(remote_ip, pattern_analysis.score)
+    else
+        ngx.log(ngx.INFO, "[ADMIN] ✅ Admin access pattern appears legitimate | IP: ", remote_ip)
     end
     
     -- Track admin attempts
@@ -79,10 +89,13 @@ function _M.check_brute_force_attempts(ip)
     local score = 0
     if attempts_data.count >= 10 then
         score = 80  -- High score for many attempts
+        ngx.log(ngx.ERR, "[ADMIN] 🚨 High brute force score | IP: ", ip, " | Attempts: ", attempts_data.count, " | Score: ", score)
     elseif attempts_data.count >= 5 then
         score = 50  -- Medium score for moderate attempts
+        ngx.log(ngx.WARN, "[ADMIN] ⚠️  Moderate brute force score | IP: ", ip, " | Attempts: ", attempts_data.count, " | Score: ", score)
     elseif attempts_data.count >= 3 then
         score = 25  -- Low score for few attempts
+        ngx.log(ngx.INFO, "[ADMIN] ⚡ Low brute force score | IP: ", ip, " | Attempts: ", attempts_data.count, " | Score: ", score)
     end
     
     -- Check for rapid succession attempts
@@ -121,6 +134,7 @@ function _M.analyze_admin_patterns(uri, user_agent)
             analysis.suspicious = true
             analysis.reason = "direct_admin_file_access"
             analysis.score = 20
+            ngx.log(ngx.WARN, "[ADMIN] 🔍 Direct admin file access detected | Pattern: ", pattern, " | URI: ", uri)
             break
         end
     end
@@ -130,6 +144,7 @@ function _M.analyze_admin_patterns(uri, user_agent)
         analysis.suspicious = true
         analysis.reason = "user_enumeration"
         analysis.score = 25
+        ngx.log(ngx.WARN, "[ADMIN] 🔍 User enumeration attempt detected | URI: ", uri)
     end
     
     -- Check for plugin/theme enumeration
@@ -137,6 +152,7 @@ function _M.analyze_admin_patterns(uri, user_agent)
         analysis.suspicious = true
         analysis.reason = "plugin_enumeration"
         analysis.score = 15
+        ngx.log(ngx.WARN, "[ADMIN] 🔍 Plugin enumeration attempt detected | URI: ", uri)
     end
     
     -- Check for automated tool signatures in admin context
@@ -149,6 +165,7 @@ function _M.analyze_admin_patterns(uri, user_agent)
             analysis.suspicious = true
             analysis.reason = "automated_admin_tool"
             analysis.score = 35
+            ngx.log(ngx.ERR, "[ADMIN] 🤖 Automated tool detected in admin area | Pattern: ", pattern, " | UA: ", user_agent:sub(1, 50))
             break
         end
     end
@@ -226,10 +243,14 @@ function _M.increment_threat_score(ip, additional_score)
         }
     end
     
+    local old_score = threats[ip].score
     threats[ip].score = math.min(threats[ip].score + additional_score, 100)
     threats[ip].admin_activity = (threats[ip].admin_activity or 0) + 1
     threats[ip].updated = ngx.time()
     threats[ip].reason = "suspicious_admin_activity"
+    
+    ngx.log(ngx.WARN, "[ADMIN] 📈 Threat score increased | IP: ", ip, " | Old: ", old_score, 
+            " | New: ", threats[ip].score, " | Added: +", additional_score)
     
     red:set('threat_ips', cjson.encode(threats))
     _G.redis_pool.close_connection(red)
@@ -250,9 +271,17 @@ function _M.log_admin_access(admin_info, status, reason)
         server_name = ngx.var.server_name or "unknown"
     }
     
-    -- Log to Nginx error log
+    -- Log to Nginx error log with emoji indicators
+    local status_emoji = {
+        blocked = "🚫",
+        suspicious = "⚠️",
+        allowed = "✅",
+        monitored = "👀"
+    }
+    local emoji = status_emoji[status] or "📝"
     local log_level = (status == "blocked" or status == "suspicious") and ngx.ERR or ngx.INFO
-    ngx.log(log_level, "ADMIN_ACCESS: ", cjson.encode(log_entry))
+    ngx.log(log_level, "[ADMIN ACCESS] ", emoji, " Status: ", status, " | Reason: ", reason, 
+            " | IP: ", admin_info.ip, " | URI: ", admin_info.uri)
     
     -- Store in Redis for analytics
     local red, err = _G.redis_pool.get_connection()

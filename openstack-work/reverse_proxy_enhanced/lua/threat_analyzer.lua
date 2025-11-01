@@ -18,15 +18,22 @@ function _M.analyze_request(uri, headers, remote_ip)
         details = {}
     }
     
+    ngx.log(ngx.INFO, "[THREAT ANALYZER] Starting analysis for: ", uri or "unknown", " | IP: ", remote_ip)
+    
     -- Check if request is for static assets - skip threat analysis
     if _M.is_static_asset(uri) then
+        ngx.log(ngx.INFO, "[THREAT ANALYZER] ✅ Static asset - threat analysis skipped")
         return threat_result  -- Return zero score for static assets
     end
     
-    -- Analyze URI for suspicious patterns</parameter>
     -- Analyze URI for suspicious patterns
     local uri_score = _M.analyze_uri_patterns(uri)
     threat_result.score = threat_result.score + uri_score.score
+    
+    if uri_score.score > 0 then
+        ngx.log(ngx.WARN, "[THREAT ANALYZER] 🔍 URI patterns matched (+", uri_score.score, ") | Patterns: ", 
+                table.concat(uri_score.patterns or {}, ", "))
+    end
     
     if uri_score.patterns then
         for _, pattern in ipairs(uri_score.patterns) do
@@ -42,6 +49,10 @@ function _M.analyze_request(uri, headers, remote_ip)
         for _, header in ipairs(header_score.suspicious_headers) do
             table.insert(threat_result.details, "suspicious_header: " .. header)
         end
+        if header_score.score > 0 then
+            ngx.log(ngx.WARN, "[THREAT ANALYZER] 🔍 Suspicious headers (+", header_score.score, ") | Details: ", 
+                    table.concat(header_score.suspicious_headers, ", "))
+        end
     end
     
     -- Check CVE-specific patterns
@@ -52,6 +63,10 @@ function _M.analyze_request(uri, headers, remote_ip)
         for _, cve in ipairs(cve_score.cves) do
             table.insert(threat_result.cve_matched, cve)
         end
+        if #cve_score.cves > 0 then
+            ngx.log(ngx.ERR, "[THREAT ANALYZER] 🎯 CVE PATTERNS DETECTED (+", cve_score.score, ") | CVEs: ", 
+                    table.concat(cve_score.cves, ", "))
+        end
     end
     
     -- Check IP reputation
@@ -61,11 +76,20 @@ function _M.analyze_request(uri, headers, remote_ip)
     
     if ip_rep.reason then
         table.insert(threat_result.details, "ip_reputation: " .. ip_rep.reason)
+        if ip_rep.score > 0 then
+            ngx.log(ngx.WARN, "[THREAT ANALYZER] 🚫 Bad IP reputation (+", ip_rep.score, ") | Reason: ", ip_rep.reason)
+        elseif ip_rep.score < 0 then
+            ngx.log(ngx.INFO, "[THREAT ANALYZER] ✅ Whitelisted IP (", ip_rep.score, ") | Reason: ", ip_rep.reason)
+        end
     end
     
     -- Analyze request method and parameters
     local method_score = _M.analyze_request_method()
     threat_result.score = threat_result.score + method_score.score
+    
+    if method_score.score > 0 then
+        ngx.log(ngx.WARN, "[THREAT ANALYZER] 🔍 Suspicious request method (+", method_score.score, ")")
+    end
     
     -- Check for automated tools
     local automation_score = _M.detect_automation(headers, uri)
@@ -73,10 +97,25 @@ function _M.analyze_request(uri, headers, remote_ip)
     
     if automation_score.detected then
         table.insert(threat_result.details, "automation_detected: " .. automation_score.tool)
+        ngx.log(ngx.WARN, "[THREAT ANALYZER] 🤖 Automation detected (+", automation_score.score, ") | Tool: ", 
+                automation_score.tool or "unknown")
     end
     
     -- Determine if request is suspicious
     threat_result.suspicious = threat_result.score >= _G.config.threat.honeypot_threshold
+    
+    -- Log final threat score
+    if threat_result.score >= _G.config.threat.honeypot_threshold then
+        ngx.log(ngx.ERR, "[THREAT ANALYZER] 🚨 FINAL SCORE: ", threat_result.score, 
+                "/", _G.config.threat.honeypot_threshold, " (SUSPICIOUS) | IP: ", remote_ip, 
+                " | Patterns: ", #threat_result.patterns_matched, " | CVEs: ", #threat_result.cve_matched)
+    elseif threat_result.score > 20 then
+        ngx.log(ngx.WARN, "[THREAT ANALYZER] ⚠️  FINAL SCORE: ", threat_result.score, 
+                "/", _G.config.threat.honeypot_threshold, " (elevated but below threshold) | IP: ", remote_ip)
+    else
+        ngx.log(ngx.INFO, "[THREAT ANALYZER] ✅ FINAL SCORE: ", threat_result.score, 
+                "/", _G.config.threat.honeypot_threshold, " (clean) | IP: ", remote_ip)
+    end
     
     -- Log high-threat requests
     if threat_result.score > 70 then
@@ -322,6 +361,7 @@ function _M.check_ip_reputation(ip)
     if _G.utils.is_ip_whitelisted(ip) then
         result.score = -20  -- Negative score for whitelisted IPs
         result.reason = "whitelisted"
+        ngx.log(ngx.INFO, "[THREAT ANALYZER] ✅ IP is whitelisted: ", ip)
         return result
     end
     
@@ -334,6 +374,7 @@ function _M.check_ip_reputation(ip)
         if threat_ips[ip] then
             result.score = threat_ips[ip].score or 50
             result.reason = threat_ips[ip].reason or "known_threat"
+            ngx.log(ngx.ERR, "[THREAT ANALYZER] 🚨 Known threat IP detected: ", ip, " | Reason: ", result.reason)
         end
     end
     

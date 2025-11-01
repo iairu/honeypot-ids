@@ -98,9 +98,10 @@ function _M.create_session(ip_address, user_agent, initial_route)
         local sessions_dict = ngx.shared.sessions
         sessions_dict:set("session:" .. session_id, session_json, 300)
         
-        ngx.log(ngx.INFO, "Created new session: ", session_id, " for IP: ", ip_address)
+        ngx.log(ngx.INFO, "[SESSION] ✅ Created new session: ", session_id, " for IP: ", ip_address, 
+                " | User-Agent: ", (user_agent or "none"):sub(1, 50), " | Initial Route: ", initial_route or "production")
     else
-        ngx.log(ngx.ERR, "Failed to store session in Redis: ", err)
+        ngx.log(ngx.ERR, "[SESSION] ❌ Failed to store session in Redis: ", err)
     end
     
     return session_data
@@ -126,9 +127,16 @@ end
 function _M.update_session(session_id, updates)
     local session_data = _M.get_session(session_id)
     if not session_data then
-        ngx.log(ngx.WARN, "Attempted to update non-existent session: ", session_id)
+        ngx.log(ngx.WARN, "[SESSION] ⚠️  Attempted to update non-existent session: ", session_id)
         return false
     end
+    
+    -- Log what's being updated
+    local update_keys = {}
+    for key, _ in pairs(updates) do
+        table.insert(update_keys, key)
+    end
+    ngx.log(ngx.INFO, "[SESSION] 🔄 Updating session: ", session_id, " | Fields: ", table.concat(update_keys, ", "))
     
     -- Apply updates
     for key, value in pairs(updates) do
@@ -155,9 +163,14 @@ function _M.update_session(session_id, updates)
         local sessions_dict = ngx.shared.sessions
         sessions_dict:set("session:" .. session_id, session_json, 300)
         
+        ngx.log(ngx.INFO, "[SESSION] ✅ Session updated successfully | ID: ", session_id, 
+                " | Request Count: ", session_data.request_count or 0, 
+                " | Threat Score: ", session_data.threat_score or 0,
+                " | Route: ", session_data.route_preference or "production")
+        
         return true
     else
-        ngx.log(ngx.ERR, "Failed to update session in Redis: ", err)
+        ngx.log(ngx.ERR, "[SESSION] ❌ Failed to update session in Redis: ", err)
         return false
     end
 end
@@ -193,6 +206,9 @@ function _M.mark_compromised(session_id, reason)
     local success = _M.update_session(session_id, updates)
     
     if success then
+        ngx.log(ngx.ERR, "[SESSION] 🚨 SESSION COMPROMISED | ID: ", session_id, 
+                " | Reason: ", reason, " | IP: ", ngx.var.remote_addr, " | URI: ", ngx.var.request_uri)
+        
         -- Log security event
         _G.utils.log_security_event("session_compromised", {
             session_id = session_id,
@@ -295,6 +311,10 @@ function _M.get_or_create_session()
         end
         
         ngx.header["Set-Cookie"] = _G.config.session.cookie_name .. "=" .. cookie_value
+        ngx.log(ngx.INFO, "[SESSION] 🍪 Setting session cookie for new session: ", session_data.id)
+    else
+        ngx.log(ngx.INFO, "[SESSION] 🔄 Using existing session: ", session_data.id, 
+                " | Request #", session_data.request_count or 0, " | Threat Score: ", session_data.threat_score or 0)
     end
     
     return session_data
@@ -311,12 +331,15 @@ function _M.analyze_session_anomalies(session_data)
     -- Check for IP changes
     if session_data.ip_address ~= ngx.var.remote_addr then
         table.insert(anomalies, "ip_change")
+        ngx.log(ngx.WARN, "[SESSION] ⚠️  IP address changed | Session: ", session_data.id or "unknown", 
+                " | Old: ", session_data.ip_address, " | New: ", ngx.var.remote_addr)
     end
     
     -- Check for user agent changes
     local current_ua = ngx.var.http_user_agent or ""
     if session_data.user_agent ~= current_ua then
         table.insert(anomalies, "user_agent_change")
+        ngx.log(ngx.WARN, "[SESSION] ⚠️  User-Agent changed | Session: ", session_data.id or "unknown")
     end
     
     -- Check for suspicious user agents
@@ -328,6 +351,8 @@ function _M.analyze_session_anomalies(session_data)
         for _, agent in ipairs(malicious_agents) do
             if string.find(ua_lower, string.lower(agent)) then
                 table.insert(anomalies, "malicious_user_agent")
+                ngx.log(ngx.ERR, "[SESSION] 🚨 Malicious User-Agent detected | Agent: ", agent, 
+                        " | Session: ", session_data.id or "unknown")
                 break
             end
         end
@@ -338,6 +363,8 @@ function _M.analyze_session_anomalies(session_data)
         local time_diff = ngx.time() - session_data.last_activity
         if time_diff < 1 and session_data.request_count > 5 then
             table.insert(anomalies, "rapid_requests")
+            ngx.log(ngx.WARN, "[SESSION] ⚠️  Rapid requests detected | Session: ", session_data.id or "unknown", 
+                    " | Count: ", session_data.request_count, " | Time diff: ", time_diff, "s")
         end
     end
     

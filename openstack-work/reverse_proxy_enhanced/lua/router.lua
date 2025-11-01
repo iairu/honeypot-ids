@@ -18,6 +18,7 @@ function _M.decide_route(session_data, threat_result, remote_ip)
     if _M.is_static_asset(ngx.var.request_uri) then
         routing_decision.target = "production"
         routing_decision.upstream = "production_backend"
+        ngx.log(ngx.INFO, "[ROUTING] Static asset detected: ", ngx.var.request_uri, " -> PRODUCTION")
         return routing_decision
     end
     
@@ -27,12 +28,16 @@ function _M.decide_route(session_data, threat_result, remote_ip)
         session_data = session_handler.create_session(remote_ip, ngx.var.http_user_agent, "production")
         routing_decision.update_session = true
         routing_decision.session_data = session_data
+        ngx.log(ngx.INFO, "[ROUTING] New session created for IP: ", remote_ip, " | Session ID: ", session_data.id)
     end
     
     -- Check if already bound to honeypot
     if session_data.honeypot_bound then
         routing_decision.target = "honeypot"
         routing_decision.upstream = "honeypot_backend"
+        ngx.log(ngx.WARN, "[ROUTING] ⚠️  Session bound to HONEYPOT | Session: ", session_data.id or "unknown", 
+                " | IP: ", remote_ip, " | Reason: ", session_data.honeypot_reason or "unknown", 
+                " | URI: ", ngx.var.request_uri)
         return routing_decision
     end
     
@@ -47,6 +52,10 @@ function _M.decide_route(session_data, threat_result, remote_ip)
             threat_score = threat_result.score,
             honeypot_reason = "high_threat_score"
         }
+        
+        ngx.log(ngx.WARN, "[ROUTING] 🚨 HIGH THREAT SCORE -> HONEYPOT | Score: ", threat_result.score, 
+                "/", _G.config.threat.honeypot_threshold, " | IP: ", remote_ip, 
+                " | URI: ", ngx.var.request_uri, " | Patterns: ", table.concat(threat_result.patterns_matched or {}, ", "))
         
         _G.utils.log_security_event("routing_to_honeypot", {
             reason = "high_threat_score",
@@ -71,6 +80,10 @@ function _M.decide_route(session_data, threat_result, remote_ip)
             matched_cves = threat_result.cve_matched
         }
         
+        ngx.log(ngx.WARN, "[ROUTING] 🎯 CVE EXPLOIT DETECTED -> HONEYPOT | CVEs: ", 
+                table.concat(threat_result.cve_matched, ", "), " | Score: ", threat_result.score, 
+                " | IP: ", remote_ip, " | URI: ", ngx.var.request_uri)
+        
         _G.utils.log_security_event("routing_to_honeypot", {
             reason = "cve_pattern_match",
             cves = threat_result.cve_matched,
@@ -94,6 +107,9 @@ function _M.decide_route(session_data, threat_result, remote_ip)
             honeypot_reason = "vulnerable_plugin_access"
         }
         
+        ngx.log(ngx.WARN, "[ROUTING] 🔌 VULNERABLE PLUGIN ACCESS -> HONEYPOT | Score: ", 
+                math.max(threat_result.score, 60), " | IP: ", remote_ip, " | URI: ", uri)
+        
         _G.utils.log_security_event("routing_to_honeypot", {
             reason = "vulnerable_plugin_access",
             uri = uri,
@@ -116,6 +132,10 @@ function _M.decide_route(session_data, threat_result, remote_ip)
             honeypot_reason = "bad_ip_reputation"
         }
         
+        ngx.log(ngx.WARN, "[ROUTING] 🚫 BAD IP REPUTATION -> HONEYPOT | IP Rep Score: ", 
+                threat_result.ip_reputation, " | Threat Score: ", threat_result.score, 
+                " | IP: ", remote_ip, " | URI: ", uri)
+        
         return routing_decision
     end
     
@@ -133,6 +153,9 @@ function _M.decide_route(session_data, threat_result, remote_ip)
                 threat_score = math.max(threat_result.score, 40),
                 honeypot_reason = "multiple_admin_attempts"
             }
+            ngx.log(ngx.WARN, "[ROUTING] 🔐 MULTIPLE ADMIN ATTEMPTS -> HONEYPOT | Attempts: ", 
+                    admin_attempts + 1, " | Score: ", math.max(threat_result.score, 40), 
+                    " | IP: ", remote_ip, " | URI: ", uri)
         else
             -- Increment admin attempts but stay on production
             routing_decision.update_session = true
@@ -140,6 +163,9 @@ function _M.decide_route(session_data, threat_result, remote_ip)
                 admin_attempts = admin_attempts + 1,
                 threat_score = math.max(session_data.threat_score or 0, threat_result.score)
             }
+            ngx.log(ngx.INFO, "[ROUTING] ⚠️  Admin access attempt #", admin_attempts + 1, 
+                    " -> PRODUCTION (warning) | Score: ", threat_result.score, 
+                    " | IP: ", remote_ip, " | URI: ", uri)
         end
         
         return routing_decision
@@ -157,6 +183,10 @@ function _M.decide_route(session_data, threat_result, remote_ip)
             honeypot_reason = "accumulated_suspicious_activities"
         }
         
+        ngx.log(ngx.WARN, "[ROUTING] 📊 ACCUMULATED SUSPICIOUS ACTIVITIES -> HONEYPOT | Count: ", 
+                #session_data.suspicious_activities, " | Score: ", threat_result.score, 
+                " | IP: ", remote_ip, " | URI: ", uri)
+        
         return routing_decision
     end
     
@@ -172,6 +202,10 @@ function _M.decide_route(session_data, threat_result, remote_ip)
             honeypot_reason = "rapid_automation_detected"
         }
         
+        ngx.log(ngx.WARN, "[ROUTING] 🤖 RAPID AUTOMATION DETECTED -> HONEYPOT | Score: ", 
+                math.max(threat_result.score, 45), " | IP: ", remote_ip, 
+                " | Request Count: ", session_data.request_count or 0, " | URI: ", uri)
+        
         return routing_decision
     end
     
@@ -186,6 +220,9 @@ function _M.decide_route(session_data, threat_result, remote_ip)
             threat_score = math.max(threat_result.score, 50),
             honeypot_reason = "suspicious_file_upload"
         }
+        
+        ngx.log(ngx.WARN, "[ROUTING] 📤 SUSPICIOUS FILE UPLOAD -> HONEYPOT | Score: ", 
+                math.max(threat_result.score, 50), " | IP: ", remote_ip, " | URI: ", uri)
         
         return routing_decision
     end
@@ -207,6 +244,7 @@ function _M.decide_route(session_data, threat_result, remote_ip)
     --         return routing_decision
     --     end
     -- end
+    -- Removed probabilistic routing to prevent false positives on legitimate traffic
     
     -- Update session with current threat information if staying on production
     if threat_result.suspicious or threat_result.score > 10 then
@@ -230,10 +268,23 @@ function _M.decide_route(session_data, threat_result, remote_ip)
             })
             
             routing_decision.session_data.suspicious_activities = session_data.suspicious_activities
+            
+            ngx.log(ngx.INFO, "[ROUTING] ⚠️  Suspicious activity logged but staying on PRODUCTION | Score: ", 
+                    threat_result.score, "/", _G.config.threat.honeypot_threshold, 
+                    " | Suspicious count: ", #session_data.suspicious_activities + 1, "/5", 
+                    " | IP: ", remote_ip, " | URI: ", uri)
         end
     end
     
-    -- Default to production
+    -- Default to production - log clean requests
+    if threat_result.score == 0 then
+        ngx.log(ngx.INFO, "[ROUTING] ✅ Clean request -> PRODUCTION | Score: 0 | IP: ", 
+                remote_ip, " | URI: ", uri)
+    elseif threat_result.score > 0 and threat_result.score < _G.config.threat.honeypot_threshold then
+        ngx.log(ngx.INFO, "[ROUTING] ⚡ Low threat -> PRODUCTION | Score: ", threat_result.score, 
+                "/", _G.config.threat.honeypot_threshold, " | IP: ", remote_ip, " | URI: ", uri)
+    end
+    
     return routing_decision
 end
 
