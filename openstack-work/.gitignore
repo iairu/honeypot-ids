@@ -1,5 +1,15 @@
-# production_database_data/*
-# !production_database_data/placeholder
-# production_eshop_files/*
-# !production_eshop_files/placeholder
-# *_diff*
+honeypot_database_data/*
+!honeypot_database_data/placeholder
+honeypot_eshop_files/*
+!honeypot_eshop_files/placeholder
+nginx_logs/*
+!nginx_logs/placeholder
+suricata_logs/*
+!suricata_logs/placeholder
+redis_data/*
+!redis_data/placeholder
+redis_config/*
+!redis_config/placeholder
+ssl_certificates/*
+!ssl_certificates/placeholder
+*_diff*

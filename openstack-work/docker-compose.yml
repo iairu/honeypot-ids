@@ -1,4 +1,4 @@
-name: honeypot-ids-system
+name: honeypot-ids-system-v1
 services:
   # Initialization service to copy production files to honeypot and generate SSL
   init_setup:
@@ -11,43 +11,42 @@ services:
       - ./ssl_certificates:/ssl_certs
     command: |
       sh -c "
-        echo 'Starting initialization setup...'
-        
-        # Copy production files to honeypot (overwrite existing)
-        if [ -d '/source_files' ] && [ -n \"\$$(find /source_files -mindepth 1 -maxdepth 1)\" ]; then
-          echo 'Copying production WordPress files to honeypot...'
-          rm -rf /dest_files/*
-          cp -rf /source_files/* /dest_files/ 2>/dev/null || echo 'No files to copy yet'
-        else
-          echo 'Production files not found or empty, skipping file copy'
-        fi
-        
-        # Copy production database to honeypot (overwrite existing)
-        if [ -d '/source_db' ] && [ -n \"\$$(find /source_db -mindepth 1 -maxdepth 1)\" ]; then
-          echo 'Copying production database to honeypot...'
-          rm -rf /dest_db/*
-          cp -rf /source_db/* /dest_db/ 2>/dev/null || echo 'No database files to copy yet'
-        else
-          echo 'Production database not found or empty, skipping database copy'
-        fi
-        
-        # Generate self-signed SSL certificates
-        echo 'Generating SSL certificates...'
-        apk add --no-cache openssl
-        
-        if [ ! -f '/ssl_certs/server.crt' ] || [ ! -f '/ssl_certs/server.key' ]; then
-          openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-            -keyout /ssl_certs/server.key \
-            -out /ssl_certs/server.crt \
-            -subj '/C=US/ST=State/L=City/O=HoneypotOrg/CN=localhost'
-          chmod 600 /ssl_certs/server.key
-          chmod 644 /ssl_certs/server.crt
-          echo 'SSL certificates generated successfully'
-        else
-          echo 'SSL certificates already exist, skipping generation'
-        fi
-        
-        echo 'Initialization setup completed successfully'
+      set -x
+      echo 'Starting initialization setup...'
+      
+      # Copy production files to honeypot (overwrite existing)
+      if [ -d '/source_files' ] && [ -n \"\$$(find /source_files -mindepth 1 -maxdepth 1)\" ]; then
+        echo 'Copying production WordPress files to honeypot...'
+        find /dest_files -mindepth 1 -delete
+        cp -a /source_files/. /dest_files/ 2>/dev/null || echo 'No files to copy yet'
+      else
+        echo 'Production files not found or empty, skipping file copy'
+      fi
+      
+      # Copy production database to honeypot (overwrite existing)
+      if [ -d '/source_db' ] && [ -n \"\$$(find /source_db -mindepth 1 -maxdepth 1)\" ]; then
+        echo 'Copying production database to honeypot...'
+        find /dest_db -mindepth 1 -delete
+        cp -a /source_db/. /dest_db/ 2>/dev/null || echo 'No database files to copy yet'
+      else
+        echo 'Production database not found or empty, skipping database copy'
+      fi
+      
+      # Generate self-signed SSL certificates
+      echo 'Generating SSL certificates...'
+      apk add --no-cache openssl
+      
+      if [ ! -f '/ssl_certs/server.crt' ] || [ ! -f '/ssl_certs/server.key' ]; then
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /ssl_certs/server.key -out /ssl_certs/server.crt -subj '/C=US/ST=State/L=City/O=HoneypotOrg/CN=localhost'
+        chmod 600 /ssl_certs/server.key
+        chmod 644 /ssl_certs/server.crt
+        echo 'SSL certificates generated successfully'
+      else
+        echo 'SSL certificates already exist, skipping generation'
+      fi
+      
+      echo 'Initialization setup completed successfully'
+      set +x
       "
     networks:
       - setup_network
@@ -114,16 +113,16 @@ services:
         docker-entrypoint.sh mysqld
       "
     environment:
-      - MYSQL_DATABASE=honeypot_database
-      - MYSQL_USER=honeypot_user
-      - MYSQL_PASSWORD=honeypot_db_password_vulnerable_instance
-      - MYSQL_ROOT_PASSWORD=honeypot_db_password_vulnerable_instance
+      - MYSQL_DATABASE=production_database
+      - MYSQL_USER=production_user
+      - MYSQL_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
+      - MYSQL_ROOT_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
     volumes:
       - ./honeypot_database_data:/var/lib/mysql
     networks:
       - honeypot_network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "honeypot_user", "-phoneypot_db_password_vulnerable_instance"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-pdb_is_not_externally_exposed_but_can_be_accessed_from_this_container"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -137,9 +136,9 @@ services:
         condition: service_healthy
     environment:
       - WORDPRESS_DB_HOST=honeypot_database:3306
-      - WORDPRESS_DB_NAME=honeypot_database
-      - WORDPRESS_DB_USER=honeypot_user
-      - WORDPRESS_DB_PASSWORD=honeypot_db_password_vulnerable_instance
+      - WORDPRESS_DB_NAME=production_database
+      - WORDPRESS_DB_USER=production_user
+      - WORDPRESS_DB_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
     volumes:
       - ./honeypot_eshop_files:/var/www/html
     networks:
@@ -172,81 +171,81 @@ services:
       start_period: 10s
 
   # Session management API service
-  session_manager:
-    build:
-      context: ./session_manager
-      dockerfile: Dockerfile
-    depends_on:
-      session_store:
-        condition: service_healthy
-    environment:
-      - REDIS_HOST=session_store
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=session_redis_password
-      - SURICATA_LOG_PATH=/var/log/suricata
-      - NODE_ENV=production
-      - LOG_LEVEL=info
-    volumes:
-      - ./suricata_logs:/var/log/suricata:ro
-      - ./session_manager:/app
-    networks:
-      - session_network
-      - monitoring_network
-    ports:
-      - "3001:3001"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+  # session_manager:
+  #   build:
+  #     context: ./session_manager
+  #     dockerfile: Dockerfile
+  #   depends_on:
+  #     session_store:
+  #       condition: service_healthy
+  #   environment:
+  #     - REDIS_HOST=session_store
+  #     - REDIS_PORT=6379
+  #     - REDIS_PASSWORD=session_redis_password
+  #     - SURICATA_LOG_PATH=/var/log/suricata
+  #     - NODE_ENV=production
+  #     - LOG_LEVEL=info
+  #   volumes:
+  #     - ./suricata_logs:/var/log/suricata:ro
+  #     - ./session_manager:/app
+  #   networks:
+  #     - session_network
+  #     - monitoring_network
+  #   ports:
+  #     - "3001:3001"
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 30s
 
   # Suricata IDS for traffic analysis
-  suricata_ids:
-    image: jasonish/suricata:latest
-    depends_on:
-      init_setup:
-        condition: service_completed_successfully
-    volumes:
-      - ./suricata_config:/etc/suricata
-      - ./suricata_logs:/var/log/suricata
-      - ./suricata_rules:/var/lib/suricata/rules
-    environment:
-      - SURICATA_INTERFACE=eth0
-    networks:
-      - monitoring_network
-      - ids_network
-    cap_add:
-      - NET_ADMIN
-      - SYS_ADMIN
-    command: |
-      sh -c "
-        echo 'Starting Suricata IDS...'
-        
-        # Ensure log directory exists
-        mkdir -p /var/log/suricata
-        
-        # Copy custom rules if they exist
-        if [ -f /var/lib/suricata/rules/local.rules ]; then
-          cp /var/lib/suricata/rules/local.rules /etc/suricata/rules/local.rules
-        fi
-        
-        # Start Suricata with configuration
-        suricata -c /etc/suricata/suricata.yaml \
-                 -i eth0 \
-                 -l /var/log/suricata \
-                 --init-errors-fatal \
-                 -v || echo 'Suricata failed to start, running in test mode'
-        
-        # Keep container running
-        tail -f /dev/null
-      "
-    healthcheck:
-      test: ["CMD", "test", "-f", "/var/log/suricata/fast.log"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 45s
+  # suricata_ids:
+  #   image: jasonish/suricata:latest
+  #   depends_on:
+  #     init_setup:
+  #       condition: service_completed_successfully
+  #   volumes:
+  #     - ./suricata_config:/etc/suricata
+  #     - ./suricata_logs:/var/log/suricata
+  #     - ./suricata_rules:/var/lib/suricata/rules
+  #   environment:
+  #     - SURICATA_INTERFACE=eth0
+  #   networks:
+  #     - monitoring_network
+  #     - ids_network
+  #   cap_add:
+  #     - NET_ADMIN
+  #     - SYS_ADMIN
+  #   command: |
+  #     sh -c "
+  #       echo 'Starting Suricata IDS...'
+  #       
+  #       # Ensure log directory exists
+  #       mkdir -p /var/log/suricata
+  #       
+  #       # Copy custom rules if they exist
+  #       if [ -f /var/lib/suricata/rules/local.rules ]; then
+  #         cp /var/lib/suricata/rules/local.rules /etc/suricata/rules/local.rules
+  #       fi
+  #       
+  #       # Start Suricata with configuration
+  #       suricata -c /etc/suricata/suricata.yaml \
+  #                -i eth0 \
+  #                -l /var/log/suricata \
+  #                --init-errors-fatal \
+  #                -v || echo 'Suricata failed to start, running in test mode'
+  #       
+  #       # Keep container running
+  #       tail -f /dev/null
+  #     "
+  #   healthcheck:
+  #     test: ["CMD", "test", "-f", "/var/log/suricata/fast.log"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 45s
 
   # Enhanced reverse proxy with Lua support
   reverse_proxy:
@@ -258,15 +257,17 @@ services:
         condition: service_healthy
       honeypot_eshop:
         condition: service_healthy
-      session_manager:
+      session_store:
         condition: service_healthy
-      suricata_ids:
-        condition: service_healthy
+      #session_manager:
+      #  condition: service_healthy
+      #suricata_ids:
+      #  condition: service_healthy
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./reverse_proxy_configuration:/etc/nginx
+      - ./reverse_proxy_enhanced:/etc/nginx
       - ./ssl_certificates:/etc/ssl/certs:ro
       - ./nginx_logs:/var/log/nginx
     networks:
@@ -275,123 +276,123 @@ services:
       - session_network
       - monitoring_network
       - ids_network
-    environment:
-      - SESSION_MANAGER_URL=http://session_manager:3001
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/nginx-health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+    # environment:
+      # - SESSION_MANAGER_URL=http://session_manager:3001
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost/nginx-health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 30s
 
   # Traffic mirroring for IDS analysis
-  traffic_mirror:
-    image: alpine/socat:latest
-    depends_on:
-      reverse_proxy:
-        condition: service_healthy
-      suricata_ids:
-        condition: service_healthy
-    networks:
-      - monitoring_network
-      - ids_network
-    command: |
-      sh -c "
-        echo 'Starting traffic mirroring...'
-        socat -d -d UDP-LISTEN:514,reuseaddr,fork UDP:suricata_ids:514 &
-        socat -d -d TCP-LISTEN:9999,reuseaddr,fork TCP:suricata_ids:9999 &
-        echo 'Traffic mirroring started'
-        wait
-      "
-    healthcheck:
-      test: ["CMD", "netstat", "-ln", "|", "grep", "514"]
-      interval: 60s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+  # traffic_mirror:
+  #   image: alpine/socat:latest
+  #   depends_on:
+  #     reverse_proxy:
+  #       condition: service_healthy
+  #     suricata_ids:
+  #       condition: service_healthy
+  #   networks:
+  #     - monitoring_network
+  #     - ids_network
+  #   command: |
+  #     sh -c "
+  #       echo 'Starting traffic mirroring...'
+  #       socat -d -d UDP-LISTEN:514,reuseaddr,fork UDP:suricata_ids:514 &
+  #       socat -d -d TCP-LISTEN:9999,reuseaddr,fork TCP:suricata_ids:9999 &
+  #       echo 'Traffic mirroring started'
+  #       wait
+  #     "
+  #   healthcheck:
+  #     test: ["CMD", "netstat", "-ln", "|", "grep", "514"]
+  #     interval: 60s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 15s
 
   # Log aggregator for centralized logging
-  log_aggregator:
-    image: fluent/fluent-bit:latest
-    depends_on:
-      suricata_ids:
-        condition: service_healthy
-      reverse_proxy:
-        condition: service_healthy
-    volumes:
-      - ./fluent_bit_config:/fluent-bit/etc
-      - ./suricata_logs:/var/log/suricata:ro
-      - ./nginx_logs:/var/log/nginx:ro
-    networks:
-      - monitoring_network
-    healthcheck:
-      test: ["CMD", "pgrep", "fluent-bit"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
+  # log_aggregator:
+  #   image: fluent/fluent-bit:latest
+  #   depends_on:
+  #     suricata_ids:
+  #       condition: service_healthy
+  #     reverse_proxy:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./fluent_bit_config:/fluent-bit/etc
+  #     - ./suricata_logs:/var/log/suricata:ro
+  #     - ./nginx_logs:/var/log/nginx:ro
+  #   networks:
+  #     - monitoring_network
+  #   healthcheck:
+  #     test: ["CMD", "pgrep", "fluent-bit"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 20s
 
   # Threat intelligence updater
-  threat_intel:
-    build:
-      context: ./threat_intelligence
-      dockerfile: Dockerfile
-    depends_on:
-      session_store:
-        condition: service_healthy
-    environment:
-      - REDIS_HOST=session_store
-      - REDIS_PASSWORD=session_redis_password
-      - UPDATE_INTERVAL=3600
-    volumes:
-      - ./threat_intel_data:/data
-    networks:
-      - session_network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "threat"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+  # threat_intel:
+  #   build:
+  #     context: ./threat_intelligence
+  #     dockerfile: Dockerfile
+  #   depends_on:
+  #     session_store:
+  #       condition: service_healthy
+  #   environment:
+  #     - REDIS_HOST=session_store
+  #     - REDIS_PASSWORD=session_redis_password
+  #     - UPDATE_INTERVAL=3600
+  #   volumes:
+  #     - ./threat_intel_data:/data
+  #   networks:
+  #     - session_network
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "pgrep", "-f", "threat"]
+  #     interval: 60s
+  #     timeout: 10s
+  #     retries: 3
+  #     start_period: 30s
 
   # File synchronization service (runs periodically)
-  file_sync:
-    image: alpine:latest
-    depends_on:
-      production_eshop:
-        condition: service_healthy
-      honeypot_eshop:
-        condition: service_healthy
-    volumes:
-      - ./production_eshop_files:/source_files:ro
-      - ./production_database_data:/source_db:ro
-      - ./honeypot_eshop_files:/dest_files
-      - ./honeypot_database_data:/dest_db
-    command: |
-      sh -c "
-        echo 'Starting periodic file synchronization service...'
-        while true; do
-          echo 'Checking for file updates...'
-          
-          # Sync WordPress files if production has changes
-          if [ -d '/source_files' ] && [ -n \"\$$(find /source_files -mindepth 1 -maxdepth 1)\" ]; then
-            rsync -av --delete /source_files/ /dest_files/ || echo 'File sync failed'
-          fi
-          
-          # Sleep for 5 minutes before next sync
-          sleep 300
-        done
-      "
-    networks:
-      - monitoring_network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "rsync", "||", "echo", "sync_service_running"]
-      interval: 300s
-      timeout: 10s
-      retries: 2
-      start_period: 30s
+  # file_sync:
+  #   image: alpine:latest
+  #   depends_on:
+  #     production_eshop:
+  #       condition: service_healthy
+  #     honeypot_eshop:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./production_eshop_files:/source_files:ro
+  #     - ./production_database_data:/source_db:ro
+  #     - ./honeypot_eshop_files:/dest_files
+  #     - ./honeypot_database_data:/dest_db
+  #   command: |
+  #     sh -c "
+  #       echo 'Starting periodic file synchronization service...'
+  #       while true; do
+  #         echo 'Checking for file updates...'
+  #         
+  #         # Sync WordPress files if production has changes
+  #         if [ -d '/source_files' ] && [ -n \"\$$(find /source_files -mindepth 1 -maxdepth 1)\" ]; then
+  #           rsync -av --delete /source_files/ /dest_files/ || echo 'File sync failed'
+  #         fi
+  #         
+  #         # Sleep for 5 minutes before next sync
+  #         sleep 300
+  #       done
+  #     "
+  #   networks:
+  #     - monitoring_network
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "pgrep", "-f", "rsync", "||", "echo", "sync_service_running"]
+  #     interval: 300s
+  #     timeout: 10s
+  #     retries: 2
+  #     start_period: 30s
 
 networks:
   setup_network:

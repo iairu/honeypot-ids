@@ -6,8 +6,7 @@ RUN apk add --no-cache \
     jq \
     openssl \
     lua-cjson \
-    lua-resty-http \
-    lua-resty-redis
+    lua-resty-http
 
 # Create directories
 RUN mkdir -p /var/log/nginx /etc/nginx/lua /etc/ssl/certs
