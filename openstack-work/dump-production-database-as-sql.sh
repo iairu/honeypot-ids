@@ -13,7 +13,7 @@ CONTAINER_NAME="honeypot-ids-system-v1-production_database-1"
 DB_NAME="production_database"
 DB_USER="production_user"
 DB_PASSWORD="db_is_not_externally_exposed_but_can_be_accessed_from_this_container"
-DUMP_DIR="."
+DUMP_DIR="./production-database-sql-dumps"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 DUMP_FILE="production_database_dump_${TIMESTAMP}.sql"
 
