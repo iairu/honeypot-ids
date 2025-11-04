@@ -92,50 +92,50 @@ local function init_worker()
     
     -- Set up periodic tasks only in worker 0 to avoid duplication
     if ngx.worker.id() == 0 then
-        -- Start threat intelligence updater
-        local function update_threat_intel()
-            local red, err = _G.redis_pool.get_connection()
-            if not red then
-                ngx.log(ngx.ERR, "Failed to connect to Redis for threat intel update: ", err)
-                return
-            end
-            
-            -- Update IP reputation data
-            if not http then
-                ngx.log(ngx.DEBUG, "Skipping threat intel update - lua-resty-http not available")
-                _G.redis_pool.close_connection(red)
-                return
-            end
-            
-            local httpc = http.new()
-            local res, err = httpc:request_uri("https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt", {
-                method = "GET",
-                ssl_verify = false,
-                timeout = 5000
-            })
-            
-            if res and res.status == 200 then
-                local threat_ips = {}
-                for line in res.body:gmatch("[^\r\n]+") do
-                    if not line:match("^#") and line:match("%d+%.%d+%.%d+%.%d+") then
-                        local ip = line:match("(%d+%.%d+%.%d+%.%d+)")
-                        if ip then
-                            threat_ips[ip] = {
-                                score = 80,
-                                reason = "ipsum_feed",
-                                updated = ngx.time()
-                            }
-                        end
-                    end
-                end
-                
-                -- Store in Redis
-                red:set("threat_ips", cjson.encode(threat_ips))
-                ngx.log(ngx.INFO, "Updated threat intelligence with ", #threat_ips, " IPs")
-            end
-            
-            _G.redis_pool.close_connection(red)
-        end
+        -- -- Start threat intelligence updater
+        -- local function update_threat_intel()
+        --     local red, err = _G.redis_pool.get_connection()
+        --     if not red then
+        --         ngx.log(ngx.ERR, "Failed to connect to Redis for threat intel update: ", err)
+        --         return
+        --     end
+        --     
+        --     -- Update IP reputation data
+        --     if not http then
+        --         ngx.log(ngx.DEBUG, "Skipping threat intel update - lua-resty-http not available")
+        --         _G.redis_pool.close_connection(red)
+        --         return
+        --     end
+        --     
+        --     local httpc = http.new()
+        --     local res, err = httpc:request_uri("https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt", {
+        --         method = "GET",
+        --         ssl_verify = false,
+        --         timeout = 5000
+        --     })
+        --     
+        --     if res and res.status == 200 then
+        --         local threat_ips = {}
+        --         for line in res.body:gmatch("[^\r\n]+") do
+        --             if not line:match("^#") and line:match("%d+%.%d+%.%d+%.%d+") then
+        --                 local ip = line:match("(%d+%.%d+%.%d+%.%d+)")
+        --                 if ip then
+        --                     threat_ips[ip] = {
+        --                         score = 80,
+        --                         reason = "ipsum_feed",
+        --                         updated = ngx.time()
+        --                     }
+        --                 end
+        --             end
+        --         end
+        --         
+        --         -- Store in Redis
+        --         red:set("threat_ips", cjson.encode(threat_ips))
+        --         ngx.log(ngx.INFO, "Updated threat intelligence with ", #threat_ips, " IPs")
+        --     end
+        --     
+        --     _G.redis_pool.close_connection(red)
+        -- end
         
         -- Start session cleanup task
         local function cleanup_expired_sessions()
