@@ -14,3 +14,10 @@ ssl_certificates/*
 !ssl_certificates/placeholder
 *_diff*
 *.har
+.env
+filebeat/data/*
+!filebeat/data/placeholder
+filebeat/logs/*
+!filebeat/logs/placeholder
+filebeat/certs/*.crt
+filebeat/certs/*.key

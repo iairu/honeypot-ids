@@ -1,0 +1,131 @@
+# Filebeat configuration for shipping Suricata and Nginx logs to ELK SIEM
+# This configuration is ready for external ELK integration
+
+filebeat.inputs:
+  # Suricata EVE JSON logs
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/suricata/eve.json
+    json.keys_under_root: true
+    json.add_error_key: true
+    fields:
+      log_type: suricata
+      environment: ${ENVIRONMENT:development}
+      honeypot_system: ids
+    fields_under_root: true
+    tags: ["suricata", "ids", "honeypot"]
+
+  # Suricata fast.log
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/suricata/fast.log
+    fields:
+      log_type: suricata_fast
+      environment: ${ENVIRONMENT:development}
+      honeypot_system: ids
+    fields_under_root: true
+    tags: ["suricata", "fast", "honeypot"]
+
+  # Nginx access logs
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/nginx/access.log
+    fields:
+      log_type: nginx_access
+      environment: ${ENVIRONMENT:development}
+      honeypot_system: reverse_proxy
+    fields_under_root: true
+    tags: ["nginx", "access", "honeypot"]
+
+  # Nginx security logs
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/nginx/security.log
+    fields:
+      log_type: nginx_security
+      environment: ${ENVIRONMENT:development}
+      honeypot_system: reverse_proxy
+    fields_under_root: true
+    tags: ["nginx", "security", "honeypot", "critical"]
+
+  # Nginx error logs
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/nginx/error.log
+    fields:
+      log_type: nginx_error
+      environment: ${ENVIRONMENT:development}
+      honeypot_system: reverse_proxy
+    fields_under_root: true
+    tags: ["nginx", "error", "honeypot"]
+
+# Processors to enrich data
+processors:
+  - add_host_metadata:
+      when.not.contains.tags: forwarded
+  - add_cloud_metadata: ~
+  - add_docker_metadata: ~
+  - add_kubernetes_metadata: ~
+
+# Output to Elasticsearch (external ELK SIEM)
+output.elasticsearch:
+  enabled: ${ELK_ENABLED:false}
+  hosts: ["${ELASTICSEARCH_HOST:localhost}:${ELASTICSEARCH_PORT:9200}"]
+  protocol: "${ELASTICSEARCH_PROTOCOL:https}"
+  username: "${ELASTICSEARCH_USER:}"
+  password: "${ELASTICSEARCH_PASSWORD:}"
+  index: "honeypot-ids-%{[agent.version]}-%{+yyyy.MM.dd}"
+
+  # SSL/TLS settings
+  ssl.enabled: ${ELASTICSEARCH_SSL_ENABLED:true}
+  ssl.verification_mode: "${ELASTICSEARCH_SSL_VERIFY:certificate}"
+  ssl.certificate_authorities: ["/etc/filebeat/certs/ca.crt"]
+
+  # Bulk settings
+  bulk_max_size: 50
+  worker: 1
+
+  # Timeout settings
+  timeout: 90
+
+# Setup template
+setup.template.name: "honeypot-ids"
+setup.template.pattern: "honeypot-ids-*"
+setup.template.enabled: true
+setup.template.overwrite: false
+
+# Kibana configuration (optional for dashboard setup)
+setup.kibana:
+  enabled: ${ELK_ENABLED:false}
+  host: "${KIBANA_HOST:localhost}:${KIBANA_PORT:5601}"
+  protocol: "${KIBANA_PROTOCOL:https}"
+  username: "${ELASTICSEARCH_USER:}"
+  password: "${ELASTICSEARCH_PASSWORD:}"
+  ssl.enabled: ${KIBANA_SSL_ENABLED:true}
+  ssl.verification_mode: "${KIBANA_SSL_VERIFY:certificate}"
+
+# Logging
+logging.level: info
+logging.to_files: true
+logging.files:
+  path: /var/log/filebeat
+  name: filebeat.log
+  keepfiles: 7
+  permissions: 0644
+
+# Monitoring (send Filebeat metrics to Elasticsearch)
+monitoring.enabled: ${ELK_ENABLED:false}
+monitoring.elasticsearch:
+  hosts: ["${ELASTICSEARCH_HOST:localhost}:${ELASTICSEARCH_PORT:9200}"]
+  username: "${ELASTICSEARCH_USER:}"
+  password: "${ELASTICSEARCH_PASSWORD:}"
+
+# HTTP endpoint for debugging
+http.enabled: true
+http.host: localhost
+http.port: 5066

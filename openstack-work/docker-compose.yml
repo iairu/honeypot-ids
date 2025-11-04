@@ -63,7 +63,7 @@ services:
       - MYSQL_HOST=honeypot_database
       - MYSQL_DATABASE=production_database
       - MYSQL_USER=production_user
-      - MYSQL_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
     command: |
       bash -c "
       echo 'Waiting for honeypot database to be ready...'
@@ -108,14 +108,14 @@ services:
     environment:
       - MYSQL_DATABASE=production_database
       - MYSQL_USER=production_user
-      - MYSQL_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
-      - MYSQL_ROOT_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
     volumes:
       - ./production_database_data:/var/lib/mysql
     networks:
       - production_network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-pdb_is_not_externally_exposed_but_can_be_accessed_from_this_container"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -131,7 +131,7 @@ services:
       - WORDPRESS_DB_HOST=production_database:3306
       - WORDPRESS_DB_NAME=production_database
       - WORDPRESS_DB_USER=production_user
-      - WORDPRESS_DB_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
+      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
     # ports:
     #   - "80:80" # temporary port for direct access
     volumes:
@@ -160,14 +160,14 @@ services:
     environment:
       - MYSQL_DATABASE=production_database
       - MYSQL_USER=production_user
-      - MYSQL_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
-      - MYSQL_ROOT_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
     volumes:
       - ./honeypot_database_data:/var/lib/mysql
     networks:
       - honeypot_network
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-pdb_is_not_externally_exposed_but_can_be_accessed_from_this_container"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -185,7 +185,7 @@ services:
       - WORDPRESS_DB_HOST=honeypot_database:3306
       - WORDPRESS_DB_NAME=production_database
       - WORDPRESS_DB_USER=production_user
-      - WORDPRESS_DB_PASSWORD=db_is_not_externally_exposed_but_can_be_accessed_from_this_container
+      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
     # ports:
     #   - "8080:80" # temporary port for direct access
     volumes:
@@ -211,9 +211,14 @@ services:
       - ./redis_config:/usr/local/etc/redis
     networks:
       - session_network
-    command: redis-server --appendonly yes --requirepass session_redis_password
+    command: |
+      sh -c "
+      echo 'Starting Redis with fresh data...'
+      rm -rf /data/*
+      redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+      "
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -230,7 +235,7 @@ services:
   #   environment:
   #     - REDIS_HOST=session_store
   #     - REDIS_PORT=6379
-  #     - REDIS_PASSWORD=session_redis_password
+  #     - REDIS_PASSWORD=${REDIS_PASSWORD}
   #     - SURICATA_LOG_PATH=/var/log/suricata
   #     - NODE_ENV=production
   #     - LOG_LEVEL=info
@@ -250,51 +255,90 @@ services:
   #     start_period: 30s
 
   # Suricata IDS for traffic analysis
-  # suricata_ids:
-  #   image: jasonish/suricata:latest
-  #   depends_on:
-  #     init_setup:
-  #       condition: service_completed_successfully
-  #   volumes:
-  #     - ./suricata_config:/etc/suricata
-  #     - ./suricata_logs:/var/log/suricata
-  #     - ./suricata_rules:/var/lib/suricata/rules
-  #   environment:
-  #     - SURICATA_INTERFACE=eth0
-  #   networks:
-  #     - monitoring_network
-  #     - ids_network
-  #   cap_add:
-  #     - NET_ADMIN
-  #     - SYS_ADMIN
-  #   command: |
-  #     sh -c "
-  #       echo 'Starting Suricata IDS...'
-  #       
-  #       # Ensure log directory exists
-  #       mkdir -p /var/log/suricata
-  #       
-  #       # Copy custom rules if they exist
-  #       if [ -f /var/lib/suricata/rules/local.rules ]; then
-  #         cp /var/lib/suricata/rules/local.rules /etc/suricata/rules/local.rules
-  #       fi
-  #       
-  #       # Start Suricata with configuration
-  #       suricata -c /etc/suricata/suricata.yaml \
-  #                -i eth0 \
-  #                -l /var/log/suricata \
-  #                --init-errors-fatal \
-  #                -v || echo 'Suricata failed to start, running in test mode'
-  #       
-  #       # Keep container running
-  #       tail -f /dev/null
-  #     "
-  #   healthcheck:
-  #     test: ["CMD", "test", "-f", "/var/log/suricata/fast.log"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-  #     start_period: 45s
+  suricata_ids:
+    image: jasonish/suricata:latest
+    depends_on:
+      init_setup:
+        condition: service_completed_successfully
+    volumes:
+      - ./suricata_config:/etc/suricata
+      - ./suricata_logs:/var/log/suricata
+      - ./suricata_rules:/var/lib/suricata/rules
+    environment:
+      - SURICATA_INTERFACE=eth0
+      - ELK_ENABLED=${ELK_ENABLED:-false}
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-}
+      - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
+      - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
+    networks:
+      - monitoring_network
+      - ids_network
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    command: |
+      sh -c "
+        echo 'Starting Suricata IDS...'
+
+        # Ensure log directory exists
+        mkdir -p /var/log/suricata
+
+        # Copy custom rules if they exist
+        if [ -f /var/lib/suricata/rules/local.rules ]; then
+          cp /var/lib/suricata/rules/local.rules /etc/suricata/rules/local.rules
+        fi
+
+        # Start Suricata with configuration
+        suricata -c /etc/suricata/suricata.yaml \
+                 -i eth0 \
+                 -l /var/log/suricata \
+                 --init-errors-fatal \
+                 -v || echo 'Suricata failed to start, running in test mode'
+
+        # Keep container running
+        tail -f /dev/null
+      "
+    healthcheck:
+      test: ["CMD", "test", "-f", "/var/log/suricata/fast.log"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+  # Filebeat for shipping logs to ELK SIEM
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    user: root
+    depends_on:
+      suricata_ids:
+        condition: service_healthy
+    volumes:
+      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./filebeat/certs:/etc/filebeat/certs:ro
+      - ./suricata_logs:/var/log/suricata:ro
+      - ./nginx_logs:/var/log/nginx:ro
+      - ./filebeat/data:/usr/share/filebeat/data
+      - ./filebeat/logs:/var/log/filebeat
+    environment:
+      - ELK_ENABLED=${ELK_ENABLED:-false}
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-}
+      - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
+      - ELASTICSEARCH_PROTOCOL=${ELASTICSEARCH_PROTOCOL:-https}
+      - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
+      - ELASTICSEARCH_SSL_ENABLED=${ELASTICSEARCH_SSL_ENABLED:-true}
+      - ELASTICSEARCH_SSL_VERIFY=${ELASTICSEARCH_SSL_VERIFY:-certificate}
+      - KIBANA_HOST=${KIBANA_HOST:-}
+      - KIBANA_PORT=${KIBANA_PORT:-5601}
+      - KIBANA_PROTOCOL=${KIBANA_PROTOCOL:-https}
+      - KIBANA_SSL_ENABLED=${KIBANA_SSL_ENABLED:-true}
+      - KIBANA_SSL_VERIFY=${KIBANA_SSL_VERIFY:-certificate}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+    networks:
+      - monitoring_network
+    command: filebeat -e -strict.perms=false
+    restart: unless-stopped
 
   # Enhanced reverse proxy with Lua support
   reverse_proxy:
@@ -325,7 +369,16 @@ services:
       - session_network
       - monitoring_network
       - ids_network
-    # environment:
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - ELK_ENABLED=${ELK_ENABLED:-false}
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-}
+      - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
+      - ELASTICSEARCH_PROTOCOL=${ELASTICSEARCH_PROTOCOL:-https}
+      - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
+      - ELASTICSEARCH_SSL_VERIFY=${ELASTICSEARCH_SSL_VERIFY:-certificate}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
       # - SESSION_MANAGER_URL=http://session_manager:3001
     # healthcheck:
     #   test: ["CMD", "curl", "-f", "http://localhost/nginx-health"]
@@ -391,7 +444,7 @@ services:
   #       condition: service_healthy
   #   environment:
   #     - REDIS_HOST=session_store
-  #     - REDIS_PASSWORD=session_redis_password
+  #     - REDIS_PASSWORD=${REDIS_PASSWORD}
   #     - UPDATE_INTERVAL=3600
   #   volumes:
   #     - ./threat_intel_data:/data

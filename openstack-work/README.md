@@ -50,6 +50,15 @@ todo: show that saved threat and suricata data from redis is used for immediate 
               │   WordPress     │  │   WordPress      │
               └─────────────────┘  └──────────────────┘
 
+## Features
+
+- **Intelligent Traffic Routing**: Nginx Lua-based real-time routing between production and honeypot instances
+- **IDS Integration**: Suricata IDS with 70+ custom WordPress vulnerability detection rules
+- **Session Tracking**: Redis-backed session management with threat scoring
+- **Attack Detection**: CVE pattern matching, SQL injection, XSS, directory traversal detection
+- **SIEM Integration**: Ready for external ELK (Elasticsearch, Logstash, Kibana) integration via Filebeat
+- **Security Logging**: Comprehensive logging to local files and optional external SIEM
+
 ## Local development setup
 
 **Recommendation**
@@ -65,7 +74,19 @@ todo: show that saved threat and suricata data from redis is used for immediate 
 2. `cd dp/openstack-work`
 3. If on Windows: Force Windows Git to not be CRLF but LF for Docker Shell Scripts to work: `echo "core.autocrlf=false" >> .git/config ; git rm --cached -r . ; git reset --hard`
 4. Optional: Go to a non-production branch where you will develop: `git checkout -b dev`
-5. Set environment variables for all Docker services: `cp .env.example .env` e.g. random values
+5. **IMPORTANT**: Set up environment variables:
+   ```bash
+   cp .env.example .env
+   vi .env  # Edit and set secure passwords
+   ```
+   Or generate random passwords automatically:
+   ```bash
+   cp .env.example .env
+   sed -i "s/change_this_root_password_in_production/$(openssl rand -base64 32)/" .env
+   sed -i "s/change_this_user_password_in_production/$(openssl rand -base64 32)/" .env
+   sed -i "s/change_this_redis_password_in_production/$(openssl rand -base64 32)/" .env
+   sed -i "s/change_this_session_secret_in_production/$(openssl rand -base64 32)/" .env
+   ```
 6. Just in case: Stop and remove all remaining Docker containers and networks prefixed with "honeypot-ids-system-": `docker stop $(docker ps -a -q -f name=honeypot-ids-system-) ; docker rm -f $(docker ps -a -q -f name=honeypot-ids-system-) ; docker network rm $(docker network ls -q -f name=honeypot-ids-system_)`
 7. Start the service chain: `./deploy.sh` in the root directory (automated deployment with health checks)
 8. Wait for all services to be healthy (takes 3-5 minutes for full startup)
@@ -125,14 +146,15 @@ For debugging:
 
 These are the versions Docker Compose uses:
 - Production Database: `mysql:5.7` (clean WordPress database, accessed only by production instance)
-- Honeypot Database: `mysql:5.7` (vulnerable WordPress database, accessed only by honeypot instance) 
+- Honeypot Database: `mysql:5.7` (vulnerable WordPress database, accessed only by honeypot instance)
 - Production WordPress: `wordpress:6.8.3-php8.1` (secure instance, receives clean traffic)
 - Honeypot WordPress: `wordpress:6.8.3-php8.1` (vulnerable instance with CVE plugins, receives suspicious traffic)
-- Session Manager: `node:18-alpine` + custom API (manages routing decisions, threat analysis)
+- Session Manager: `node:18-alpine` + custom API (manages routing decisions, threat analysis) - **DISABLED**
 - Reverse Proxy: `openresty/openresty:alpine` (Nginx + Lua for intelligent traffic routing)
-- Suricata IDS: `jasonish/suricata:latest` (intrusion detection with 70+ custom WordPress rules)
+- Suricata IDS: `jasonish/suricata:latest` (intrusion detection with 70+ custom WordPress rules) - **ENABLED**
 - Session Store: `redis:7-alpine` (stores session data and threat intelligence)
-- Threat Intel: `python:3.11-slim` (updates IP reputation and attack patterns)
+- Threat Intel: `python:3.11-slim` (updates IP reputation and attack patterns) - **DISABLED**
+- Filebeat: `docker.elastic.co/beats/filebeat:8.11.0` (ships logs to ELK SIEM) - **ENABLED** (optional)
 
 If Docker wasn't present this would need to be done manually:
 - install these versions yourself - see `Dockerfile` in each service for instructions
@@ -212,16 +234,18 @@ curl -I http://localhost/ | grep X-Route-Target
 - `session_manager/` contains Node.js API service for session management and threat analysis
 - `suricata_config/` contains Suricata IDS configuration files
 - `suricata_rules/` contains custom Suricata rules for WordPress vulnerability detection (70+ rules)
-- `suricata_logs/` contains Suricata alert logs and monitoring data
+- `suricata_logs/` contains Suricata alert logs and monitoring data (EVE JSON format for SIEM integration)
 - `threat_intelligence/` contains Python service for updating IP reputation and threat feeds
 - `ssl_certificates/` contains auto-generated SSL certificates (recreated on each deployment)
 - `production_eshop_files/` contains WordPress files for production instance
 - `honeypot_eshop_files/` contains WordPress files for honeypot instance (auto-synced from production)
 - `production_database_data/` contains MySQL data for production WordPress
 - `honeypot_database_data/` contains MySQL data for honeypot WordPress (auto-synced from production)
-- `redis_data/` contains session data and threat intelligence
+- `redis_data/` contains session data and threat intelligence ([see redis_data/README.md](redis_data/README.md) for details)
 - `nginx_logs/` contains access logs and security event logs
+- `filebeat/` contains Filebeat configuration for shipping logs to ELK SIEM
 - Database volumes are managed by Docker; use `docker volume inspect` to find locations on host machine
+- **ELK SIEM Integration**: See [ELK_INTEGRATION.md](ELK_INTEGRATION.md) for complete setup guide
 
 ## Security considerations
 
@@ -244,13 +268,14 @@ The Node.js Session Manager and Nginx Lua Session Handler integrate through Redi
 # Both services connect to the same Redis instance
 REDIS_HOST=session_store
 REDIS_PORT=6379
-REDIS_PASSWORD=session_redis_password
+REDIS_PASSWORD=${REDIS_PASSWORD}  # From .env file
 ```
 
 **2. Session Data Flow:**
 - **Nginx Lua** (`lua/session_handler.lua`) creates/retrieves sessions from Redis using `session:${sessionId}` keys
 - **Node.js API** manages the same Redis keys through the `/session/*` endpoints
 - Both services use identical session data structure ensuring consistency
+- **Redis data is cleared on every `docker compose up`** for clean testing (see [redis_data/README.md](redis_data/README.md))
 
 **3. Routing Decision Process:**
 ```
