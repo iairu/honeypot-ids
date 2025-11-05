@@ -1,0 +1,158 @@
+---
+services:
+  es01:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    container_name: es01
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.key=certs/es01/es01.key
+      - xpack.security.http.ssl.certificate=certs/es01/es01.crt
+      - xpack.security.http.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.key=certs/es01/es01.key
+      - xpack.security.transport.ssl.certificate=certs/es01/es01.crt
+      - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - bootstrap.memory_lock=true
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+#    mem_limit: ${ES_MEM_LIMIT}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - ../elasticsearch/certs:/usr/share/elasticsearch/config/certs:ro
+      - es01_data:/usr/share/elasticsearch/data
+    ports:
+      #      - "127.0.0.1:9000:${ES_PORT}"
+      - "${ES_PORT}:${ES_PORT}"
+    networks:
+      - elastic
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -s --cacert config/certs/ca/ca.crt https://es01:9200 | grep -q 'missing authentication credentials'"
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Service used to reset kibana_system password after elasticsearch startup
+  init-password:
+    image: curlimages/curl:7.85.0  # Use a lightweight image
+    depends_on:
+      es01:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c '
+        echo "Setting the kibana_system password...";
+        until curl --cacert /certs/ca/ca.crt -X POST -u elastic:${ELASTIC_PASSWORD} -H "Content-Type: application/json" \
+          "https://es01:9200/_security/user/kibana_system/_password" -d "{\"password\":\"${KIBANA_PASSWORD}\"}";
+          do echo "Waiting for Elasticsearch to be ready...";
+          sleep 5;
+        done
+
+        # If the loop exits, curl succeeded
+        echo "Password set successfully for kibana_system.";
+        exit 0;
+      '
+    volumes:
+      - ../elasticsearch/certs/ca:/certs/ca:ro
+    networks:
+      - elastic
+    restart: "no"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+    container_name: kibana
+    environment:
+      - SERVER_SSL_ENABLED=true
+      - SERVER_SSL_KEY=config/certs/kibana/kibana.key
+      - SERVER_SSL_CERTIFICATE=config/certs/kibana/kibana.crt
+      - SERVERNAME=kibana
+      - ELASTICSEARCH_HOSTS=https://es01:9200
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+      - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
+  #    mem_limit: ${KIBANA_MEM_LIMIT}
+    ports:
+      - "${KIBANA_PORT}:${KIBANA_PORT}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -I --cacert config/certs/ca/ca.crt  https://kibana:5601 | grep -E \"HTTP/1\\.1 (200 OK|302 Found)\""
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 1200
+    depends_on:
+      es01:
+        condition: service_healthy
+      init-password:
+        condition: service_completed_successfully
+    volumes:
+      - ../kibana/certs:/usr/share/kibana/config/certs:ro
+      - kibana_data:/usr/share/kibana/data
+    networks:
+      - elastic
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:${STACK_VERSION}
+    container_name: logstash
+    environment:
+      - ELASTIC_USERNAME=${ELASTIC_USERNAME}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - ELASTIC_HOSTS=https://es01:9200
+    ports:
+      - "${LOGSTASH_PORT}:${LOGSTASH_PORT}"
+    healthcheck:
+      test: [
+        "CMD", 
+        "curl -I -f --cacert config/certs/ca/ca.crt https://logstash:9600/_node/stats"] #TODO xpack/security is not turned on
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      es01:
+        condition: service_healthy
+      kibana:
+        condition: service_healthy
+    volumes:
+      - ../logstash/certs:/usr/share/logstash/certs:ro
+      - ../logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro 
+      - ../logstash/pipeline.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+      - ../logstash/geoip/dbs/:/geoip
+      - logstash_data:/usr/share/logstash/data
+    networks:
+      - elastic
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  es01_data:
+    driver: local
+  kibana_data:
+    driver: local
+  logstash_data:
+    driver: local
+
+networks:
+  elastic:
+    driver: bridge

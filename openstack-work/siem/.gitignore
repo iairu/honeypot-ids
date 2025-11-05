@@ -1,0 +1,5 @@
+certs/root-ca/certs
+elasticsearch/certs
+kibana/certs
+logstash/certs
+logstash/geoip/dbs
