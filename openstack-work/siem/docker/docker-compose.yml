@@ -119,6 +119,7 @@ services:
       - ELASTIC_HOSTS=https://es01:9200
     ports:
       - "${LOGSTASH_PORT}:${LOGSTASH_PORT}"
+      - "5044:5044"  # Beats input port for external Filebeat connections
     healthcheck:
       test: [
         "CMD", 

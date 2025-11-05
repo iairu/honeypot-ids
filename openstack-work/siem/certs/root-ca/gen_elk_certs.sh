@@ -4,7 +4,7 @@
 CERTS_DIR="certs"
 ROOT_CA_NAME="rootCA"
 DAYS_VALID=365   # 1 year validity
-ELASTIC_HOSTS=("es01" "logstash" "kibana")  # ELK components
+ELASTIC_HOSTS=("es01" "logstash" "kibana" "filebeat")  # ELK components + Filebeat client
 
 # Create directory to store certificates
 mkdir -p $CERTS_DIR
@@ -71,11 +71,16 @@ cp es01.crt ../../../kibana/certs/es01/es01.crt
 # Logstash certificates
 mkdir -p ../../../logstash/certs/ca
 mkdir -p ../../../logstash/certs/logstash
+mkdir -p ../../../logstash/certs/filebeat
 
 cp rootCA.crt ../../../logstash/certs/ca/ca.crt
 cp logstash.key ../../../logstash/certs/logstash/logstash.key
 cp logstash.crt ../../../logstash/certs/logstash/logstash.crt
 
+# Copy Filebeat client certificates (for client authentication with Logstash)
+cp filebeat.key ../../../logstash/certs/filebeat/filebeat.key
+cp filebeat.crt ../../../logstash/certs/filebeat/filebeat.crt
+cp rootCA.crt ../../../logstash/certs/filebeat/ca.crt
 
 # TODO oneday change to dedicated user in Dockerfile maybe
 chown 1000:1000 ../../../kibana/certs/kibana/kibana.key
@@ -83,4 +88,10 @@ chown 1000:1000 ../../../logstash/certs/logstash/logstash.key
 chown 1000:1000 ../../../elasticsearch/certs/es01/es01.key
 
 echo "✅ Certificates copied successfully!"
+echo ""
+echo "📋 IMPORTANT: Copy Filebeat certificates to the main VM"
+echo "   From main VM, run:"
+echo "   scp user@SIEM_VM_IP:/path/to/siem/logstash/certs/filebeat/ca.crt openstack-work/filebeat/certs/"
+echo "   scp user@SIEM_VM_IP:/path/to/siem/logstash/certs/filebeat/filebeat.crt openstack-work/filebeat/certs/"
+echo "   scp user@SIEM_VM_IP:/path/to/siem/logstash/certs/filebeat/filebeat.key openstack-work/filebeat/certs/"
 

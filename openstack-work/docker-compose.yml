@@ -328,8 +328,15 @@ services:
       - ./nginx_logs:/var/log/nginx:ro
       - ./filebeat/data:/usr/share/filebeat/data
       - ./filebeat/logs:/var/log/filebeat
+      # Docker socket and container logs for monitoring
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Redis logs (if available)
+      - ./redis_data:/var/log/redis:ro
     environment:
       - ELK_ENABLED=${ELK_ENABLED:-false}
+      - LOGSTASH_HOST=${LOGSTASH_HOST:-}
+      - LOGSTASH_PORT=${LOGSTASH_PORT:-5044}
       - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-}
       - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
       - ELASTICSEARCH_PROTOCOL=${ELASTICSEARCH_PROTOCOL:-https}
@@ -343,6 +350,7 @@ services:
       - KIBANA_SSL_ENABLED=${KIBANA_SSL_ENABLED:-true}
       - KIBANA_SSL_VERIFY=${KIBANA_SSL_VERIFY:-certificate}
       - ENVIRONMENT=${ENVIRONMENT:-development}
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-honeypot-ids-system-v1}
     networks:
       - monitoring_network
     command: filebeat -e -strict.perms=false

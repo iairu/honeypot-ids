@@ -1,7 +1,25 @@
-# Filebeat configuration for shipping Suricata and Nginx logs to ELK SIEM
-# This configuration is ready for external ELK integration
+# Filebeat configuration for shipping logs to ELK SIEM via Logstash
+# This configuration collects Docker container, Suricata, Nginx, and Redis logs
 
 filebeat.inputs:
+  # Docker container logs from /var/lib/docker/containers/**/*.json
+  - type: container
+    enabled: true
+    paths:
+      - '/var/lib/docker/containers/*/*.log'
+    # Filter by docker-compose project name
+    condition: |
+      equals.docker.container.labels.com.docker.compose.project: "${COMPOSE_PROJECT_NAME:honeypot-ids-system-v1}"
+    json.keys_under_root: false
+    json.add_error_key: true
+    fields:
+      log_type: docker
+      environment: ${ENVIRONMENT:development}
+      honeypot_system: containers
+      compose_project: ${COMPOSE_PROJECT_NAME:honeypot-ids-system-v1}
+    fields_under_root: true
+    tags: ["docker", "container", "honeypot"]
+
   # Suricata EVE JSON logs
   - type: log
     enabled: true
@@ -64,34 +82,66 @@ filebeat.inputs:
     fields_under_root: true
     tags: ["nginx", "error", "honeypot"]
 
+  # Redis logs (if available)
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/redis/*.log
+    ignore_older: 24h
+    fields:
+      log_type: redis
+      environment: ${ENVIRONMENT:development}
+      honeypot_system: session_store
+    fields_under_root: true
+    tags: ["redis", "session", "honeypot"]
+
 # Processors to enrich data
 processors:
   - add_host_metadata:
       when.not.contains.tags: forwarded
   - add_cloud_metadata: ~
-  - add_docker_metadata: ~
+  - add_docker_metadata:
+      host: "unix:///var/run/docker.sock"
+      match_source: true
+      match_source_index: 4
+      match_pids: ["process.pid", "process.parent.pid"]
   - add_kubernetes_metadata: ~
 
-# Output to Elasticsearch (external ELK SIEM)
-output.elasticsearch:
+# Output to Logstash (on separate SIEM VM)
+output.logstash:
   enabled: ${ELK_ENABLED:false}
-  hosts: ["${ELASTICSEARCH_HOST:localhost}:${ELASTICSEARCH_PORT:9200}"]
-  protocol: "${ELASTICSEARCH_PROTOCOL:https}"
-  username: "${ELASTICSEARCH_USER:}"
-  password: "${ELASTICSEARCH_PASSWORD:}"
-  index: "honeypot-ids-%{[agent.version]}-%{+yyyy.MM.dd}"
+  hosts: ["${LOGSTASH_HOST:localhost}:${LOGSTASH_PORT:5044}"]
 
-  # SSL/TLS settings
-  ssl.enabled: ${ELASTICSEARCH_SSL_ENABLED:true}
-  ssl.verification_mode: "${ELASTICSEARCH_SSL_VERIFY:certificate}"
+  # SSL/TLS settings with client authentication
+  ssl.enabled: true
+  ssl.verification_mode: certificate
   ssl.certificate_authorities: ["/etc/filebeat/certs/ca.crt"]
+  ssl.certificate: "/etc/filebeat/certs/filebeat.crt"
+  ssl.key: "/etc/filebeat/certs/filebeat.key"
 
-  # Bulk settings
-  bulk_max_size: 50
-  worker: 1
+  # Load balancing and worker settings
+  worker: 2
+  loadbalance: true
+
+  # Bulk and compression settings
+  bulk_max_size: 2048
+  compression_level: 3
 
   # Timeout settings
-  timeout: 90
+  timeout: 30
+
+# Optional: Direct Elasticsearch output (for fallback or testing)
+# Uncomment if you want to send directly to Elasticsearch
+# output.elasticsearch:
+#   enabled: false
+#   hosts: ["${ELASTICSEARCH_HOST:localhost}:${ELASTICSEARCH_PORT:9200}"]
+#   protocol: "${ELASTICSEARCH_PROTOCOL:https}"
+#   username: "${ELASTICSEARCH_USER:}"
+#   password: "${ELASTICSEARCH_PASSWORD:}"
+#   index: "honeypot-ids-%{[agent.version]}-%{+yyyy.MM.dd}"
+#   ssl.enabled: ${ELASTICSEARCH_SSL_ENABLED:true}
+#   ssl.verification_mode: "${ELASTICSEARCH_SSL_VERIFY:certificate}"
+#   ssl.certificate_authorities: ["/etc/filebeat/certs/ca.crt"]
 
 # Setup template
 setup.template.name: "honeypot-ids"
