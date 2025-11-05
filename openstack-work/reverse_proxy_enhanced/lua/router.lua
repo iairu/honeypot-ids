@@ -448,15 +448,19 @@ end
 function _M.apply_routing_decision(decision)
     ngx.var.route_decision = decision.target
     ngx.var.backend_upstream = decision.upstream
-    
+
+    -- Pass routing decision to WordPress for SQL proxy routing
+    ngx.req.set_header("X-DB-Target", decision.target)
+    ngx.log(ngx.INFO, "[ROUTING] Setting X-DB-Target header: ", decision.target)
+
     if decision.target == "honeypot" then
         ngx.var.suspicious_activity = "true"
-        
+
         -- Add custom headers for honeypot identification
         ngx.header["X-Honeypot-Route"] = "true"
         ngx.header["X-Route-Reason"] = decision.session_data.honeypot_reason or "unknown"
     end
-    
+
     return decision
 end
 

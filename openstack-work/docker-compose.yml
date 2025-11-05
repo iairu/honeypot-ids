@@ -132,12 +132,16 @@ services:
       - WORDPRESS_DB_NAME=production_database
       - WORDPRESS_DB_USER=production_user
       - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
+      # Enable WordPress debugging for SQL routing logs
+      - WORDPRESS_DEBUG=1
+      - WORDPRESS_DEBUG_LOG=1
     # ports:
     #   - "80:80" # temporary port for direct access
     volumes:
       - ./production_eshop_files:/var/www/html
     networks:
       - production_network
+      - honeypot_network  # Added: Allow access to honeypot database for SQL routing
       - monitoring_network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
@@ -186,12 +190,16 @@ services:
       - WORDPRESS_DB_NAME=production_database
       - WORDPRESS_DB_USER=production_user
       - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
+      # Enable WordPress debugging for SQL routing logs
+      - WORDPRESS_DEBUG=1
+      - WORDPRESS_DEBUG_LOG=1
     # ports:
     #   - "8080:80" # temporary port for direct access
     volumes:
       - ./honeypot_eshop_files:/var/www/html
     networks:
       - honeypot_network
+      - production_network  # Added: Allow access to production database for SQL routing
       - monitoring_network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]

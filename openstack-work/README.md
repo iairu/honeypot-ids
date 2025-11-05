@@ -53,6 +53,7 @@ todo: show that saved threat and suricata data from redis is used for immediate 
 ## Features
 
 - **Intelligent Traffic Routing**: Nginx Lua-based real-time routing between production and honeypot instances
+- **SQL Proxy Routing**: Dynamic database routing based on threat analysis - single WordPress frontend with dual-database backend (NEW!)
 - **IDS Integration**: Suricata IDS with 70+ custom WordPress vulnerability detection rules
 - **Session Tracking**: Redis-backed session management with threat scoring
 - **Attack Detection**: CVE pattern matching, SQL injection, XSS, directory traversal detection
@@ -246,6 +247,7 @@ curl -I http://localhost/ | grep X-Route-Target
 - `filebeat/` contains Filebeat configuration for shipping logs to ELK SIEM
 - Database volumes are managed by Docker; use `docker volume inspect` to find locations on host machine
 - **ELK SIEM Integration**: See [ELK_INTEGRATION.md](ELK_INTEGRATION.md) for complete setup guide
+- **SQL Proxy Routing**: See [SQL_PROXY_ROUTING.md](SQL_PROXY_ROUTING.md) for database routing architecture
 
 ## Security considerations
 
