@@ -5,6 +5,20 @@ Place:  Ústav počítačového inžinierstva a aplikovanej informatiky, FIIT ST
 Oblasť: Kombinované bezpečnostné riešenia
 ---
 
+## Run
+
+On siem vm first:
+
+cd openstack-siem-work/elk_dockerized/docker
+sudo docker compose up
+
+wait for siem-vm-ip:5601/app/home#/ to be available
+
+then on main vm:
+
+cd openstack-work
+sudo docker compose up
+
 ## Assignment
 
 Honeypot tools in cybersecurity serve to attract attackers and collect data about their behavior. Existing solutions often offer limited simulation capabilities which may deter attackers. Focus on the analysis, conceptualization, implementation and testing of honeypot solutions for web HTTPS services: e-commerce, administration and API. Analyze existing honeypot solutions, fingerprinting possibilities and propose procedures for increasing interaction. Implement a proxy for redirecting suspicious visitors from production to honeypot environment including logging of attacker activity and data visualization. Address efficient initialization of honeypot instances customized for the attacker with data transfer and storage of changes by IP. As part of conceptualization and implementation integrate open-source honeypot solutions and honeytokens. Include findings from scientific publications concerning the application of behavioral analysis for attack detection and consider relevant laws. Appropriately document program parts including deployment procedures. Test the solution on a series of attack scenarios identified based on current trends in web security. Evaluate the effectiveness of the implemented solution by comparing the level of interaction against basic honeypot systems.
