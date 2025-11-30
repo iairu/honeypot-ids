@@ -112,13 +112,6 @@ output.logstash:
   enabled: ${ELK_ENABLED:false}
   hosts: ["${LOGSTASH_HOST:localhost}:${LOGSTASH_PORT:5044}"]
 
-  # SSL/TLS settings with client authentication
-  ssl.enabled: true
-  ssl.verification_mode: certificate
-  ssl.certificate_authorities: ["/etc/filebeat/certs/ca.crt"]
-  ssl.certificate: "/etc/filebeat/certs/filebeat.crt"
-  ssl.key: "/etc/filebeat/certs/filebeat.key"
-
   # Load balancing and worker settings
   worker: 2
   loadbalance: true
@@ -156,8 +149,6 @@ setup.kibana:
   protocol: "${KIBANA_PROTOCOL:https}"
   username: "${ELASTICSEARCH_USER:}"
   password: "${ELASTICSEARCH_PASSWORD:}"
-  ssl.enabled: ${KIBANA_SSL_ENABLED:true}
-  ssl.verification_mode: "${KIBANA_SSL_VERIFY:certificate}"
 
 # Logging
 logging.level: info

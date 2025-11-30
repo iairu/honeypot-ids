@@ -232,95 +232,65 @@ services:
       retries: 5
       start_period: 10s
 
-  # Session management API service
-  # session_manager:
-  #   build:
-  #     context: ./session_manager
-  #     dockerfile: Dockerfile
-  #   depends_on:
-  #     session_store:
-  #       condition: service_healthy
-  #   environment:
-  #     - REDIS_HOST=session_store
-  #     - REDIS_PORT=6379
-  #     - REDIS_PASSWORD=${REDIS_PASSWORD}
-  #     - SURICATA_LOG_PATH=/var/log/suricata
-  #     - NODE_ENV=production
-  #     - LOG_LEVEL=info
-  #   volumes:
-  #     - ./suricata_logs:/var/log/suricata:ro
-  #     - ./session_manager:/app
-  #   networks:
-  #     - session_network
-  #     - monitoring_network
-  #   ports:
-  #     - "3001:3001"
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-  #     start_period: 30s
-
   # Suricata IDS for traffic analysis
-  suricata_ids:
-    image: jasonish/suricata:latest
-    depends_on:
-      init_setup:
-        condition: service_completed_successfully
-    volumes:
-      - ./suricata_config:/etc/suricata
-      - ./suricata_logs:/var/log/suricata
-      - ./suricata_rules:/var/lib/suricata/rules
-    environment:
-      - SURICATA_INTERFACE=eth0
-      - ELK_ENABLED=${ELK_ENABLED:-false}
-      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-}
-      - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
-      - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
-      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
-    networks:
-      - monitoring_network
-      - ids_network
-    cap_add:
-      - NET_ADMIN
-      - SYS_ADMIN
-    command: |
-      sh -c "
-        echo 'Starting Suricata IDS...'
-
-        # Ensure log directory exists
-        mkdir -p /var/log/suricata
-
-        # Copy custom rules if they exist
-        if [ -f /var/lib/suricata/rules/local.rules ]; then
-          cp /var/lib/suricata/rules/local.rules /etc/suricata/rules/local.rules
-        fi
-
-        # Start Suricata with configuration
-        suricata -c /etc/suricata/suricata.yaml \
-                 -i eth0 \
-                 -l /var/log/suricata \
-                 --init-errors-fatal \
-                 -v || echo 'Suricata failed to start, running in test mode'
-
-        # Keep container running
-        tail -f /dev/null
-      "
-    healthcheck:
-      test: ["CMD", "test", "-f", "/var/log/suricata/fast.log"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 45s
+  #suricata_ids:
+  #  image: jasonish/suricata:latest
+  #  depends_on:
+  #    init_setup:
+  #      condition: service_completed_successfully
+  #  volumes:
+  #    - ./suricata_config:/etc/suricata
+  #    - ./suricata_logs:/var/log/suricata
+  #    - ./suricata_rules:/var/lib/suricata/rules
+  #  environment:
+  #    - SURICATA_INTERFACE=eth0
+  #    - ELK_ENABLED=${ELK_ENABLED:-false}
+  #    - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-}
+  #    - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
+  #    - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
+  #    - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
+  #  networks:
+  #    - monitoring_network
+  #    - ids_network
+  #  cap_add:
+  #    - NET_ADMIN
+  #    - SYS_ADMIN
+  #  command: |
+  #    sh -c "
+  #      echo 'Starting Suricata IDS...'
+#
+  #      # Ensure log directory exists
+  #      mkdir -p /var/log/suricata
+#
+  #      # Copy custom rules if they exist
+  #      if [ -f /var/lib/suricata/rules/local.rules ]; then
+  #        cp /var/lib/suricata/rules/local.rules /etc/suricata/rules/local.rules
+  #      fi
+#
+  #      # Start Suricata with configuration
+  #      suricata -c /etc/suricata/suricata.yaml \
+  #               -i eth0 \
+  #               -l /var/log/suricata \
+  #               --init-errors-fatal \
+  #               -v || echo 'Suricata failed to start, running in test mode'
+#
+  #      # Keep container running
+  #      tail -f /dev/null
+  #    "
+  #  healthcheck:
+  #    test: ["CMD", "test", "-f", "/var/log/suricata/fast.log"]
+  #    interval: 30s
+  #    timeout: 10s
+  #    retries: 3
+  #    start_period: 45s
 
   # Filebeat for shipping logs to ELK SIEM
   filebeat:
     image: docker.elastic.co/beats/filebeat:8.11.0
     user: root
     depends_on:
-      suricata_ids:
-        condition: service_healthy
+      reverse_proxy:
+        condition: service_started
     volumes:
       - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
       - ./filebeat/certs:/etc/filebeat/certs:ro
