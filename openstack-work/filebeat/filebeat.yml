@@ -107,10 +107,10 @@ processors:
       match_pids: ["process.pid", "process.parent.pid"]
   - add_kubernetes_metadata: ~
 
-# Output to Logstash (on separate SIEM VM)
+# Output to Logstash (on separate SIEM VM at 147.175.151.193)
 output.logstash:
   enabled: ${ELK_ENABLED:false}
-  hosts: ["${LOGSTASH_HOST:localhost}:${LOGSTASH_PORT:5044}"]
+  hosts: ["${LOGSTASH_HOST:147.175.151.193}:${LOGSTASH_PORT:5044}"]
 
   # Load balancing and worker settings
   worker: 2
