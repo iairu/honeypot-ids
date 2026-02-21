@@ -1,2 +1,16 @@
 *.tgz
 .DS_Store
+*.aux
+*.log
+*.out
+*.fls
+*.xml
+*.toc
+*.fdb_latexmk
+*.bbl-SAVE-ERROR
+*.bbl
+*.bcf-SAVE-ERROR
+*.bcf
+*-blx.bib
+_minted
+!_minted/default.style.minted
