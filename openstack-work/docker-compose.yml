@@ -1,95 +1,163 @@
 name: honeypot-ids-system-v1
 services:
-  # Initialization service to copy production files to honeypot and generate SSL
+  # ---------------------------------------------------------------------------
+  # Initialization service
+  # ---------------------------------------------------------------------------
+  # Copies production WordPress files and database data into each of the three
+  # honeypot pool directories, then generates self-signed SSL certificates.
+  #
+  # POOLING NOTE:
+  #   Pool 1 reuses the original honeypot_eshop_files / honeypot_database_data
+  #   directories for backward compatibility.  Pools 2 and 3 use new sibling
+  #   directories (honeypot_eshop_files_2/3, honeypot_database_data_2/3).
+  #   All three pools start from an identical copy of the production data; they
+  #   diverge as individual attackers interact with their assigned instance.
+  # ---------------------------------------------------------------------------
   init_setup:
     image: alpine:latest
     volumes:
       - ./production_eshop_files:/source_files:ro
       - ./production_database_data:/source_db:ro
-      - ./honeypot_eshop_files:/dest_files
-      - ./honeypot_database_data:/dest_db
+      # Pool 1 destinations (original paths kept for backward compat)
+      - ./honeypot_eshop_files:/dest_files_1
+      - ./honeypot_database_data:/dest_db_1
+      # Pool 2 destinations
+      - ./honeypot_eshop_files_2:/dest_files_2
+      - ./honeypot_database_data_2:/dest_db_2
+      # Pool 3 destinations
+      - ./honeypot_eshop_files_3:/dest_files_3
+      - ./honeypot_database_data_3:/dest_db_3
       - ./ssl_certificates:/ssl_certs
     command: |
       sh -c "
       set -x
-      echo 'Starting initialization setup...'
-      
-      # Copy production files to honeypot (overwrite existing)
-      if [ -d '/source_files' ] && [ -n \"$$(find /source_files -mindepth 1 -maxdepth 1)\" ]; then
-        echo 'Copying production WordPress files to honeypot...'
-        find /dest_files -mindepth 1 -delete
-        cp -a /source_files/. /dest_files/ 2>/dev/null || echo 'No files to copy yet'
-      else
-        echo 'Production files not found or empty, skipping file copy'
-      fi
-      
-      # Copy production database to honeypot (overwrite existing)
-      if [ -d '/source_db' ] && [ -n \"$$(find /source_db -mindepth 1 -maxdepth 1)\" ]; then
-        echo 'Copying production database to honeypot...'
-        find /dest_db -mindepth 1 -delete
-        cp -a /source_db/. /dest_db/ 2>/dev/null || echo 'No database files to copy yet'
-      else
-        echo 'Production database not found or empty, skipping database copy'
-      fi
-      
-      # Generate self-signed SSL certificates
+      echo 'Starting initialization setup (honeynet pool mode)...'
+
+      # -----------------------------------------------------------------------
+      # Helper: copy source files into a destination directory.
+      # Skips silently if the source is empty so a fresh checkout does not fail.
+      # -----------------------------------------------------------------------
+      copy_files() {
+        SRC=\$$1; DST=\$$2; LABEL=\$$3
+        if [ -d \"\$$SRC\" ] && [ -n \"\$$(find \$$SRC -mindepth 1 -maxdepth 1 2>/dev/null)\" ]; then
+          echo \"Copying \$$LABEL files to \$$DST...\"
+          find \"\$$DST\" -mindepth 1 -delete 2>/dev/null || true
+          cp -a \"\$$SRC/\". \"\$$DST/\" 2>/dev/null || echo \"  Warning: copy for \$$LABEL returned non-zero\"
+          echo \"  Done: \$$LABEL\"
+        else
+          echo \"  Source \$$SRC empty or absent – skipping \$$LABEL\"
+        fi
+      }
+
+      # -----------------------------------------------------------------------
+      # Copy WordPress files for each pool instance
+      # -----------------------------------------------------------------------
+      copy_files /source_files /dest_files_1 'honeypot pool-1 WordPress files'
+      copy_files /source_files /dest_files_2 'honeypot pool-2 WordPress files'
+      copy_files /source_files /dest_files_3 'honeypot pool-3 WordPress files'
+
+      # -----------------------------------------------------------------------
+      # Copy database data directory for each pool instance.
+      # Each pool gets its own isolated MySQL data directory so that attacker
+      # writes to one pool's database do not affect the others.
+      # -----------------------------------------------------------------------
+      copy_files /source_db /dest_db_1 'honeypot pool-1 database data'
+      copy_files /source_db /dest_db_2 'honeypot pool-2 database data'
+      copy_files /source_db /dest_db_3 'honeypot pool-3 database data'
+
+      # -----------------------------------------------------------------------
+      # Generate self-signed SSL certificates (shared across all services)
+      # -----------------------------------------------------------------------
       echo 'Generating SSL certificates...'
       apk add --no-cache openssl
-      
+
       if [ ! -f '/ssl_certs/server.crt' ] || [ ! -f '/ssl_certs/server.key' ]; then
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /ssl_certs/server.key -out /ssl_certs/server.crt -subj '/C=US/ST=State/L=City/O=HoneypotOrg/CN=localhost'
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+          -keyout /ssl_certs/server.key -out /ssl_certs/server.crt \
+          -subj '/C=US/ST=State/L=City/O=HoneypotOrg/CN=localhost'
         chmod 600 /ssl_certs/server.key
         chmod 644 /ssl_certs/server.crt
         echo 'SSL certificates generated successfully'
       else
         echo 'SSL certificates already exist, skipping generation'
       fi
-      
+
       echo 'Initialization setup completed successfully'
       set +x
       "
 
-  # Database migration applier for honeypot
+  # ---------------------------------------------------------------------------
+  # Database migration applier for honeypot pools
+  # ---------------------------------------------------------------------------
+  # Applies every SQL file in honeypot_database_migrations/ (in lexicographic
+  # order) to ALL three pool databases.  Running migrations on all pools ensures
+  # they stay schema-identical so pool_router.lua can assign any IP to any pool
+  # without compatibility issues.
+  #
+  # Migration files included:
+  #   01_clean-honeypot-data.sql  – replaces real data with dummy data
+  #   02_pool_tracking.sql        – creates honeynet pooling metadata tables
+  # ---------------------------------------------------------------------------
   honeypot_db_migration:
     image: mysql:5.7
     depends_on:
       init_setup:
         condition: service_completed_successfully
-      honeypot_database:
+      honeypot_database_1:
+        condition: service_healthy
+      honeypot_database_2:
+        condition: service_healthy
+      honeypot_database_3:
         condition: service_healthy
     volumes:
       - ./honeypot_database_migrations:/migrations:ro
     environment:
-      - MYSQL_HOST=honeypot_database
       - MYSQL_DATABASE=production_database
       - MYSQL_USER=production_user
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
     command: |
       bash -c "
-      echo 'Waiting for honeypot database to be ready...'
+      echo 'Waiting for all honeypot pool databases to settle...'
       sleep 5
-      
-      echo 'Applying honeypot database migrations...'
-      
-      # Check if migrations directory exists and has SQL files
-      if [ -d '/migrations' ] && [ -n \"$$(find /migrations -name '*.sql' -type f)\" ]; then
-        # Apply migrations in order
-        for migration in /migrations/*.sql; do
-          if [ -f \"$$migration\" ]; then
-            echo \"Applying migration: $$migration\"
-            mysql -h$$MYSQL_HOST -u$$MYSQL_USER -p$$MYSQL_PASSWORD $$MYSQL_DATABASE < \"$$migration\"
-            if [ $$? -eq 0 ]; then
-              echo \"✓ Migration $$migration applied successfully\"
-            else
-              echo \"✗ Migration $$migration failed\"
-              exit 1
+
+      # -----------------------------------------------------------------------
+      # Helper: apply all migrations to a single database host.
+      # Exits with status 1 if any migration fails so Docker marks the service
+      # as failed and dependent services (honeypot_eshop_N) do not start.
+      # -----------------------------------------------------------------------
+      apply_migrations() {
+        HOST=\$$1
+        echo \"\"
+        echo \"=== Applying migrations to \$$HOST ===\"
+
+        if [ -d '/migrations' ] && [ -n \"\$$(find /migrations -name '*.sql' -type f)\" ]; then
+          for migration in \$$(ls /migrations/*.sql | sort); do
+            if [ -f \"\$$migration\" ]; then
+              echo \"  Applying: \$$migration\"
+              mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" \"\$$MYSQL_DATABASE\" < \"\$$migration\"
+              if [ \$$? -eq 0 ]; then
+                echo \"  ✓ \$$migration applied to \$$HOST\"
+              else
+                echo \"  ✗ \$$migration FAILED on \$$HOST\"
+                exit 1
+              fi
             fi
-          fi
-        done
-        echo 'All honeypot database migrations applied successfully'
-      else
-        echo 'No migrations found, skipping...'
-      fi
+          done
+          echo \"=== All migrations applied to \$$HOST ===\"
+        else
+          echo \"  No migrations found in /migrations – skipping \$$HOST\"
+        fi
+      }
+
+      # Apply to every pool database in turn.
+      # Failures are fatal so that a honeypot pool is never started with
+      # incomplete schema (which would expose real production data).
+      apply_migrations honeypot_database_1
+      apply_migrations honeypot_database_2
+      apply_migrations honeypot_database_3
+
+      echo ''
+      echo 'All honeypot pool database migrations completed successfully.'
       "
     networks:
       - honeypot_network
@@ -150,8 +218,19 @@ services:
       retries: 3
       start_period: 60s
 
-  # Honeypot WordPress database
-  honeypot_database:
+  # ---------------------------------------------------------------------------
+  # Honeypot pool databases (pool 1, 2, 3)
+  # ---------------------------------------------------------------------------
+  # Each pool has its own MySQL instance backed by an independent data directory
+  # so that attacker writes (SQL injections, data exfiltration, etc.) are
+  # isolated per-pool and never affect other pools or production.
+  #
+  # All three use identical credentials and schema (enforced by migrations) so
+  # pool_router.lua can assign any new IP to any pool interchangeably.
+  # ---------------------------------------------------------------------------
+
+  # Pool 1 – uses the original honeypot_database_data directory (backward compat)
+  honeypot_database_1:
     image: mysql:5.7
     depends_on:
       init_setup:
@@ -177,29 +256,161 @@ services:
       retries: 5
       start_period: 30s
 
-  # Honeypot WordPress instance (vulnerable)
-  honeypot_eshop:
+  # Pool 2 – independent database instance
+  honeypot_database_2:
+    image: mysql:5.7
+    depends_on:
+      init_setup:
+        condition: service_completed_successfully
+    command: |
+      bash -c "
+        rm -f /var/lib/mysql/placeholder
+        docker-entrypoint.sh mysqld
+      "
+    environment:
+      - MYSQL_DATABASE=production_database
+      - MYSQL_USER=production_user
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - ./honeypot_database_data_2:/var/lib/mysql
+    networks:
+      - honeypot_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Pool 3 – independent database instance
+  honeypot_database_3:
+    image: mysql:5.7
+    depends_on:
+      init_setup:
+        condition: service_completed_successfully
+    command: |
+      bash -c "
+        rm -f /var/lib/mysql/placeholder
+        docker-entrypoint.sh mysqld
+      "
+    environment:
+      - MYSQL_DATABASE=production_database
+      - MYSQL_USER=production_user
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - ./honeypot_database_data_3:/var/lib/mysql
+    networks:
+      - honeypot_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # Honeypot WordPress instances (pool 1, 2, 3)
+  # ---------------------------------------------------------------------------
+  # Each pool runs a full WordPress+WooCommerce stack with the vulnerable plugins
+  # installed.  They are intentionally identical at startup; divergence happens
+  # as attackers interact with their assigned instance.
+  #
+  # IMPORTANT: honeypot_db_migration must complete before any eshop starts so
+  # that dummy data is in place and no real customer data is ever served.
+  #
+  # Networks: each pool instance joins both honeypot_network (its own DB) and
+  # production_network (for the SQL proxy routing feature) and monitoring_network.
+  # ---------------------------------------------------------------------------
+
+  # Pool 1 – uses the original honeypot_eshop_files directory (backward compat)
+  honeypot_eshop_1:
     image: wordpress:6.8.3-php8.1
     depends_on:
-      honeypot_database:
+      honeypot_database_1:
         condition: service_healthy
-      honeypot_db_migration: # important so honeypot does not get served without dummy data
+      honeypot_db_migration:
         condition: service_completed_successfully
     environment:
-      - WORDPRESS_DB_HOST=honeypot_database:3306
+      - WORDPRESS_DB_HOST=honeypot_database_1:3306
       - WORDPRESS_DB_NAME=production_database
       - WORDPRESS_DB_USER=production_user
       - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
       # Enable WordPress debugging for SQL routing logs
       - WORDPRESS_DEBUG=1
       - WORDPRESS_DEBUG_LOG=1
+      # Pool identifier exposed to PHP code for logging / X-Honeypot-Pool header
+      - HONEYPOT_POOL_ID=1
     # ports:
-    #   - "8080:80" # temporary port for direct access
+    #   - "8081:80" # temporary port for direct pool-1 access
     volumes:
       - ./honeypot_eshop_files:/var/www/html
     networks:
       - honeypot_network
-      - production_network  # Added: Allow access to production database for SQL routing
+      - production_network  # Allow access to production database for SQL routing
+      - monitoring_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Pool 2 – isolated WordPress instance
+  honeypot_eshop_2:
+    image: wordpress:6.8.3-php8.1
+    depends_on:
+      honeypot_database_2:
+        condition: service_healthy
+      honeypot_db_migration:
+        condition: service_completed_successfully
+    environment:
+      - WORDPRESS_DB_HOST=honeypot_database_2:3306
+      - WORDPRESS_DB_NAME=production_database
+      - WORDPRESS_DB_USER=production_user
+      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
+      - WORDPRESS_DEBUG=1
+      - WORDPRESS_DEBUG_LOG=1
+      - HONEYPOT_POOL_ID=2
+    # ports:
+    #   - "8082:80" # temporary port for direct pool-2 access
+    volumes:
+      - ./honeypot_eshop_files_2:/var/www/html
+    networks:
+      - honeypot_network
+      - production_network
+      - monitoring_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Pool 3 – isolated WordPress instance
+  honeypot_eshop_3:
+    image: wordpress:6.8.3-php8.1
+    depends_on:
+      honeypot_database_3:
+        condition: service_healthy
+      honeypot_db_migration:
+        condition: service_completed_successfully
+    environment:
+      - WORDPRESS_DB_HOST=honeypot_database_3:3306
+      - WORDPRESS_DB_NAME=production_database
+      - WORDPRESS_DB_USER=production_user
+      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
+      - WORDPRESS_DEBUG=1
+      - WORDPRESS_DEBUG_LOG=1
+      - HONEYPOT_POOL_ID=3
+    # ports:
+    #   - "8083:80" # temporary port for direct pool-3 access
+    volumes:
+      - ./honeypot_eshop_files_3:/var/www/html
+    networks:
+      - honeypot_network
+      - production_network
       - monitoring_network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
@@ -326,7 +537,12 @@ services:
     command: filebeat -e -strict.perms=false
     restart: unless-stopped
 
-  # Enhanced reverse proxy with Lua support
+  # ---------------------------------------------------------------------------
+  # Enhanced reverse proxy with Lua-based honeynet routing
+  # ---------------------------------------------------------------------------
+  # Waits for ALL three honeypot pool instances to be healthy before accepting
+  # traffic so that pool_router.lua never routes to a pool that is still starting.
+  # ---------------------------------------------------------------------------
   reverse_proxy:
     build:
       context: ./reverse_proxy_enhanced
@@ -334,7 +550,11 @@ services:
     depends_on:
       production_eshop:
         condition: service_healthy
-      honeypot_eshop:
+      honeypot_eshop_1:
+        condition: service_healthy
+      honeypot_eshop_2:
+        condition: service_healthy
+      honeypot_eshop_3:
         condition: service_healthy
       session_store:
         condition: service_healthy
@@ -514,7 +734,13 @@ networks:
 volumes:
   production_database_data:
     driver: local
+  # Pool 1 database data (original path, kept for backward compatibility)
   honeypot_database_data:
+    driver: local
+  # Pool 2 and 3 database data directories (created by init_setup at startup)
+  honeypot_database_data_2:
+    driver: local
+  honeypot_database_data_3:
     driver: local
   redis_data:
     driver: local

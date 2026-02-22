@@ -1,9 +1,65 @@
 -- router.lua - Routing decision module for Nginx Lua
--- Makes intelligent routing decisions between production and honeypot instances
+-- Makes intelligent routing decisions between production and honeypot instances.
+--
+-- POOLING INTEGRATION:
+--   When a request is routed to the honeypot, pool_router.lua is consulted to
+--   determine which specific pool instance (honeypot_eshop_1/2/3) the attacking
+--   IP should be sent to.  Once assigned, the IP always hits the same pool so
+--   the attacker sees a consistent fake environment.  The assigned pool number is
+--   also stored in the session under session_data.honeypot_pool so that
+--   session-bound re-routing (session already honeypot_bound) can use the same pool
+--   without an extra Redis lookup.
 
 local cjson = require "cjson"
 
 local _M = {}
+
+-- ---------------------------------------------------------------------------
+-- Internal helper: route to honeypot and assign a pool instance for the IP.
+--
+-- Centralises the pool-assignment logic that was previously duplicated across
+-- every honeypot routing branch.  Sets:
+--   routing_decision.target   = "honeypot"
+--   routing_decision.upstream = "honeypot_backend_N"  (where N is the pool number)
+--   routing_decision.update_session = true
+--   routing_decision.session_data   = supplied extra_session_data merged with
+--                                     { honeypot_bound, route_preference,
+--                                       honeypot_pool, honeypot_reason }
+--
+-- Also refreshes the Redis TTL for the IP's pool assignment so long-running
+-- attack sessions are not evicted mid-way.
+-- ---------------------------------------------------------------------------
+local function assign_honeypot_pool(routing_decision, extra_session_data, remote_ip)
+    -- Lazy-require to avoid circular dependency issues at module load time.
+    local pool_router = require "pool_router"
+
+    -- Determine which pool this IP belongs to (round-robin for new IPs,
+    -- sticky for returning ones).  Falls back to pool 1 on Redis errors.
+    local pool_num = pool_router.get_or_assign_pool(remote_ip)
+    local upstream = pool_router.get_upstream_for_pool(pool_num)
+
+    routing_decision.target   = "honeypot"
+    routing_decision.upstream = upstream
+    routing_decision.update_session = true
+
+    -- Merge caller-supplied session fields with the pool assignment metadata.
+    local sd = extra_session_data or {}
+    sd.honeypot_bound    = true
+    sd.route_preference  = "honeypot"
+    sd.honeypot_pool     = pool_num
+    routing_decision.session_data = sd
+
+    -- Keep the assignment alive in Redis while the attacker is still active.
+    pool_router.refresh_assignment_ttl(remote_ip)
+
+    ngx.log(ngx.WARN,
+        "[POOL] IP ", remote_ip,
+        " assigned to honeypot pool ", pool_num,
+        " (upstream=", upstream, ")",
+        " reason=", sd.honeypot_reason or "unknown")
+
+    return pool_num
+end
 
 -- Main routing decision function
 function _M.decide_route(session_data, threat_result, remote_ip)
@@ -33,109 +89,107 @@ function _M.decide_route(session_data, threat_result, remote_ip)
     
     -- Check if already bound to honeypot
     if session_data.honeypot_bound then
-        routing_decision.target = "honeypot"
-        routing_decision.upstream = "honeypot_backend"
-        ngx.log(ngx.WARN, "[ROUTING] ⚠️  Session bound to HONEYPOT | Session: ", session_data.id or "unknown", 
-                " | IP: ", remote_ip, " | Reason: ", session_data.honeypot_reason or "unknown", 
+        -- Re-use the pool number that was stored when the session was first
+        -- flagged.  If the session pre-dates pooling (no honeypot_pool field)
+        -- fall back to a fresh pool assignment so the IP is properly tracked.
+        local pool_router = require "pool_router"
+        local pool_num = session_data.honeypot_pool
+        if not pool_num then
+            pool_num = pool_router.get_or_assign_pool(remote_ip)
+            -- Persist pool number back into session on next update_session call.
+            routing_decision.update_session = true
+            routing_decision.session_data   = { honeypot_pool = pool_num }
+        end
+        -- Always refresh the TTL so an active attack session is never evicted.
+        pool_router.refresh_assignment_ttl(remote_ip)
+
+        routing_decision.target   = "honeypot"
+        routing_decision.upstream = pool_router.get_upstream_for_pool(pool_num)
+        ngx.log(ngx.WARN, "[ROUTING] ⚠️  Session bound to HONEYPOT | Session: ", session_data.id or "unknown",
+                " | Pool: ", pool_num,
+                " | IP: ", remote_ip, " | Reason: ", session_data.honeypot_reason or "unknown",
                 " | URI: ", ngx.var.request_uri)
         return routing_decision
     end
     
     -- Check threat score threshold
     if threat_result.score >= _G.config.threat.honeypot_threshold then
-        routing_decision.target = "honeypot"
-        routing_decision.upstream = "honeypot_backend"
-        routing_decision.update_session = true
-        routing_decision.session_data = {
-            honeypot_bound = true,
-            route_preference = "honeypot",
-            threat_score = threat_result.score,
-            honeypot_reason = "high_threat_score"
-        }
-        
-        ngx.log(ngx.WARN, "[ROUTING] 🚨 HIGH THREAT SCORE -> HONEYPOT | Score: ", threat_result.score, 
-                "/", _G.config.threat.honeypot_threshold, " | IP: ", remote_ip, 
+        assign_honeypot_pool(routing_decision, {
+            threat_score    = threat_result.score,
+            honeypot_reason = "high_threat_score",
+        }, remote_ip)
+
+        ngx.log(ngx.WARN, "[ROUTING] 🚨 HIGH THREAT SCORE -> HONEYPOT | Score: ", threat_result.score,
+                "/", _G.config.threat.honeypot_threshold, " | IP: ", remote_ip,
                 " | URI: ", ngx.var.request_uri, " | Patterns: ", table.concat(threat_result.patterns_matched or {}, ", "))
-        
+
         _G.utils.log_security_event("routing_to_honeypot", {
-            reason = "high_threat_score",
-            score = threat_result.score,
-            ip = remote_ip,
+            reason    = "high_threat_score",
+            score     = threat_result.score,
+            ip        = remote_ip,
+            pool      = routing_decision.session_data.honeypot_pool,
             session_id = session_data.id
         })
-        
+
         return routing_decision
     end
     
     -- Check for CVE pattern matches (immediate honeypot routing)
     if threat_result.cve_matched and #threat_result.cve_matched > 0 then
-        routing_decision.target = "honeypot"
-        routing_decision.upstream = "honeypot_backend"
-        routing_decision.update_session = true
-        routing_decision.session_data = {
-            honeypot_bound = true,
-            route_preference = "honeypot",
-            threat_score = threat_result.score,
+        assign_honeypot_pool(routing_decision, {
+            threat_score    = threat_result.score,
             honeypot_reason = "cve_pattern_match",
-            matched_cves = threat_result.cve_matched
-        }
-        
-        ngx.log(ngx.WARN, "[ROUTING] 🎯 CVE EXPLOIT DETECTED -> HONEYPOT | CVEs: ", 
-                table.concat(threat_result.cve_matched, ", "), " | Score: ", threat_result.score, 
+            matched_cves    = threat_result.cve_matched,
+        }, remote_ip)
+
+        ngx.log(ngx.WARN, "[ROUTING] 🎯 CVE EXPLOIT DETECTED -> HONEYPOT | CVEs: ",
+                table.concat(threat_result.cve_matched, ", "), " | Score: ", threat_result.score,
                 " | IP: ", remote_ip, " | URI: ", ngx.var.request_uri)
-        
+
         _G.utils.log_security_event("routing_to_honeypot", {
-            reason = "cve_pattern_match",
-            cves = threat_result.cve_matched,
-            ip = remote_ip,
+            reason    = "cve_pattern_match",
+            cves      = threat_result.cve_matched,
+            ip        = remote_ip,
+            pool      = routing_decision.session_data.honeypot_pool,
             session_id = session_data.id
         })
-        
+
         return routing_decision
     end
     
     -- Check for vulnerable plugin access
     local uri = ngx.var.request_uri or ""
     if _M.is_vulnerable_plugin_access(uri) then
-        routing_decision.target = "honeypot"
-        routing_decision.upstream = "honeypot_backend"
-        routing_decision.update_session = true
-        routing_decision.session_data = {
-            honeypot_bound = true,
-            route_preference = "honeypot",
-            threat_score = math.max(threat_result.score, 60),
-            honeypot_reason = "vulnerable_plugin_access"
-        }
-        
-        ngx.log(ngx.WARN, "[ROUTING] 🔌 VULNERABLE PLUGIN ACCESS -> HONEYPOT | Score: ", 
+        assign_honeypot_pool(routing_decision, {
+            threat_score    = math.max(threat_result.score, 60),
+            honeypot_reason = "vulnerable_plugin_access",
+        }, remote_ip)
+
+        ngx.log(ngx.WARN, "[ROUTING] 🔌 VULNERABLE PLUGIN ACCESS -> HONEYPOT | Score: ",
                 math.max(threat_result.score, 60), " | IP: ", remote_ip, " | URI: ", uri)
-        
+
         _G.utils.log_security_event("routing_to_honeypot", {
-            reason = "vulnerable_plugin_access",
-            uri = uri,
-            ip = remote_ip,
+            reason    = "vulnerable_plugin_access",
+            uri       = uri,
+            ip        = remote_ip,
+            pool      = routing_decision.session_data.honeypot_pool,
             session_id = session_data.id
         })
-        
+
         return routing_decision
     end
     
     -- Check IP reputation
     if threat_result.ip_reputation > 50 then
-        routing_decision.target = "honeypot"
-        routing_decision.upstream = "honeypot_backend"
-        routing_decision.update_session = true
-        routing_decision.session_data = {
-            honeypot_bound = true,
-            route_preference = "honeypot",
-            threat_score = threat_result.score,
-            honeypot_reason = "bad_ip_reputation"
-        }
-        
-        ngx.log(ngx.WARN, "[ROUTING] 🚫 BAD IP REPUTATION -> HONEYPOT | IP Rep Score: ", 
-                threat_result.ip_reputation, " | Threat Score: ", threat_result.score, 
+        assign_honeypot_pool(routing_decision, {
+            threat_score    = threat_result.score,
+            honeypot_reason = "bad_ip_reputation",
+        }, remote_ip)
+
+        ngx.log(ngx.WARN, "[ROUTING] 🚫 BAD IP REPUTATION -> HONEYPOT | IP Rep Score: ",
+                threat_result.ip_reputation, " | Threat Score: ", threat_result.score,
                 " | IP: ", remote_ip, " | URI: ", uri)
-        
+
         return routing_decision
     end
     
@@ -144,17 +198,12 @@ function _M.decide_route(session_data, threat_result, remote_ip)
         -- Gradual escalation: first warning, then honeypot
         local admin_attempts = session_data.admin_attempts or 0
         if admin_attempts >= 2 then
-            routing_decision.target = "honeypot"
-            routing_decision.upstream = "honeypot_backend"
-            routing_decision.update_session = true
-            routing_decision.session_data = {
-                honeypot_bound = true,
-                route_preference = "honeypot",
-                threat_score = math.max(threat_result.score, 40),
-                honeypot_reason = "multiple_admin_attempts"
-            }
-            ngx.log(ngx.WARN, "[ROUTING] 🔐 MULTIPLE ADMIN ATTEMPTS -> HONEYPOT | Attempts: ", 
-                    admin_attempts + 1, " | Score: ", math.max(threat_result.score, 40), 
+            assign_honeypot_pool(routing_decision, {
+                threat_score    = math.max(threat_result.score, 40),
+                honeypot_reason = "multiple_admin_attempts",
+            }, remote_ip)
+            ngx.log(ngx.WARN, "[ROUTING] 🔐 MULTIPLE ADMIN ATTEMPTS -> HONEYPOT | Attempts: ",
+                    admin_attempts + 1, " | Score: ", math.max(threat_result.score, 40),
                     " | IP: ", remote_ip, " | URI: ", uri)
         else
             -- Increment admin attempts but stay on production
@@ -173,57 +222,42 @@ function _M.decide_route(session_data, threat_result, remote_ip)
     
     -- Check for suspicious activities accumulation (increased threshold from 3 to 5)
     if session_data.suspicious_activities and #session_data.suspicious_activities >= 5 then
-        routing_decision.target = "honeypot"
-        routing_decision.upstream = "honeypot_backend"
-        routing_decision.update_session = true
-        routing_decision.session_data = {
-            honeypot_bound = true,
-            route_preference = "honeypot",
-            threat_score = threat_result.score,
-            honeypot_reason = "accumulated_suspicious_activities"
-        }
-        
-        ngx.log(ngx.WARN, "[ROUTING] 📊 ACCUMULATED SUSPICIOUS ACTIVITIES -> HONEYPOT | Count: ", 
-                #session_data.suspicious_activities, " | Score: ", threat_result.score, 
+        assign_honeypot_pool(routing_decision, {
+            threat_score    = threat_result.score,
+            honeypot_reason = "accumulated_suspicious_activities",
+        }, remote_ip)
+
+        ngx.log(ngx.WARN, "[ROUTING] 📊 ACCUMULATED SUSPICIOUS ACTIVITIES -> HONEYPOT | Count: ",
+                #session_data.suspicious_activities, " | Score: ", threat_result.score,
                 " | IP: ", remote_ip, " | URI: ", uri)
-        
+
         return routing_decision
     end
     
     -- Check for rapid automated requests
     if _M.is_rapid_automation(session_data, threat_result) then
-        routing_decision.target = "honeypot"
-        routing_decision.upstream = "honeypot_backend"
-        routing_decision.update_session = true
-        routing_decision.session_data = {
-            honeypot_bound = true,
-            route_preference = "honeypot",
-            threat_score = math.max(threat_result.score, 45),
-            honeypot_reason = "rapid_automation_detected"
-        }
-        
-        ngx.log(ngx.WARN, "[ROUTING] 🤖 RAPID AUTOMATION DETECTED -> HONEYPOT | Score: ", 
-                math.max(threat_result.score, 45), " | IP: ", remote_ip, 
+        assign_honeypot_pool(routing_decision, {
+            threat_score    = math.max(threat_result.score, 45),
+            honeypot_reason = "rapid_automation_detected",
+        }, remote_ip)
+
+        ngx.log(ngx.WARN, "[ROUTING] 🤖 RAPID AUTOMATION DETECTED -> HONEYPOT | Score: ",
+                math.max(threat_result.score, 45), " | IP: ", remote_ip,
                 " | Request Count: ", session_data.request_count or 0, " | URI: ", uri)
-        
+
         return routing_decision
     end
     
     -- Check for file upload attacks
     if _M.is_suspicious_upload() then
-        routing_decision.target = "honeypot"
-        routing_decision.upstream = "honeypot_backend"
-        routing_decision.update_session = true
-        routing_decision.session_data = {
-            honeypot_bound = true,
-            route_preference = "honeypot",
-            threat_score = math.max(threat_result.score, 50),
-            honeypot_reason = "suspicious_file_upload"
-        }
-        
-        ngx.log(ngx.WARN, "[ROUTING] 📤 SUSPICIOUS FILE UPLOAD -> HONEYPOT | Score: ", 
+        assign_honeypot_pool(routing_decision, {
+            threat_score    = math.max(threat_result.score, 50),
+            honeypot_reason = "suspicious_file_upload",
+        }, remote_ip)
+
+        ngx.log(ngx.WARN, "[ROUTING] 📤 SUSPICIOUS FILE UPLOAD -> HONEYPOT | Score: ",
                 math.max(threat_result.score, 50), " | IP: ", remote_ip, " | URI: ", uri)
-        
+
         return routing_decision
     end
     
@@ -456,9 +490,14 @@ function _M.apply_routing_decision(decision)
     if decision.target == "honeypot" then
         ngx.var.suspicious_activity = "true"
 
-        -- Add custom headers for honeypot identification
+        -- Add custom headers for honeypot identification.
+        -- X-Honeypot-Pool is intentionally NOT exposed to the client (set on the
+        -- internal request object only); it is used by backend WordPress for logging.
         ngx.header["X-Honeypot-Route"] = "true"
-        ngx.header["X-Route-Reason"] = decision.session_data.honeypot_reason or "unknown"
+        ngx.header["X-Route-Reason"]   = decision.session_data.honeypot_reason or "unknown"
+        -- Pass pool number to backend for SQL-level tracking (stripped by nginx
+        -- before forwarding to the upstream via proxy_pass).
+        ngx.req.set_header("X-Honeypot-Pool", tostring(decision.session_data.honeypot_pool or "1"))
     end
 
     return decision

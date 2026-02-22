@@ -30,36 +30,59 @@ local function init_worker()
         
         ngx.log(ngx.INFO, "[PREWARM] Starting connection pool pre-warming for worker ", ngx.worker.id())
         
-        -- Wait for backends to be ready first (using root path since WordPress doesn't have /nginx-health)
-        local production_ready = health_check.wait_for_backend("production_backend", "http://production_eshop", 30)
-        local honeypot_ready = health_check.wait_for_backend("honeypot_backend", "http://honeypot_eshop", 30)
-        
+        -- Number of honeypot pool instances – must match POOL_COUNT in pool_router.lua
+        -- and the number of honeypot_eshop_N services in docker-compose.yml.
+        local POOL_COUNT = 3
+
+        -- Wait for production backend first (critical path).
+        local production_ready = health_check.wait_for_backend(
+            "production_backend", "http://production_eshop", 30)
         if not production_ready then
             ngx.log(ngx.ERR, "[PREWARM] Production backend not ready, pre-warming may fail")
         end
-        
-        if not honeypot_ready then
-            ngx.log(ngx.WARN, "[PREWARM] Honeypot backend not ready, pre-warming may fail")
+
+        -- Wait for each honeypot pool backend independently so that one slow
+        -- instance does not block pre-warming of the others.
+        local pool_ready = {}
+        for i = 1, POOL_COUNT do
+            local svc      = "honeypot_eshop_" .. i
+            local upstream = "honeypot_backend_" .. i
+            pool_ready[i]  = health_check.wait_for_backend(upstream, "http://" .. svc, 30)
+            if not pool_ready[i] then
+                ngx.log(ngx.WARN,
+                    "[PREWARM] Honeypot pool ", i, " (", svc, ") not ready – ",
+                    "pre-warming skipped for this pool")
+            end
         end
-        
-        -- Pre-warm production backend connections (more connections for high traffic)
+
+        -- Pre-warm production backend connections (more connections – high traffic).
         if production_ready then
             local success, failed = health_check.prewarm_backend_connections(
-                "production_backend", 
-                "http://production_eshop", 
-                20  -- 20 connections for production
+                "production_backend",
+                "http://production_eshop",
+                20  -- 20 keepalive connections for the production instance
             )
-            ngx.log(ngx.INFO, "[PREWARM] Production backend: ", success, " connections established, ", failed, " failed")
+            ngx.log(ngx.INFO,
+                "[PREWARM] Production backend: ",
+                success, " connections established, ", failed, " failed")
         end
-        
-        -- Pre-warm honeypot backend connections (fewer connections needed)
-        if honeypot_ready then
-            local success, failed = health_check.prewarm_backend_connections(
-                "honeypot_backend", 
-                "http://honeypot_eshop", 
-                10  -- 10 connections for honeypot
-            )
-            ngx.log(ngx.INFO, "[PREWARM] Honeypot backend: ", success, " connections established, ", failed, " failed")
+
+        -- Pre-warm each honeypot pool with a smaller connection budget.
+        -- Fewer connections per pool are needed because attacker traffic is a
+        -- fraction of total traffic and is spread across POOL_COUNT instances.
+        for i = 1, POOL_COUNT do
+            if pool_ready[i] then
+                local svc      = "honeypot_eshop_" .. i
+                local upstream = "honeypot_backend_" .. i
+                local success, failed = health_check.prewarm_backend_connections(
+                    upstream,
+                    "http://" .. svc,
+                    5  -- 5 keepalive connections per pool instance
+                )
+                ngx.log(ngx.INFO,
+                    "[PREWARM] Honeypot pool ", i, " (", upstream, "): ",
+                    success, " connections established, ", failed, " failed")
+            end
         end
         
         ngx.log(ngx.INFO, "[PREWARM] Connection pool pre-warming completed for worker ", ngx.worker.id())
@@ -76,13 +99,24 @@ local function init_worker()
         ngx.log(ngx.ERR, "Failed to schedule connection pre-warming: ", err)
     end
     
-    -- Schedule periodic health checks for backends
+    -- Schedule periodic health checks for production and all honeypot pool backends.
+    -- The health status written here is read by pool_router.lua to decide whether
+    -- to fall back to a different pool when the assigned one is unhealthy.
     if health_check then
+        -- Number of honeypot pool instances (keep in sync with pool_router.lua).
+        local POOL_COUNT_HC = 3
         local ok, err = ngx.timer.every(10, function()
             pcall(function()
-                -- Health checks now use root path which returns 200-399 for WordPress
+                -- Production instance – uses root path (WordPress returns 200-399).
                 health_check.perform_health_check("production_backend", "http://production_eshop")
-                health_check.perform_health_check("honeypot_backend", "http://honeypot_eshop")
+
+                -- Each honeypot pool instance checked independently so that a
+                -- single unhealthy pool does not affect the health status of others.
+                for i = 1, POOL_COUNT_HC do
+                    health_check.perform_health_check(
+                        "honeypot_backend_" .. i,
+                        "http://honeypot_eshop_" .. i)
+                end
             end)
         end)
         if not ok then
