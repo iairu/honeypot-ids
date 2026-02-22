@@ -50,11 +50,27 @@ services:
       }
 
       # -----------------------------------------------------------------------
-      # Copy WordPress files for each pool instance
+      # Copy WordPress files for each pool instance.
+      # After copying, remove production-hardening.php from every honeypot
+      # destination.  That mu-plugin disables XML-RPC, strips version strings,
+      # and closes other attack vectors on the production instance.  Honeypot
+      # instances MUST NOT have it: attackers need to see realistic fingerprints
+      # and reach the intentionally vulnerable endpoints (including xmlrpc.php).
       # -----------------------------------------------------------------------
       copy_files /source_files /dest_files_1 'honeypot pool-1 WordPress files'
+      rm -f /dest_files_1/wp-content/mu-plugins/production-hardening.php \
+        && echo '  Removed production-hardening.php from pool-1 (honeypot retains attack surface)' \
+        || echo '  Note: production-hardening.php not present in pool-1 destination (OK)'
+
       copy_files /source_files /dest_files_2 'honeypot pool-2 WordPress files'
+      rm -f /dest_files_2/wp-content/mu-plugins/production-hardening.php \
+        && echo '  Removed production-hardening.php from pool-2 (honeypot retains attack surface)' \
+        || echo '  Note: production-hardening.php not present in pool-2 destination (OK)'
+
       copy_files /source_files /dest_files_3 'honeypot pool-3 WordPress files'
+      rm -f /dest_files_3/wp-content/mu-plugins/production-hardening.php \
+        && echo '  Removed production-hardening.php from pool-3 (honeypot retains attack surface)' \
+        || echo '  Note: production-hardening.php not present in pool-3 destination (OK)'
 
       # -----------------------------------------------------------------------
       # Copy database data directory for each pool instance.
@@ -249,6 +265,34 @@ services:
       - ./honeypot_database_data:/var/lib/mysql
     networks:
       - honeypot_network
+    # -------------------------------------------------------------------------
+    # Container hardening – defence-in-depth so that a SQL injection or
+    # database-level exploit cannot be used to pivot beyond this container.
+    #
+    # no-new-privileges: prevents setuid binaries from gaining additional
+    #   capabilities at runtime (e.g. a SUID shell dropped by an attacker).
+    # cap_drop ALL / cap_add minimal set: MySQL only needs CHOWN (own its data
+    #   directory), DAC_OVERRIDE (read/write across uid boundaries),
+    #   FOWNER (ignore ownership checks for its own files), SETGID/SETUID
+    #   (drop to the 'mysql' user on start) and SYS_NICE (adjust scheduling
+    #   priority via nice()).  All other Linux capabilities are removed.
+    # mem_limit / cpus / pids_limit: prevent a runaway query (e.g. triggered by
+    #   a time-based blind SQLi payload) from starving the host or other containers.
+    # -------------------------------------------------------------------------
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - SYS_NICE
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 200
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD}"]
       interval: 10s
@@ -276,6 +320,21 @@ services:
       - ./honeypot_database_data_2:/var/lib/mysql
     networks:
       - honeypot_network
+    # Hardening – same rationale as honeypot_database_1 above.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - SYS_NICE
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 200
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD}"]
       interval: 10s
@@ -303,6 +362,21 @@ services:
       - ./honeypot_database_data_3:/var/lib/mysql
     networks:
       - honeypot_network
+    # Hardening – same rationale as honeypot_database_1 above.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - SYS_NICE
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 200
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD}"]
       interval: 10s
@@ -350,6 +424,47 @@ services:
       - honeypot_network
       - production_network  # Allow access to production database for SQL routing
       - monitoring_network
+    # -------------------------------------------------------------------------
+    # Container hardening for honeypot WordPress instances.
+    #
+    # Goal: contain any attacker who achieves code execution (e.g. via RCE
+    # through one of the intentionally vulnerable plugins) inside this single
+    # container so they cannot pivot to the host or other containers.
+    #
+    # no-new-privileges: blocks privilege escalation via SUID/SGID binaries.
+    #   An attacker who drops a SUID shell via an upload exploit cannot gain
+    #   root with it.
+    # cap_drop ALL / cap_add minimal: Apache+PHP only needs CHOWN, DAC_OVERRIDE,
+    #   FOWNER (filesystem operations), SETGID/SETUID (drop to www-data) and
+    #   NET_BIND_SERVICE (bind port 80).  KILL is added so Apache's parent
+    #   process can terminate worker children.  All other capabilities
+    #   (NET_RAW, SYS_ADMIN, SYS_PTRACE, etc.) are removed, preventing common
+    #   container-escape techniques that rely on those capabilities.
+    # mem_limit / cpus: prevents a resource-exhaustion DoS from one honeypot
+    #   instance consuming all host resources (e.g. triggered by a fork-bomb
+    #   or a CPU-intensive exploit payload).
+    # pids_limit: caps the process tree so fork-bomb payloads cannot exhaust
+    #   the host PID namespace.
+    # Note: read_only is NOT set because WordPress/Apache must write to the
+    #   filesystem (/tmp, wp-content/uploads, debug.log etc.).  The attacker's
+    #   ability to write files is intentional — it is part of the honeypot's
+    #   attack surface and is monitored via Suricata and ELK.
+    # -------------------------------------------------------------------------
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+      - KILL
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 300
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
@@ -381,6 +496,22 @@ services:
       - honeypot_network
       - production_network
       - monitoring_network
+    # Hardening – same rationale as honeypot_eshop_1 above.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+      - KILL
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 300
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
@@ -412,6 +543,22 @@ services:
       - honeypot_network
       - production_network
       - monitoring_network
+    # Hardening – same rationale as honeypot_eshop_1 above.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+      - KILL
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 300
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
@@ -496,6 +643,62 @@ services:
   #    start_period: 45s
 
   # Filebeat for shipping logs to ELK SIEM (on OpenStack SIEM VM 147.175.151.193)
+  # ---------------------------------------------------------------------------
+  # Automated backup service
+  # ---------------------------------------------------------------------------
+  # Runs on a 24-hour loop, dumping the production MySQL database and archiving
+  # the production WordPress files into the ./backups/ directory on the host.
+  #
+  # Retention: the backup script keeps only the last 7 daily archives; older
+  # files are pruned automatically to prevent unbounded disk growth.
+  #
+  # The service is intentionally isolated from honeypot networks and has no
+  # access to honeypot data – backups are production-only.
+  #
+  # Security hardening: runs with no-new-privileges, drops all capabilities
+  # (a backup process needs only filesystem read access, not Linux capabilities),
+  # and is limited in memory and CPU to avoid interfering with live traffic.
+  # ---------------------------------------------------------------------------
+  backup_service:
+    image: alpine:latest
+    depends_on:
+      production_database:
+        condition: service_healthy
+      production_eshop:
+        condition: service_healthy
+    volumes:
+      - ./production_eshop_files:/source_wp:ro
+      - ./backups:/backups
+      - ./backups/backup.sh:/backup.sh:ro
+    networks:
+      - production_network
+    environment:
+      - MYSQL_HOST=production_database
+      - MYSQL_DATABASE=production_database
+      - MYSQL_USER=production_user
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - BACKUP_RETENTION_DAYS=7
+    command: |
+      sh -c "
+        apk add --no-cache mysql-client > /dev/null 2>&1
+        chmod +x /backup.sh
+        echo 'Backup service started. First backup in 5 minutes...'
+        sleep 300
+        while true; do
+          /backup.sh
+          echo 'Next backup in 24 hours...'
+          sleep 86400
+        done
+      "
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    cpus: "0.25"
+    pids_limit: 50
+    restart: unless-stopped
+
   filebeat:
     image: docker.elastic.co/beats/filebeat:8.11.0
     user: root
@@ -752,3 +955,6 @@ volumes:
     driver: local
   ssl_certificates:
     driver: local
+  # Backup archives written by backup_service – production data only.
+  # The directory is bind-mounted (not a named volume) so backups survive
+  # 'docker compose down -v' and are accessible directly on the host filesystem.
