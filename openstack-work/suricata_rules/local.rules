@@ -1,10 +1,66 @@
 ###################################################
 # Suricata Rules for WordPress Vulnerability Detection
 # and Honeypot Traffic Analysis
+#
+# PURPOSE:
+#   Detect and alert on attack patterns targeting the WooCommerce honeypot.
+#   Rules are organised by CVE / attack category and annotated with the
+#   corresponding OWASP Web Security Testing Guide (WSTG) v4.2 category so
+#   that captured alerts can be directly mapped to the thesis test scenarios.
+#
+# OWASP WSTG CATEGORY INDEX:
+#   WSTG-INFO  – Information Gathering          (sids 1000017-1000020, 1000049)
+#   WSTG-CONF  – Configuration Management       (sids 1000019-1000020)
+#   WSTG-IDNT  – Identity Management            (sids 1000018)
+#   WSTG-ATHN  – Authentication Testing         (sids 1000017)
+#   WSTG-AUTHZ – Authorization / Access Control (sids 1000001-1000008)
+#   WSTG-INPV  – Input Validation (all sub-cats)(sids 1000011-1000016, 1000026-1000041)
+#     WSTG-INPV-01 Directory Traversal           (sids 1000036-1000038)
+#     WSTG-INPV-02 XSS                           (sids 1000030-1000032)
+#     WSTG-INPV-05 SQL Injection                 (sids 1000011-1000013, 1000026-1000029)
+#     WSTG-INPV-10 File Upload                   (sids 1000005-1000006, 1000009-1000010, 1000014-1000016)
+#     WSTG-INPV-11 Local/Remote File Inclusion   (sids 1000039-1000041)
+#     WSTG-INPV-12 Command Injection             (sids 1000033-1000035)
+#   WSTG-SESS  – Session Management             (sids 1000017: brute-force implies session steal)
+#
+# CVE COVERAGE:
+#   CVE-2023-28121  WooCommerce Payments unauth admin     sids 1000001-1000002
+#   CVE-2023-2986   Abandoned Cart hardcoded key          sids 1000003-1000004
+#   CVE-2025-4403   DnD file upload type bypass           sids 1000005-1000006
+#   CVE-2025-2266   CWMP unauthenticated options update   sids 1000007-1000008
+#   CVE-2025-47577  Gift Voucher file upload RCE          sids 1000009-1000010
+#   CVE-2024-8425   Gift Voucher alternate vector         sid  1000010
+#   CVE-2024-2387   AFI SQL injection                     sids 1000011-1000013
+#   CVE-2025-10142  PagSeguro path traversal              sids 1000014-1000015
+#   CVE-2024-50508  WP File Upload path traversal         sids 1000015-1000016
+#
+# SID ALLOCATION:
+#   1000001-1000016  CVE-specific detection rules
+#   1000017-1000025  General WordPress attack patterns + plugin detection
+#   1000026-1000029  SQL injection generic patterns (WSTG-INPV-05)
+#   1000030-1000032  XSS patterns                  (WSTG-INPV-02)
+#   1000033-1000035  Command injection             (WSTG-INPV-12)
+#   1000036-1000038  Directory traversal           (WSTG-INPV-01)
+#   1000039-1000041  File inclusion wrappers       (WSTG-INPV-11)
+#   1000042-1000048  Malicious user-agent strings  (WSTG-INFO-02)
+#   1000049          Version fingerprinting probe  (WSTG-INFO-02)
+#
+# NOTES:
+#   - All rules use classtype:web-application-attack unless otherwise noted.
+#   - Rules are intentionally kept BROAD to maximise honeypot capture rate;
+#     false-positive rate on the production instance is managed by the Nginx Lua
+#     routing layer (router.lua), not by these rules.
+#   - The Nginx Lua init_worker.lua parses fast.log every 30 s and feeds
+#     matching src_ip values into the threat_intel Redis dict with a score
+#     increment of +20 per alert.
 ###################################################
 
 #--------------------------------------------------------------------------
 # CVE-2023-28121: WooCommerce Payments Unauthorized Admin Access
+# OWASP WSTG-AUTHZ: Broken Access Control / Privilege Escalation
+# Plugin: woocommerce-payments ≤ 5.6.1
+# Attack: Inject X-WCPAY-PLATFORM-CHECKOUT-USER header to impersonate any user,
+#         then create/modify admin accounts via the WordPress REST API.
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2023-28121 WooCommerce Payments Unauthorized Admin Access Attempt"; flow:established,to_server; content:"X-WCPAY-PLATFORM-CHECKOUT-USER"; http_header; content:"wp/v2/users"; http_uri; classtype:web-application-attack; sid:1000001; rev:1;)
 
@@ -12,6 +68,11 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2023-28121 WooCo
 
 #--------------------------------------------------------------------------
 # CVE-2023-2986: Abandoned Cart Lite Hardcoded Encryption Key
+# OWASP WSTG-AUTHZ: Authentication bypass via cryptographic weakness
+# Plugin: abandoned-cart-lite
+# Attack: The plugin uses a hardcoded AES key ("qJB0rGtIn5UB1xG03efyCp") to
+#         generate checkout tokens.  An attacker can forge tokens for any user
+#         and authenticate as that user without knowing their password.
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2023-2986 Abandoned Cart Lite Exploit Attempt"; flow:established,to_server; content:"wcal_action=checkout_link"; http_uri; content:"validate="; http_uri; classtype:web-application-attack; sid:1000003; rev:1;)
 
@@ -19,6 +80,11 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2023-2986 Abando
 
 #--------------------------------------------------------------------------
 # CVE-2025-4403: User-Controlled File Upload Type
+# OWASP WSTG-INPV-10: Unrestricted File Upload
+# Plugin: drag-and-drop-multiple-file-upload
+# Attack: The supported_type POST parameter is not sanitised, allowing an
+#         attacker to override the server-side MIME-type whitelist and upload
+#         executable PHP files that can be triggered via a direct URL.
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2025-4403 DnD File Upload Exploit"; flow:established,to_server; http_method; content:"POST"; content:"dnd-wc-upload-file"; http_client_body; content:"supported_type"; http_client_body; pcre:"/supported_type[^&]*\./i"; classtype:web-application-attack; sid:1000005; rev:1;)
 
@@ -26,6 +92,11 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2025-4403 Suspic
 
 #--------------------------------------------------------------------------
 # CVE-2025-2266: Unauthenticated WordPress Options Update
+# OWASP WSTG-AUTHZ: Missing authentication for privileged operation
+# Plugin: cwmp
+# Attack: The cwmpUpdateOptions action is accessible without authentication.
+#         An attacker sets users_can_register=1 and default_role=administrator
+#         to self-register an admin account and take over the site.
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2025-2266 WordPress Options Update Exploit"; flow:established,to_server; http_method; content:"POST"; content:"cwmpUpdateOptions"; http_client_body; content:"users_can_register=1"; http_client_body; classtype:web-application-attack; sid:1000007; rev:1;)
 
@@ -33,6 +104,11 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2025-2266 Admin 
 
 #--------------------------------------------------------------------------
 # CVE-2025-47577 & CVE-2024-8425: Unauthenticated File Upload with RCE
+# OWASP WSTG-INPV-10: Unrestricted File Upload → Remote Code Execution
+# Plugin: gift-voucher (MWB Gift Cards for WooCommerce)
+# Attack: The mwb_wgm_preview_mail AJAX action accepts file uploads without
+#         authentication or extension validation.  A PHP web-shell uploaded
+#         via this endpoint can be executed by browsing to its URL.
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2025-47577 Gift Voucher File Upload RCE"; flow:established,to_server; http_method; content:"POST"; content:"mwb_wgm_preview_mail"; http_uri; content:"multipart/form-data"; http_header; pcre:"/filename[^;]*\.php/i"; classtype:web-application-attack; sid:1000009; rev:1;)
 
@@ -40,6 +116,11 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2024-8425 Malici
 
 #--------------------------------------------------------------------------
 # CVE-2024-2387: SQL Injection via URL Parameter
+# OWASP WSTG-INPV-05: SQL Injection
+# Plugin: advanced-form-integration
+# Attack: The integration_id GET parameter in the advanced-form-integration-log
+#         admin page is passed unsanitised to a SQL query.  Classic blind,
+#         time-based, and UNION-based injection techniques all apply.
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2024-2387 AFI SQL Injection Attempt"; flow:established,to_server; content:"advanced-form-integration-log"; http_uri; content:"integration_id"; http_uri; pcre:"/integration_id[^&]*'/i"; classtype:web-application-attack; sid:1000011; rev:1;)
 
@@ -48,7 +129,13 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2024-2387 Time-b
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2024-2387 Union-based SQL Injection"; flow:established,to_server; content:"integration_id"; http_uri; content:"UNION"; http_uri; nocase; content:"SELECT"; http_uri; nocase; classtype:web-application-attack; sid:1000013; rev:1;)
 
 #--------------------------------------------------------------------------
-# CVE-2025-10142 & CVE-2024-50508: File Download/Upload Vulnerabilities
+# CVE-2025-10142 & CVE-2024-50508: File Path Traversal / Arbitrary File Read
+# OWASP WSTG-INPV-01: Path Traversal
+# Plugins: pagseguro-connect-woocommerce (CVE-2025-10142),
+#          wp-file-upload (CVE-2024-50508)
+# Attack: The file[path] parameter is not normalised before being used in a
+#         file-system operation.  An attacker can read /etc/passwd, wp-config.php,
+#         or any other file readable by the web server process.
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2025-10142 Unauthorized File Upload"; flow:established,to_server; content:"pc_added_uploaded_image"; http_uri; content:"file[path]"; http_uri; pcre:"/file\[path\][^&]*\//i"; classtype:web-application-attack; sid:1000014; rev:1;)
 
@@ -58,6 +145,8 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CVE-2024-50508 Syste
 
 #--------------------------------------------------------------------------
 # General WordPress Attack Patterns
+# OWASP WSTG-ATHN-04 (brute force), WSTG-IDNT-04 (user enumeration),
+# WSTG-CONF-05 (sensitive file exposure), WSTG-INFO-02 (fingerprinting)
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Admin Brute Force Attempt"; flow:established,to_server; http_method; content:"POST"; content:"wp-login.php"; http_uri; content:"log="; http_client_body; content:"pwd="; http_client_body; threshold:type limit, track by_src, count 5, seconds 60; classtype:web-application-attack; sid:1000017; rev:1;)
 
@@ -68,7 +157,11 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Config Fil
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Backup File Access"; flow:established,to_server; content:".sql"; http_uri; content:"backup"; http_uri; nocase; classtype:web-application-attack; sid:1000020; rev:1;)
 
 #--------------------------------------------------------------------------
-# Plugin-Specific Detection
+# Plugin-Specific Detection (activity monitoring, not necessarily attack)
+# OWASP WSTG-INFO-02: Fingerprinting Web Application Frameworks
+# These rules fire on any access to known-vulnerable plugin directories,
+# even for benign requests (e.g. fetching the plugin's readme.txt).
+# classtype:web-application-activity (lower severity than attack rules).
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WooCommerce Payments Plugin Access"; flow:established,to_server; content:"woocommerce-payments"; http_uri; classtype:web-application-activity; sid:1000021; rev:1;)
 
@@ -81,7 +174,10 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"CWMP Plugin Access";
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Gift Voucher Plugin Access"; flow:established,to_server; content:"gift-voucher"; http_uri; classtype:web-application-activity; sid:1000025; rev:1;)
 
 #--------------------------------------------------------------------------
-# SQL Injection Detection
+# SQL Injection Detection – Generic Patterns
+# OWASP WSTG-INPV-05: Testing for SQL Injection
+# These rules complement the CVE-specific rules above by catching novel
+# injection attempts that do not match known plugin patterns.
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"SQL Injection - Union Select"; flow:established,to_server; pcre:"/union[^a-zA-Z]+select/iU"; classtype:web-application-attack; sid:1000026; rev:1;)
 
@@ -92,7 +188,8 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"SQL Injection - MySQ
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"SQL Injection - Time Delay"; flow:established,to_server; pcre:"/(sleep|waitfor|benchmark)\s*\(/iU"; classtype:web-application-attack; sid:1000029; rev:1;)
 
 #--------------------------------------------------------------------------
-# XSS Detection
+# XSS Detection – Generic Patterns
+# OWASP WSTG-INPV-02: Testing for Reflected / Stored Cross Site Scripting
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"XSS Script Tag"; flow:established,to_server; content:"<script"; nocase; classtype:web-application-attack; sid:1000030; rev:1;)
 
@@ -101,7 +198,8 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"XSS JavaScript Event
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"XSS JavaScript Protocol"; flow:established,to_server; content:"javascript:"; nocase; classtype:web-application-attack; sid:1000032; rev:1;)
 
 #--------------------------------------------------------------------------
-# Command Injection Detection
+# Command Injection Detection – Generic Patterns
+# OWASP WSTG-INPV-12: Testing for Command Injection
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Command Injection - System Commands"; flow:established,to_server; pcre:"/(;|&&|\|\|)\s*(cat|ls|ps|id|whoami|uname)/iU"; classtype:web-application-attack; sid:1000033; rev:1;)
 
@@ -110,7 +208,8 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Command Injection - 
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Command Injection - Backticks"; flow:established,to_server; content:"`"; classtype:web-application-attack; sid:1000035; rev:1;)
 
 #--------------------------------------------------------------------------
-# Directory Traversal Detection
+# Directory Traversal Detection – Generic Patterns
+# OWASP WSTG-INPV-01: Testing for Path Traversal
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Directory Traversal - Dot Dot Slash"; flow:established,to_server; content:"../"; classtype:web-application-attack; sid:1000036; rev:1;)
 
@@ -119,7 +218,9 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Directory Traversal 
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Directory Traversal - Double Encoded"; flow:established,to_server; pcre:"/%252e%252e/iU"; classtype:web-application-attack; sid:1000038; rev:1;)
 
 #--------------------------------------------------------------------------
-# File Inclusion Detection
+# File Inclusion Detection – PHP Stream Wrapper Abuse
+# OWASP WSTG-INPV-11: Testing for Local File Inclusion
+#          WSTG-INPV-07: Testing for XML Injection (data:// URI)
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"PHP Wrapper Usage"; flow:established,to_server; pcre:"/php:\/\/(filter|input|output|fd|memory|temp|stdin)/iU"; classtype:web-application-attack; sid:1000039; rev:1;)
 
@@ -128,7 +229,11 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Data URI Scheme"; fl
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"File URI Scheme"; flow:established,to_server; content:"file://"; nocase; classtype:web-application-attack; sid:1000041; rev:1;)
 
 #--------------------------------------------------------------------------
-# Malicious User Agents
+# Malicious User Agents – Security Tool Fingerprinting
+# OWASP WSTG-INFO-02: Fingerprint Web Application Framework
+# These rules identify well-known attack tools by their User-Agent strings.
+# src_ip of matching alerts is fed into the Nginx threat_intel dict with a
+# +20 score increment, potentially crossing the honeypot routing threshold.
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Malicious User Agent - SQLMap"; flow:established,to_server; content:"sqlmap"; http_user_agent; nocase; classtype:web-application-attack; sid:1000042; rev:1;)
 
@@ -145,7 +250,10 @@ alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Malicious User Agent
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"Malicious User Agent - Burp Suite"; flow:established,to_server; content:"burpsuite"; http_user_agent; nocase; classtype:web-application-attack; sid:1000048; rev:1;)
 
 #--------------------------------------------------------------------------
-# Scanning and Reconnaissance
+# Scanning and Reconnaissance – Version Fingerprinting Probes
+# OWASP WSTG-INFO-02: Fingerprint Web Application Framework
+# Accessing wp-includes/version.php directly reveals the exact WordPress
+# version in plain text, enabling targeted CVE selection by the attacker.
 #--------------------------------------------------------------------------
 alert http $EXTERNAL_NET any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Version Detection"; flow:established,to_server; content:"wp-includes/version.php"; http_uri; classtype:web-application-attack; sid:1000049; rev:1;)
 
