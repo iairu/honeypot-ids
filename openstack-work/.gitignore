@@ -2,6 +2,10 @@ honeypot_database_data/*
 !honeypot_database_data/placeholder
 honeypot_eshop_files/*
 !honeypot_eshop_files/placeholder
+honeypot_eshop_files_2/*
+!honeypot_eshop_files_2/placeholder
+honeypot_eshop_files_3/*
+!honeypot_eshop_files_3/placeholder
 nginx_logs/*
 !nginx_logs/placeholder
 suricata_logs/*

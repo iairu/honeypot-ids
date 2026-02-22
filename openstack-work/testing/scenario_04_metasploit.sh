@@ -66,9 +66,9 @@ HONEYPOT_CONTAINER="honeypot-ids-system-v1-honeypot_eshop_1-1"
 HONEYPOT_DB_CONTAINER="honeypot-ids-system-v1-honeypot_database_1-1"
 
 # WordPress database credentials (from docker-compose.yml environment).
-HP_DB_USER="${HP_DB_USER:-honeypot_user}"
-HP_DB_PASS="${HP_DB_PASS:-honeypot_password}"
-HP_DB_NAME="${HP_DB_NAME:-honeypot_db}"
+HP_DB_USER="${HP_DB_USER:-production_user}"
+HP_DB_PASS="${HP_DB_PASS:-change_this_user_password_in_production}"
+HP_DB_NAME="${HP_DB_NAME:-production_database}"
 
 # Working directory for generated Metasploit resource scripts.
 WORK_DIR="$(mktemp -d /tmp/msf_scenario_XXXXXX)"

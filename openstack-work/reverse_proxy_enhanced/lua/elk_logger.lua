@@ -1,4 +1,9 @@
--- elk_logger.lua - ELK SIEM Integration Module
+-- DEAD CODE: elk_logger.lua - ELK SIEM Integration Module
+-- This module is never required by any other Lua file or by nginx.conf.
+-- It was intended to let the Nginx layer push security events directly into
+-- Elasticsearch, but this responsibility was delegated to the filebeat service
+-- (which ships Nginx access/error logs and Suricata EVE JSON to the SIEM).
+-- Retained as a reference implementation for future ELK-direct integration.
 -- Sends structured security events to Elasticsearch via HTTP
 
 local cjson = require "cjson"

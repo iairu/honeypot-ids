@@ -68,9 +68,9 @@ HP_DB_CONTAINER="honeypot-ids-system-v1-honeypot_database_1-1"
 PROD_DB_CONTAINER="honeypot-ids-system-v1-production_database-1"
 
 # Honeypot MySQL credentials (from docker-compose.yml environment section).
-HP_DB_USER="${HP_DB_USER:-honeypot_user}"
-HP_DB_PASS="${HP_DB_PASS:-honeypot_password}"
-HP_DB_NAME="${HP_DB_NAME:-honeypot_db}"
+HP_DB_USER="${HP_DB_USER:-production_user}"
+HP_DB_PASS="${HP_DB_PASS:-change_this_user_password_in_production}"
+HP_DB_NAME="${HP_DB_NAME:-production_database}"
 HP_DB_ROOT_PASS="${HP_DB_ROOT_PASS:-honeypot_root_password}"
 
 # WordPress admin username to target (standard WordPress default).
@@ -660,8 +660,8 @@ fi
 # 7b. Production admin hash must NOT match the test hash we just injected.
 TOTAL=$((TOTAL + 1))
 PROD_DB_USER="${PROD_DB_USER:-production_user}"
-PROD_DB_PASS="${PROD_DB_PASS:-production_password}"
-PROD_DB_NAME="${PROD_DB_NAME:-production_db}"
+PROD_DB_PASS="${PROD_DB_PASS:-change_this_user_password_in_production}"
+PROD_DB_NAME="${PROD_DB_NAME:-production_database}"
 
 if command -v docker >/dev/null 2>&1 && \
    docker ps --format '{{.Names}}' 2>/dev/null | grep -q "${PROD_DB_CONTAINER}"; then

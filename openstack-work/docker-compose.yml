@@ -20,13 +20,15 @@ services:
       - ./production_database_data:/source_db:ro
       # Pool 1 destinations (original paths kept for backward compat)
       - ./honeypot_eshop_files:/dest_files_1
-      - ./honeypot_database_data:/dest_db_1
+      - honeypot_database_data:/dest_db_1
       # Pool 2 destinations
       - ./honeypot_eshop_files_2:/dest_files_2
-      - ./honeypot_database_data_2:/dest_db_2
+      - honeypot_database_data_2:/dest_db_2
       # Pool 3 destinations
       - ./honeypot_eshop_files_3:/dest_files_3
-      - ./honeypot_database_data_3:/dest_db_3
+      - honeypot_database_data_3:/dest_db_3
+      # Production DB destination (named volume to avoid vmhgfs chown restriction)
+      - production_mysql_data:/dest_prod_db
       - ./ssl_certificates:/ssl_certs
     command: |
       sh -c "
@@ -40,10 +42,14 @@ services:
       copy_files() {
         SRC=\$$1; DST=\$$2; LABEL=\$$3
         if [ -d \"\$$SRC\" ] && [ -n \"\$$(find \$$SRC -mindepth 1 -maxdepth 1 2>/dev/null)\" ]; then
-          echo \"Copying \$$LABEL files to \$$DST...\"
-          find \"\$$DST\" -mindepth 1 -delete 2>/dev/null || true
-          cp -a \"\$$SRC/\". \"\$$DST/\" 2>/dev/null || echo \"  Warning: copy for \$$LABEL returned non-zero\"
-          echo \"  Done: \$$LABEL\"
+          if [ -n \"\$$(find \$$DST -mindepth 1 -maxdepth 1 2>/dev/null)\" ]; then
+            echo \"  Destination \$$DST already populated – skipping \$$LABEL copy\"
+          else
+            echo \"Copying \$$LABEL files to \$$DST...\"
+            find \"\$$DST\" -mindepth 1 -delete 2>/dev/null || true
+            tar -C \"\$$SRC\" -cf - . | tar -C \"\$$DST\" -xf - 2>/dev/null || echo \"  Warning: tar copy for \$$LABEL returned non-zero\"
+            echo \"  Done: \$$LABEL\"
+          fi
         else
           echo \"  Source \$$SRC empty or absent – skipping \$$LABEL\"
         fi
@@ -58,25 +64,25 @@ services:
       # and reach the intentionally vulnerable endpoints (including xmlrpc.php).
       # -----------------------------------------------------------------------
       copy_files /source_files /dest_files_1 'honeypot pool-1 WordPress files'
-      rm -f /dest_files_1/wp-content/mu-plugins/production-hardening.php \
-        && echo '  Removed production-hardening.php from pool-1 (honeypot retains attack surface)' \
-        || echo '  Note: production-hardening.php not present in pool-1 destination (OK)'
+      rm -f /dest_files_1/wp-content/mu-plugins/production-hardening.php
+      echo '  Removed production-hardening.php from pool-1 (honeypot retains attack surface)'
 
       copy_files /source_files /dest_files_2 'honeypot pool-2 WordPress files'
-      rm -f /dest_files_2/wp-content/mu-plugins/production-hardening.php \
-        && echo '  Removed production-hardening.php from pool-2 (honeypot retains attack surface)' \
-        || echo '  Note: production-hardening.php not present in pool-2 destination (OK)'
+      rm -f /dest_files_2/wp-content/mu-plugins/production-hardening.php
+      echo '  Removed production-hardening.php from pool-2 (honeypot retains attack surface)'
 
       copy_files /source_files /dest_files_3 'honeypot pool-3 WordPress files'
-      rm -f /dest_files_3/wp-content/mu-plugins/production-hardening.php \
-        && echo '  Removed production-hardening.php from pool-3 (honeypot retains attack surface)' \
-        || echo '  Note: production-hardening.php not present in pool-3 destination (OK)'
+      rm -f /dest_files_3/wp-content/mu-plugins/production-hardening.php
+      echo '  Removed production-hardening.php from pool-3 (honeypot retains attack surface)'
 
       # -----------------------------------------------------------------------
       # Copy database data directory for each pool instance.
       # Each pool gets its own isolated MySQL data directory so that attacker
       # writes to one pool's database do not affect the others.
+      # Also copy to production_mysql_data (named volume) so that the production
+      # MySQL container can own it – vmhgfs bind mounts reject chown at runtime.
       # -----------------------------------------------------------------------
+      copy_files /source_db /dest_prod_db 'production database data'
       copy_files /source_db /dest_db_1 'honeypot pool-1 database data'
       copy_files /source_db /dest_db_2 'honeypot pool-2 database data'
       copy_files /source_db /dest_db_3 'honeypot pool-3 database data'
@@ -195,7 +201,8 @@ services:
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
     volumes:
-      - ./production_database_data:/var/lib/mysql
+      # Named volume avoids vmhgfs chown restriction; populated by init_setup.
+      - production_mysql_data:/var/lib/mysql
     networks:
       - production_network
     healthcheck:
@@ -262,7 +269,8 @@ services:
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
     volumes:
-      - ./honeypot_database_data:/var/lib/mysql
+      # Named volume avoids vmhgfs chown restriction; populated by init_setup.
+      - honeypot_database_data:/var/lib/mysql
     networks:
       - honeypot_network
     # -------------------------------------------------------------------------
@@ -317,7 +325,8 @@ services:
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
     volumes:
-      - ./honeypot_database_data_2:/var/lib/mysql
+      # Named volume avoids vmhgfs chown restriction; populated by init_setup.
+      - honeypot_database_data_2:/var/lib/mysql
     networks:
       - honeypot_network
     # Hardening – same rationale as honeypot_database_1 above.
@@ -359,7 +368,8 @@ services:
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
     volumes:
-      - ./honeypot_database_data_3:/var/lib/mysql
+      # Named volume avoids vmhgfs chown restriction; populated by init_setup.
+      - honeypot_database_data_3:/var/lib/mysql
     networks:
       - honeypot_network
     # Hardening – same rationale as honeypot_database_1 above.
@@ -573,7 +583,7 @@ services:
       init_setup:
         condition: service_completed_successfully
     volumes:
-      - ./redis_data:/data
+      - redis_data:/data
       - ./redis_config:/usr/local/etc/redis
     networks:
       - session_network
@@ -591,56 +601,78 @@ services:
       start_period: 10s
 
   # Suricata IDS for traffic analysis
-  #suricata_ids:
-  #  image: jasonish/suricata:latest
-  #  depends_on:
-  #    init_setup:
-  #      condition: service_completed_successfully
-  #  volumes:
-  #    - ./suricata_config:/etc/suricata
-  #    - ./suricata_logs:/var/log/suricata
-  #    - ./suricata_rules:/var/lib/suricata/rules
-  #  environment:
-  #    - SURICATA_INTERFACE=eth0
-  #    - ELK_ENABLED=${ELK_ENABLED:-false}
-  #    - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-}
-  #    - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
-  #    - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
-  #    - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
-  #  networks:
-  #    - monitoring_network
-  #    - ids_network
-  #  cap_add:
-  #    - NET_ADMIN
-  #    - SYS_ADMIN
-  #  command: |
-  #    sh -c "
-  #      echo 'Starting Suricata IDS...'
-#
-  #      # Ensure log directory exists
-  #      mkdir -p /var/log/suricata
-#
-  #      # Copy custom rules if they exist
-  #      if [ -f /var/lib/suricata/rules/local.rules ]; then
-  #        cp /var/lib/suricata/rules/local.rules /etc/suricata/rules/local.rules
-  #      fi
-#
-  #      # Start Suricata with configuration
-  #      suricata -c /etc/suricata/suricata.yaml \
-  #               -i eth0 \
-  #               -l /var/log/suricata \
-  #               --init-errors-fatal \
-  #               -v || echo 'Suricata failed to start, running in test mode'
-#
-  #      # Keep container running
-  #      tail -f /dev/null
-  #    "
-  #  healthcheck:
-  #    test: ["CMD", "test", "-f", "/var/log/suricata/fast.log"]
-  #    interval: 30s
-  #    timeout: 10s
-  #    retries: 3
-  #    start_period: 45s
+  # ---------------------------------------------------------------------------
+  # Runs in af-packet mode on the Docker bridge interface (eth0 inside the
+  # container) so it can inspect all honeynet and production traffic that
+  # passes through the monitoring_network.
+  #
+  # Capabilities:
+  #   NET_ADMIN  – required for packet capture via AF_PACKET sockets
+  #   SYS_NICE   – allows Suricata to adjust its scheduling priority
+  #
+  # The ids_network is a dedicated bridge used solely to give Suricata a
+  # network attachment point with visibility into honeynet traffic.
+  # ---------------------------------------------------------------------------
+  suricata_ids:
+    image: jasonish/suricata:latest
+    depends_on:
+      init_setup:
+        condition: service_completed_successfully
+    volumes:
+      - ./suricata_config:/etc/suricata
+      - ./suricata_logs:/var/log/suricata
+      - ./suricata_rules:/var/lib/suricata/rules
+    environment:
+      - ELK_ENABLED=${ELK_ENABLED:-false}
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-}
+      - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
+      - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
+    networks:
+      - monitoring_network
+      - ids_network
+    # NET_ADMIN: required for AF_PACKET socket-based capture.
+    # SYS_NICE: allows Suricata to manage its own thread scheduling priority.
+    # All other capabilities are dropped (no SYS_ADMIN needed for AF_PACKET).
+    cap_add:
+      - NET_ADMIN
+      - SYS_NICE
+    cap_drop:
+      - ALL
+    command: |
+      sh -c "
+        echo 'Starting Suricata IDS...'
+
+        # Ensure log directory exists and is writable
+        mkdir -p /var/log/suricata
+
+        # Copy custom rules into the rules directory Suricata expects.
+        # The local.rules file is mounted at /var/lib/suricata/rules/local.rules
+        # which matches the rule-files path in suricata.yaml.
+        if [ -f /var/lib/suricata/rules/local.rules ]; then
+          echo '  Custom rules found at /var/lib/suricata/rules/local.rules'
+        else
+          echo '  Warning: local.rules not found – Suricata will use built-in rules only'
+        fi
+
+        # Start Suricata in AF_PACKET mode on the first available interface.
+        # AF_PACKET is the correct capture method for Docker bridge networks.
+        # --set outputs.1.eve-log.filename overrides the EVE log path to ensure
+        # it writes to the mounted volume even if the config path differs.
+        suricata -c /etc/suricata/suricata.yaml \
+                 --af-packet \
+                 -l /var/log/suricata \
+                 -v 2>&1 | tee /var/log/suricata/suricata-startup.log
+
+        # Keep container running if Suricata exits (e.g., error recovery)
+        tail -f /dev/null
+      "
+    healthcheck:
+      test: ["CMD", "test", "-f", "/var/log/suricata/fast.log"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   # Filebeat for shipping logs to ELK SIEM (on OpenStack SIEM VM 147.175.151.193)
   # ---------------------------------------------------------------------------
@@ -701,6 +733,8 @@ services:
 
   filebeat:
     image: docker.elastic.co/beats/filebeat:8.11.0
+    profiles:
+      - elk
     user: root
     depends_on:
       reverse_proxy:
@@ -715,8 +749,8 @@ services:
       # Docker socket and container logs for monitoring all containers
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
-      # Redis logs (if available)
-      - ./redis_data:/var/log/redis:ro
+      # Redis logs (if available) – named volume (vmhgfs bind-mount does not support chown)
+      - redis_data:/var/log/redis:ro
     environment:
       - ELK_ENABLED=${ELK_ENABLED:-true}
       - LOGSTASH_HOST=${LOGSTASH_HOST:-147.175.151.193}
@@ -761,10 +795,12 @@ services:
         condition: service_healthy
       session_store:
         condition: service_healthy
+      # DEAD CODE: session_manager was never implemented; dependency kept as
+      # a commented placeholder in case a future session manager service is added.
       #session_manager:
       #  condition: service_healthy
-      #suricata_ids:
-      #  condition: service_healthy
+      suricata_ids:
+        condition: service_healthy
     ports:
       - "80:80"
       - "443:443"
@@ -796,7 +832,11 @@ services:
     #   retries: 3
     #   start_period: 30s
 
-  # Traffic mirroring for IDS analysis
+  # DEAD CODE: traffic_mirror
+  # Purpose was to use socat to mirror UDP/TCP traffic to Suricata.
+  # This approach is superseded by Suricata's direct AF_PACKET capture mode
+  # which observes all traffic on the Docker bridge without a separate mirror.
+  # Kept as a reference for alternative traffic capture architectures.
   # traffic_mirror:
   #   image: alpine/socat:latest
   #   depends_on:
@@ -822,7 +862,11 @@ services:
   #     retries: 3
   #     start_period: 15s
 
-  # Log aggregator for centralized logging
+  # DEAD CODE: log_aggregator (Fluent Bit)
+  # Originally intended as an alternative log shipper. Superseded by the
+  # filebeat service which fulfils the same role (shipping Nginx + Suricata
+  # logs to the ELK SIEM). No fluent_bit_config/ directory exists in the
+  # project, so this service cannot be started without further work.
   # log_aggregator:
   #   image: fluent/fluent-bit:latest
   #   depends_on:
@@ -843,7 +887,13 @@ services:
   #     retries: 3
   #     start_period: 20s
 
-  # Threat intelligence updater
+  # DEAD CODE: threat_intel
+  # Intended to periodically update threat intelligence data in Redis.
+  # The ./threat_intelligence/ build context directory does not exist in the
+  # project, so this service cannot be built. The threat_intel_data named
+  # volume (below) is referenced only by this service. The Lua layer
+  # (init_worker.lua) handles threat scoring internally via Redis directly
+  # without needing this external updater.
   # threat_intel:
   #   build:
   #     context: ./threat_intelligence
@@ -867,7 +917,14 @@ services:
   #     retries: 3
   #     start_period: 30s
 
-  # File synchronization service (runs periodically)
+  # DEAD CODE: file_sync
+  # Originally designed to periodically rsync WordPress files from production
+  # to the honeypot. This approach was superseded by the init_setup service
+  # which performs a one-time copy of production data into all three honeypot
+  # pool directories at startup. Ongoing sync is intentionally NOT done so
+  # each pool's state diverges as attackers interact with it (this is the
+  # desired honeypot behavior). Additionally, the referenced `honeypot_eshop`
+  # service no longer exists under that name (now honeypot_eshop_1/2/3).
   # file_sync:
   #   image: alpine:latest
   #   depends_on:
@@ -906,6 +963,11 @@ services:
   #     start_period: 30s
 
 networks:
+  # DEAD CODE: setup_network is defined but never assigned to any service.
+  # It was likely a placeholder for the init_setup container, which now runs
+  # without an explicit network assignment (uses the default bridge).
+  # Removing it would be safe; retained here to avoid breaking any external
+  # tooling that may reference it by name.
   setup_network:
     driver: bridge
   production_network:
@@ -935,12 +997,16 @@ networks:
         - subnet: 172.24.0.0/24
 
 volumes:
-  production_database_data:
+  # production_mysql_data: named volume for the production MySQL instance.
+  # Populated by init_setup from ./production_database_data (vmhgfs, read-only).
+  # Using a named volume (not a bind mount) so that MySQL's chown on startup
+  # succeeds – vmhgfs does not support chown and MySQL 5.7's entrypoint requires it.
+  production_mysql_data:
     driver: local
-  # Pool 1 database data (original path, kept for backward compatibility)
+  # Pool 1 database data (named volume, populated by init_setup)
   honeypot_database_data:
     driver: local
-  # Pool 2 and 3 database data directories (created by init_setup at startup)
+  # Pool 2 and 3 database data directories (named volumes, populated by init_setup)
   honeypot_database_data_2:
     driver: local
   honeypot_database_data_3:

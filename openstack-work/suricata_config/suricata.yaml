@@ -39,8 +39,10 @@ vars:
 default-rule-path: /var/lib/suricata/rules
 
 # Rule files
+# NOTE: Only local.rules is provided via the mounted volume at
+# /var/lib/suricata/rules/. The suricata.rules entry is intentionally
+# omitted to avoid a "file not found" fatal error at startup.
 rule-files:
-  - suricata.rules
   - local.rules
 
 # Classification config
@@ -102,13 +104,8 @@ outputs:
         - flow
         - netflow
 
-  # Unified2 output for compatibility
-  - unified2-alert:
-      enabled: yes
-      filename: unified2.alert
-      limit: 32MB
-      sensor-id: 0
-      sensor-name: honeypot-suricata
+  # NOTE: unified2-alert output was removed – it is not supported in Suricata 7.x
+  # and causes a fatal startup error. The eve-log output above replaces it.
 
   # HTTP log
   - http-log:
@@ -370,24 +367,33 @@ coredump:
   max-dump: unlimited
 
 # napatech configuration
-napatech:
-  auto-config: yes
-  total-ports: 0
-  use-all-streams: yes
+# DEAD CODE: napatech is a specific hardware capture card. Not used in this
+# Docker-based deployment. Config retained as a reference only.
+# napatech:
+#   auto-config: yes
+#   total-ports: 0
+#   use-all-streams: yes
 
 # unix socket configuration
 unix-command:
   enabled: auto
 
 # Magic file
-magic-file: /usr/share/file/magic
+# NOTE: path adjusted to standard location in jasonish/suricata image;
+# if libmagic is unavailable the line can be commented out without effect.
+# magic-file: /usr/share/misc/magic
 
 # GeoIP database
 #geoip-database: /usr/share/GeoIP/GeoIP.dat
 
 # Rules update
-suricata-update:
-  enabled: yes
+# NOTE: suricata-update is a separate CLI tool and is NOT processed as an
+# inline configuration directive by the Suricata daemon. Kept as a comment
+# for documentation purposes only.
+# suricata-update:
+#   enabled: yes
 
-# Include additional configuration
-include: /etc/suricata/suricata-local.yaml
+# NOTE: suricata-local.yaml include removed – the file does not exist in
+# this deployment and caused a fatal "file not found" error at startup.
+# If local overrides are needed in future, create the file first.
+# include: /etc/suricata/suricata-local.yaml

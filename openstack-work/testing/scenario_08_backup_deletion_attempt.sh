@@ -456,7 +456,7 @@ docker_must_fail \
 docker_must_succeed \
     "DROP on honeypot_database accessible (honeypot isolation working as designed)" \
     "${HP_ESHOP_CONTAINER}" \
-    "mysql -h honeypot_database_1 -u honeypot_user -phoneypot_password honeypot_db -e 'SHOW TABLES;' 2>/dev/null || mysql -h honeypot_database -u honeypot_user -phoneypot_password honeypot_db -e 'SHOW TABLES;' 2>/dev/null"
+    "mysql -h honeypot_database_1 -u production_user -pchange_this_user_password_in_production production_database -e 'SHOW TABLES;' 2>/dev/null || mysql -h honeypot_database -u production_user -pchange_this_user_password_in_production production_database -e 'SHOW TABLES;' 2>/dev/null"
 
 # =============================================================================
 # PHASE 5 – Destructive Actions Within the Honeypot Container
@@ -604,8 +604,8 @@ fi
 # 7d. Production WordPress database still has its content (not wiped).
 TOTAL=$((TOTAL + 1))
 PROD_DB_USER="${PROD_DB_USER:-production_user}"
-PROD_DB_PASS="${PROD_DB_PASS:-production_password}"
-PROD_DB_NAME="${PROD_DB_NAME:-production_db}"
+PROD_DB_PASS="${PROD_DB_PASS:-change_this_user_password_in_production}"
+PROD_DB_NAME="${PROD_DB_NAME:-production_database}"
 
 if command -v docker >/dev/null 2>&1 && \
    docker ps --format '{{.Names}}' 2>/dev/null | grep -q "${PROD_DB_CONTAINER}"; then
