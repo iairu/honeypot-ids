@@ -56,8 +56,8 @@ set -e
 # Configuration
 # ---------------------------------------------------------------------------
 TARGET_HOST="${1:-127.0.0.1}"
-TARGET_PORT="${2:-80}"
-BASE_URL="http://${TARGET_HOST}:${TARGET_PORT}"
+TARGET_PORT="${2:-443}"
+BASE_URL="https://${TARGET_HOST}:${TARGET_PORT}"
 
 # Scenario selection (default: all).
 SCENARIOS="${SCENARIOS:-1,2,3,4,5,6,7,8,9}"

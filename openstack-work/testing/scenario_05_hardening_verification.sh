@@ -49,8 +49,8 @@ set -e
 # Configuration
 # ---------------------------------------------------------------------------
 TARGET_HOST="${1:-127.0.0.1}"
-TARGET_PORT="${2:-80}"
-BASE_URL="http://${TARGET_HOST}:${TARGET_PORT}"
+TARGET_PORT="${2:-443}"
+BASE_URL="https://${TARGET_HOST}:${TARGET_PORT}"
 
 # Docker Compose project container names (adjust if project name differs).
 PROD_CONTAINER="honeypot-ids-system-v1-production_eshop-1"

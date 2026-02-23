@@ -98,15 +98,25 @@ check() {
     TOTAL=$((TOTAL + 1))
 
     # Execute curl; capture full response (headers + body).
-    _response=$(curl -k --silent --include \
+    # Use -L to follow redirects and get final response headers
+    # Use -k to accept self-signed certs
+    # Use -sSL to be silent but show errors, follow redirects, and show final URL
+    _response=$(curl -k -L --silent --include \
                      --cookie "${COOKIE_JAR}" \
                      --cookie-jar "${COOKIE_JAR}" \
                      --max-time 15 \
                      "$@" 2>&1) || true
 
-    # Extract X-Route-Target header (case-insensitive).
-    _route=$(printf '%s' "${_response}" | grep -i "^x-route-target:" | tr -d '\r' | awk '{print $2}' | head -1)
+    # Extract X-Route-Target header from final response (case-insensitive).
+    # If not found, try extracting from any response in the redirect chain
+    _route=$(printf '%s' "${_response}" | grep -i "^x-route-target:" | tr -d '\r' | awk '{print $2}' | tail -1)
     _route="${_route:-unknown}"
+
+    # If still unknown, try to get from any header
+    if [ "${_route}" = "unknown" ] || [ -z "${_route}" ]; then
+        _route=$(printf '%s' "${_response}" | grep -i "x-route-target:" | head -1 | tr -d '\r' | awk '{print $2}')
+        _route="${_route:-unknown}"
+    fi
 
     if [ "${_expected}" = "any" ]; then
         printf "  ${GREEN}[PASS]${NC} %s (route=%s)\n" "${_desc}" "${_route}"

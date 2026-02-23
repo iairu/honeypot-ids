@@ -55,10 +55,10 @@ set -e
 # Configuration
 # ---------------------------------------------------------------------------
 TARGET_HOST="${1:-127.0.0.1}"
-TARGET_PORT="${2:-80}"
+TARGET_PORT="${2:-443}"
 LHOST="${3:-127.0.0.1}"
 LPORT="${4:-4444}"
-BASE_URL="http://${TARGET_HOST}:${TARGET_PORT}"
+BASE_URL="https://${TARGET_HOST}:${TARGET_PORT}"
 
 # Name of the first honeypot WordPress container in docker-compose.
 # The script targets pool 1; adjust if a different pool is needed.

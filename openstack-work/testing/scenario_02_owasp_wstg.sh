@@ -49,8 +49,8 @@ set -e
 # Configuration
 # ---------------------------------------------------------------------------
 TARGET_HOST="${1:-127.0.0.1}"
-TARGET_PORT="${2:-80}"
-BASE_URL="http://${TARGET_HOST}:${TARGET_PORT}"
+TARGET_PORT="${2:-443}"
+BASE_URL="https://${TARGET_HOST}:${TARGET_PORT}"
 
 # Counters for the final report.
 PASS=0
@@ -96,15 +96,23 @@ check() {
 
     TOTAL=$((TOTAL + 1))
 
-    _response=$(curl --silent --include \
+    # Use -k for self-signed certs, -L to follow redirects
+    _response=$(curl -k -L --silent --include \
                      --cookie "${_jar}" \
                      --cookie-jar "${_jar}" \
                      --max-time 15 \
                      "$@" 2>&1) || true
 
+    # Extract X-Route-Target header (from final response after redirects)
     _route=$(printf '%s' "${_response}" | grep -i "^x-route-target:" \
-             | tr -d '\r' | awk '{print $2}' | head -1)
+             | tr -d '\r' | awk '{print $2}' | tail -1)
     _route="${_route:-unknown}"
+
+    # Fallback: check any response in chain
+    if [ "${_route}" = "unknown" ] || [ -z "${_route}" ]; then
+        _route=$(printf '%s' "${_response}" | grep -i "x-route-target:" | head -1 | tr -d '\r' | awk '{print $2}')
+        _route="${_route:-unknown}"
+    fi
 
     if [ "${_expected}" = "any" ]; then
         printf "  ${GREEN}[PASS]${NC} %s (route=%s)\n" "${_desc}" "${_route}"

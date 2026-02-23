@@ -49,9 +49,9 @@ set -e
 # Configuration
 # ---------------------------------------------------------------------------
 TARGET_HOST="${1:-127.0.0.1}"
-TARGET_PORT="${2:-80}"
+TARGET_PORT="${2:-443}"
 WPSCAN_TOKEN="${3:-}"
-BASE_URL="http://${TARGET_HOST}:${TARGET_PORT}"
+BASE_URL="https://${TARGET_HOST}:${TARGET_PORT}"
 
 # Output directory for wpscan report (Phase 8).
 REPORT_DIR="$(mktemp -d /tmp/wpscan_report_XXXXXX)"

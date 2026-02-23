@@ -52,8 +52,8 @@ set -e
 # Configuration
 # ---------------------------------------------------------------------------
 TARGET_HOST="${1:-127.0.0.1}"
-TARGET_PORT="${2:-80}"
-BASE_URL="http://${TARGET_HOST}:${TARGET_PORT}"
+TARGET_PORT="${2:-443}"
+BASE_URL="https://${TARGET_HOST}:${TARGET_PORT}"
 
 # Docker container names (must match docker-compose project name).
 HP_ESHOP_CONTAINER="honeypot-ids-system-v1-honeypot_eshop_1-1"

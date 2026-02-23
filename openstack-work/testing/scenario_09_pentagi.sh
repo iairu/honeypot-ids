@@ -70,9 +70,9 @@ set -e
 # Configuration
 # ---------------------------------------------------------------------------
 TARGET_HOST="${1:-127.0.0.1}"
-TARGET_PORT="${2:-80}"
+TARGET_PORT="${2:-443}"
 PENTAGI_API_KEY="${3:-}"
-BASE_URL="http://${TARGET_HOST}:${TARGET_PORT}"
+BASE_URL="https://${TARGET_HOST}:${TARGET_PORT}"
 
 # PentAGI Docker image reference.
 PENTAGI_IMAGE="vxcontrol/pentagi:latest"
