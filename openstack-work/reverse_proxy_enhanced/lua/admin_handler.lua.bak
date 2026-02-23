@@ -96,6 +96,7 @@ function _M.process_admin_request(remote_ip, uri)
     ngx.log(ngx.INFO, "[ADMIN] 🔐 Admin area access attempt | IP: ", remote_ip, " | URI: ", uri, " | Method: ", admin_info.method)
     
     -- Check if this is a legitimate admin-ajax.php call</parameter>
+</invoke>
     local admin_info = {
         ip = remote_ip,
         uri = uri,
@@ -153,6 +154,7 @@ function _M.process_admin_request(remote_ip, uri)
         _M.log_admin_access(admin_info, "monitored", "legitimate_access")
     end
 </parameter>
+</invoke>
 end
 
 -- Check for brute force login attempts
