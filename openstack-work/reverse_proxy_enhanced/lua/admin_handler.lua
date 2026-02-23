@@ -94,36 +94,16 @@ function _M.process_admin_request(remote_ip, uri)
     end
 
     ngx.log(ngx.INFO, "[ADMIN] 🔐 Admin area access attempt | IP: ", remote_ip, " | URI: ", uri, " | Method: ", admin_info.method)
-    
-    -- Check if this is a legitimate admin-ajax.php call</parameter>
-    local admin_info = {
-        ip = remote_ip,
-        uri = uri,
-        timestamp = ngx.time(),
-        user_agent = ngx.var.http_user_agent or "",
-        method = ngx.var.request_method or "GET"
-    }
-    
-    -- Check if IP is whitelisted for admin access
-    if _G.utils.is_ip_whitelisted(remote_ip) then
-        ngx.log(ngx.INFO, "[ADMIN] ✅ Whitelisted IP accessing admin area | IP: ", remote_ip, " | URI: ", uri)
-        _M.log_admin_access(admin_info, "allowed", "whitelisted_ip")
-        return
-    end
 
-    ngx.log(ngx.INFO, "[ADMIN] 🔐 Admin area access attempt | IP: ", remote_ip, " | URI: ", uri, " | Method: ", admin_info.method)
-    
-    -- Check if this is a legitimate admin-ajax.php call
-    
     -- Check if this is a legitimate admin-ajax.php call (WordPress AJAX handler)
     local is_legitimate_ajax = _M.is_legitimate_ajax_call(uri, admin_info.method)
-    
+
     if is_legitimate_ajax then
         ngx.log(ngx.INFO, "[ADMIN] ✅ Legitimate admin-ajax.php call | IP: ", remote_ip)
         _M.log_admin_access(admin_info, "monitored", "legitimate_ajax")
         return
     end
-    
+
     -- Check for brute force attempts (only for actual login endpoints)
     local is_login = _M.is_login_attempt(uri, admin_info.method)
     if is_login then
@@ -136,15 +116,15 @@ function _M.process_admin_request(remote_ip, uri)
         elseif brute_force_score > 0 then
             ngx.log(ngx.WARN, "[ADMIN] ⚠️  Multiple admin attempts detected | IP: ", remote_ip, " | Score: ", brute_force_score)
         end
-        
+
         -- Track login attempts
         _M.track_admin_attempt(remote_ip, uri)
     end
-    
+
     -- Analyze admin request patterns
     local pattern_analysis = _M.analyze_admin_patterns(uri, admin_info.user_agent, admin_info.method)
     if pattern_analysis.suspicious then
-        ngx.log(ngx.WARN, "[ADMIN] 🔍 Suspicious admin pattern detected | IP: ", remote_ip, 
+        ngx.log(ngx.WARN, "[ADMIN] 🔍 Suspicious admin pattern detected | IP: ", remote_ip,
                 " | Reason: ", pattern_analysis.reason, " | Score: +", pattern_analysis.score)
         _M.log_admin_access(admin_info, "suspicious", pattern_analysis.reason)
         _M.increment_threat_score(remote_ip, pattern_analysis.score)
@@ -152,7 +132,6 @@ function _M.process_admin_request(remote_ip, uri)
         ngx.log(ngx.INFO, "[ADMIN] ✅ Admin access pattern appears legitimate | IP: ", remote_ip)
         _M.log_admin_access(admin_info, "monitored", "legitimate_access")
     end
-</parameter>
 end
 
 -- Check for brute force login attempts
@@ -337,11 +316,17 @@ function _M.increment_threat_score(ip, additional_score)
     
     local threats = {}
     local old_score = 0
-    
+
     if red then
-        local threat_data = red:get('threat_ips') or '{}'
-        threats = cjson.decode(threat_data)
-        
+        local threat_data = red:get('threat_ips')
+        if threat_data then
+            threat_data = tostring(threat_data)
+            local ok, decoded = pcall(cjson.decode, threat_data)
+            if ok and decoded then
+                threats = decoded
+            end
+        end
+
         if not threats[ip] then
             threats[ip] = {
                 score = 0,
@@ -363,8 +348,14 @@ function _M.increment_threat_score(ip, additional_score)
     -- Also update shared memory for immediate effect in threat_analyzer
     local threat_intel = ngx.shared.threat_intel
     if threat_intel then
-        local shared_threats_json = threat_intel:get("threat_ips") or '{}'
-        local shared_threats = cjson.decode(shared_threats_json)
+        local shared_threats_json = threat_intel:get("threat_ips")
+        local shared_threats = {}
+        if shared_threats_json then
+            local ok, decoded = pcall(cjson.decode, tostring(shared_threats_json))
+            if ok and decoded then
+                shared_threats = decoded
+            end
+        end
         
         if not shared_threats[ip] then
             shared_threats[ip] = {
