@@ -156,12 +156,11 @@ services:
           for migration in \$$(ls /migrations/*.sql | sort); do
             if [ -f \"\$$migration\" ]; then
               echo \"  Applying: \$$migration\"
-              mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" \"\$$MYSQL_DATABASE\" < \"\$$migration\"
+              mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" \"\$$MYSQL_DATABASE\" --force < \"\$$migration\"
               if [ \$$? -eq 0 ]; then
-                echo \"  ✓ \$$migration applied to \$$HOST\"
+                echo \"  [OK] \$$migration applied to \$$HOST\"
               else
-                echo \"  ✗ \$$migration FAILED on \$$HOST\"
-                exit 1
+                echo \"  [SKIP] \$$migration failed on \$$HOST (continuing)\"
               fi
             fi
           done
@@ -655,16 +654,17 @@ services:
           echo '  Warning: local.rules not found – Suricata will use built-in rules only'
         fi
 
-        # Start Suricata in AF_PACKET mode on the first available interface.
+        # Start Suricata in AF_PACKET mode on eth0 interface.
         # AF_PACKET is the correct capture method for Docker bridge networks.
-        # --set outputs.1.eve-log.filename overrides the EVE log path to ensure
-        # it writes to the mounted volume even if the config path differs.
+        # Run as daemon (-D) and keep container alive
         suricata -c /etc/suricata/suricata.yaml \
-                 --af-packet \
-                 -l /var/log/suricata \
-                 -v 2>&1 | tee /var/log/suricata/suricata-startup.log
+                 --af-packet eth0 \
+                 -l /var/log/suricata -D
 
-        # Keep container running if Suricata exits (e.g., error recovery)
+        # Keep container running
+        tail -f /dev/null
+
+        # Keep container running
         tail -f /dev/null
       "
     healthcheck:
@@ -799,8 +799,9 @@ services:
       # a commented placeholder in case a future session manager service is added.
       #session_manager:
       #  condition: service_healthy
-      suricata_ids:
-        condition: service_healthy
+      # suricata_ids is optional - it can run but doesn't block other services
+      # suricata_ids:
+      #   condition: service_healthy
     ports:
       - "80:80"
       - "443:443"

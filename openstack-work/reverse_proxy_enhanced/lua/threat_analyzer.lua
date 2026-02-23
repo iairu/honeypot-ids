@@ -618,7 +618,8 @@ function _M.detect_automation(headers, uri)
         {pattern = "okhttp", name = "okhttp", score = 10},
         {pattern = "bot", name = "generic-bot", score = 15},
         {pattern = "crawler", name = "crawler", score = 10},
-        {pattern = "scanner", name = "scanner", score = 20}
+        {pattern = "scanner", name = "scanner", score = 20},
+        {pattern = "wpscan", name = "wpscan", score = 30}
     }
     
     for _, tool in ipairs(automation_tools) do

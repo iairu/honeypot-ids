@@ -208,7 +208,6 @@ app-layer:
             decompress-depth: 0
           double-decode-path: no
           double-decode-query: no
-          response-body-decompress-layer-limit: 2
     smb:
       enabled: yes
       detection-ports:
@@ -331,6 +330,30 @@ threading:
     - worker-cpu-set:
         cpu: [ "all" ]
   detect-thread-ratio: 1.0
+
+# AF_PACKET capture configuration
+af-packet:
+  - interface: eth0
+    # Number of threads
+    threads: auto
+    # Default packet size
+    default-packet-size: 1500
+    # Promiscuous mode
+    promiscuous: yes
+    # Checksum check
+    checksum-checks: kernel
+    # Bypass
+    bypass: no
+    # Buffer size
+    buffer-size: 65535
+    # Set fanout to load balance across multiple threads
+    fanout-mode: hash
+    # Use AF_PACKET ring buffer
+    use-evanics: no
+    # Roll over when file reaches size
+    #rolling:
+    #  size: 100mb
+    #  name: /var/log/suricata/suricata.pcap
 
 # Memory settings
 host:

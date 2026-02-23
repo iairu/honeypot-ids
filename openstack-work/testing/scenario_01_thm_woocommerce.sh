@@ -50,8 +50,8 @@ set -e
 # Configuration
 # ---------------------------------------------------------------------------
 TARGET_HOST="${1:-127.0.0.1}"
-TARGET_PORT="${2:-80}"
-BASE_URL="http://${TARGET_HOST}:${TARGET_PORT}"
+TARGET_PORT="${2:-443}"
+BASE_URL="https://${TARGET_HOST}:${TARGET_PORT}"
 
 # Temporary cookie jar – one per run so sessions are clean.
 COOKIE_JAR="$(mktemp /tmp/scenario01_cookies_XXXXXX.txt)"
@@ -98,7 +98,7 @@ check() {
     TOTAL=$((TOTAL + 1))
 
     # Execute curl; capture full response (headers + body).
-    _response=$(curl --silent --include \
+    _response=$(curl -k --silent --include \
                      --cookie "${COOKIE_JAR}" \
                      --cookie-jar "${COOKIE_JAR}" \
                      --max-time 15 \

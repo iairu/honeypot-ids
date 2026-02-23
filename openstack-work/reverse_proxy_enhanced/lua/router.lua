@@ -586,6 +586,9 @@ function _M.apply_routing_decision(decision)
     ngx.req.set_header("X-DB-Target", decision.target)
     ngx.log(ngx.INFO, "[ROUTING] Setting X-DB-Target header: ", decision.target)
 
+    -- Set X-Route-Target header for testing/validation
+    ngx.header["X-Route-Target"] = decision.target
+
     if decision.target == "honeypot" then
         ngx.var.suspicious_activity = "true"
 
