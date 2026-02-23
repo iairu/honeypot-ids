@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # =============================================================================
 # run_all_scenarios.sh
 #
@@ -51,6 +51,7 @@
 # =============================================================================
 
 set -e
+set -o pipefail
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -264,7 +265,7 @@ fi
 printf "Report      : %s\n" "${REPORT_FILE}"
 printf "Summary     : %s\n\n" "${SUMMARY_FILE}"
 
-_preflight_status=$(curl --silent --output /dev/null \
+_preflight_status=$(curl -k --silent --output /dev/null \
     --write-out "%{http_code}" \
     --max-time 15 \
     --request GET "${BASE_URL}/" \

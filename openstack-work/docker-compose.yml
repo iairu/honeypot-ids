@@ -19,13 +19,13 @@ services:
       - ./production_eshop_files:/source_files:ro
       - ./production_database_data:/source_db:ro
       # Pool 1 destinations (original paths kept for backward compat)
-      - ./honeypot_eshop_files:/dest_files_1
+      - honeypot_eshop_files:/dest_files_1
       - honeypot_database_data:/dest_db_1
       # Pool 2 destinations
-      - ./honeypot_eshop_files_2:/dest_files_2
+      - honeypot_eshop_files_2:/dest_files_2
       - honeypot_database_data_2:/dest_db_2
       # Pool 3 destinations
-      - ./honeypot_eshop_files_3:/dest_files_3
+      - honeypot_eshop_files_3:/dest_files_3
       - honeypot_database_data_3:/dest_db_3
       # Production DB destination (named volume to avoid vmhgfs chown restriction)
       - production_mysql_data:/dest_prod_db
@@ -428,7 +428,7 @@ services:
     # ports:
     #   - "8081:80" # temporary port for direct pool-1 access
     volumes:
-      - ./honeypot_eshop_files:/var/www/html
+      - honeypot_eshop_files:/var/www/html
     networks:
       - honeypot_network
       - production_network  # Allow access to production database for SQL routing
@@ -500,7 +500,7 @@ services:
     # ports:
     #   - "8082:80" # temporary port for direct pool-2 access
     volumes:
-      - ./honeypot_eshop_files_2:/var/www/html
+      - honeypot_eshop_files_2:/var/www/html
     networks:
       - honeypot_network
       - production_network
@@ -547,7 +547,7 @@ services:
     # ports:
     #   - "8083:80" # temporary port for direct pool-3 access
     volumes:
-      - ./honeypot_eshop_files_3:/var/www/html
+      - honeypot_eshop_files_3:/var/www/html
     networks:
       - honeypot_network
       - production_network
@@ -1011,6 +1011,12 @@ volumes:
   honeypot_database_data_2:
     driver: local
   honeypot_database_data_3:
+    driver: local
+  honeypot_eshop_files:
+    driver: local
+  honeypot_eshop_files_2:
+    driver: local
+  honeypot_eshop_files_3:
     driver: local
   redis_data:
     driver: local

@@ -1,3 +1,10 @@
+Connect over "ssh arch", sudo requires no password, project is mounted at /mnt/hgfs/openstack-work: 
+
+run all test scenarios - install any other packages necessary to run the tests completely on the archlinux machine, make code more robust
+
+
+---
+
 make sure to test the entire openstack-work project with the exception of filebeat by running and fixing provided scripts alongside any other project errors, make sure there is no dead code and all code has purpose (is used), if you encounter dead code do not remove it but flag it with a comment, testing scripts are in testing folder, make sure to monitor all output of "docker compose up" to be aware of all logs, turn on (in docker compose file) and test suricata ids as well
 
 do the following:

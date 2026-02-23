@@ -1,0 +1,1160 @@
+Honeynet Test Suite Run
+Target    : https://127.0.0.1:443
+Started   : 2026-02-23 11:47:34
+Scenarios : 1,2,3,4,5,6,7,8,9
+======================================================================
+
+[0;36m================================================================[0m
+[0;36m  Scenario 01 – TryHackMe WooCommerce CVE-2023-28121[0m
+[0;36m================================================================[0m
+
+Target : https://127.0.0.1:443
+Cookie : /tmp/scenario01_cookies_Yb1RAx.txt
+
+
+[0;36m================================================================[0m
+[0;36m  Phase 1 – Passive Reconnaissance[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m Homepage baseline (clean session) → routed to production
+  [0;31m[FAIL][0m robots.txt enumeration → expected production, got honeypot
+  [0;31m[FAIL][0m readme.html version disclosure probe → expected honeypot, got unknown
+  [0;31m[FAIL][0m REST API user enumeration (/wp/v2/users) → expected honeypot, got unknown
+  [0;32m[PASS][0m REST API user enumeration (rest_route param) → routed to honeypot
+  [1;33m[WARN][0m Suricata alert not found (may be async): WPScan user-agent alert
+
+[0;36m================================================================[0m
+[0;36m  Phase 2 – Plugin Fingerprinting[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m WC Payments static asset (CSS – should stay on production) → expected production, got unknown
+  [0;31m[FAIL][0m WC Payments PHP entrypoint probe → expected honeypot, got unknown
+  [0;31m[FAIL][0m WC Payments includes path probe → expected honeypot, got unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 3 – CVE-2023-28121 Exploitation[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m CVE-2023-28121 header injection (user=1) → routed to honeypot
+  [0;31m[FAIL][0m CVE-2023-28121 header injection (user=admin) → expected honeypot, got unknown
+  [0;31m[FAIL][0m CVE-2023-28121 rogue admin creation POST → expected honeypot, got unknown
+  [1;33m[WARN][0m Suricata alert not found (may be async): Suricata CVE-2023-28121 alert
+
+[0;36m================================================================[0m
+[0;36m  Phase 4 – Attacker Authentication[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m wp-login.php POST (rogue account) → expected honeypot, got unknown
+  [0;31m[FAIL][0m wp-admin dashboard access (post-login) → expected honeypot, got unknown
+  [0;31m[FAIL][0m wp-admin plugin upload page access → expected honeypot, got unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 5 – Web-Shell Upload (Post-Exploitation)[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Plugin ZIP upload via wp-admin (web-shell) → expected honeypot, got unknown
+  [0;31m[FAIL][0m PHP shell upload via dnd-upload AJAX endpoint → expected honeypot, got unknown
+  [1;33m[WARN][0m Suricata alert not found (may be async): Suricata file-upload alert
+
+[0;36m================================================================[0m
+[0;36m  Phase 6 – Production Isolation Verification[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Clean session routed to '' – expected production
+
+[0;36m================================================================[0m
+[0;36m  Scenario 01 – Final Report[0m
+[0;36m================================================================[0m
+
+Total checks : 20
+[0;32mPassed       : 6[0m
+[0;31mFailed       : 14[0m
+
+[0;31mSCENARIO FAILED – 14 check(s) did not route as expected.[0m
+
+[0;36m================================================================[0m
+[0;36m  Scenario 02 – OWASP WSTG Categories 1-7[0m
+[0;36m================================================================[0m
+
+Target : https://127.0.0.1:443
+
+
+[0;36m================================================================[0m
+[0;36m  WSTG-INFO (1) – Information Gathering[0m
+[0;36m================================================================[0m
+
+
+[0;34m  --- WSTG-INFO-01: Search Engine Discovery ---\033[0m
+
+  [0;31m[FAIL][0m robots.txt fetch (INFO-01) → expected=production got=honeypot
+  [0;32m[PASS][0m sitemap.xml fetch (INFO-01) → production
+
+[0;34m  --- WSTG-INFO-02: Web Server Fingerprinting ---\033[0m
+
+  [0;31m[FAIL][0m Header missing: Server (Server header must not include version (INFO-02))
+  [0;32m[PASS][0m Header absent (hardened): X-Powered-By (X-Powered-By absent on production (INFO-02))
+
+[0;34m  --- WSTG-INFO-03: Web Application Fingerprinting ---\033[0m
+
+  [0;31m[FAIL][0m readme.html with scanner UA (INFO-03) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m license.txt with browser UA (INFO-03) → expected=production got=unknown
+
+[0;34m  --- WSTG-INFO-04: Enumerate Web Application ---\033[0m
+
+  [0;32m[PASS][0m wp-config.php probe (INFO-04) → honeypot
+  [0;31m[FAIL][0m wp-config.php.bak probe (INFO-04) → expected=honeypot got=unknown
+  [0;32m[PASS][0m .env probe (INFO-04) → honeypot
+
+[0;34m  --- WSTG-INFO-05: Review Web Page Comments and Metadata ---\033[0m
+
+  [0;32m[PASS][0m Sensitive info not exposed (WordPress generator meta must be absent on production (INFO-05))
+
+[0;34m  --- WSTG-INFO-06: Identify Application Entry Points ---\033[0m
+
+  [0;31m[FAIL][0m REST API root (INFO-06) → expected=production got=unknown
+
+[0;34m  --- WSTG-INFO-07: Map Execution Paths Through Application ---\033[0m
+
+  [0;31m[FAIL][0m Nikto scanner UA (INFO-07) → expected=honeypot got=production
+
+[0;34m  --- WSTG-INFO-08: Fingerprint Web Application Framework ---\033[0m
+
+  [0;32m[PASS][0m Sensitive info not exposed (WooCommerce version absent in page source (INFO-08))
+
+[0;34m  --- WSTG-INFO-09: Map Application Architecture ---\033[0m
+
+  [0;31m[FAIL][0m wp-admin probe with Acunetix UA (INFO-09) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-INFO-10: Map Network/Application Architecture ---\033[0m
+
+  [0;32m[PASS][0m Host header manipulation probe (INFO-10) → honeypot
+
+[0;36m================================================================[0m
+[0;36m  WSTG-CONF (2) – Configuration and Deployment Management Testing[0m
+[0;36m================================================================[0m
+
+
+[0;34m  --- WSTG-CONF-01: Test Network/Infrastructure Configuration ---\033[0m
+
+  [0;31m[FAIL][0m HTTP TRACE method (CONF-01) → expected=honeypot got=unknown
+  [0;32m[PASS][0m HTTP OPTIONS method (CONF-01) (route=production)
+
+[0;34m  --- WSTG-CONF-02: Test Application Platform Configuration ---\033[0m
+
+  [0;32m[PASS][0m phpinfo.php probe (CONF-02) → honeypot
+  [0;32m[PASS][0m info.php probe (CONF-02) → honeypot
+
+[0;34m  --- WSTG-CONF-03: Test File Extensions Handling ---\033[0m
+
+  [0;31m[FAIL][0m .bak backup file probe (CONF-03) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m .old file probe (CONF-03) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-CONF-04: Review Old/Backup/Unreferenced Files ---\033[0m
+
+  [0;31m[FAIL][0m backup.zip probe (CONF-04) → expected=honeypot got=production
+  [0;31m[FAIL][0m wp-backup.tar.gz probe (CONF-04) → expected=honeypot got=production
+
+[0;34m  --- WSTG-CONF-05: Enumerate Infrastructure and Admin Interfaces ---\033[0m
+
+  [0;31m[FAIL][0m install.php probe (CONF-05) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m setup-config.php probe (CONF-05) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-CONF-06: Test HTTP Methods ---\033[0m
+
+  [0;32m[PASS][0m HTTP PUT to wp-content (CONF-06) → honeypot
+
+[0;34m  --- WSTG-CONF-07: Test HTTP Strict Transport Security ---\033[0m
+
+  [0;32m[PASS][0m Baseline HTTPS redirect hint (CONF-07) → production
+
+[0;34m  --- WSTG-CONF-08: Test RIA Cross Domain Policy ---\033[0m
+
+  [0;32m[PASS][0m crossdomain.xml probe (CONF-08) → honeypot
+
+[0;34m  --- WSTG-CONF-09: Test File Permission ---\033[0m
+
+  [0;31m[FAIL][0m .htaccess direct read attempt (CONF-09) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-CONF-10: Test for Subdomain Takeover ---\033[0m
+
+  [1;33m[SKIP][0m CONF-10 (subdomain takeover) requires DNS control – skipped
+
+[0;34m  --- WSTG-CONF-11: Test Cloud Storage ---\033[0m
+
+  [0;32m[PASS][0m S3 bucket path probe (CONF-11) → honeypot
+
+[0;36m================================================================[0m
+[0;36m  WSTG-IDNT (3) – Identity Management Testing[0m
+[0;36m================================================================[0m
+
+
+[0;34m  --- WSTG-IDNT-01: Test Role Definitions ---\033[0m
+
+  [0;31m[FAIL][0m REST API user list enumeration (IDNT-01) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-IDNT-02: Test User Registration Process ---\033[0m
+
+  [0;32m[PASS][0m Registration page probe (IDNT-02) (route=unknown)
+
+[0;34m  --- WSTG-IDNT-03: Test Account Provisioning Process ---\033[0m
+
+  [0;31m[FAIL][0m Unauthenticated user creation via REST API (IDNT-03) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-IDNT-04: Test Account Enumeration ---\033[0m
+
+  [0;32m[PASS][0m Author enumeration ?author=1 (IDNT-04) → honeypot
+  [0;32m[PASS][0m Author enumeration ?author=2 (IDNT-04) → honeypot
+  [0;32m[PASS][0m REST API user slug enumeration (IDNT-04) → honeypot
+
+[0;34m  --- WSTG-IDNT-05: Test Username Policy ---\033[0m
+
+  [0;32m[PASS][0m Login with predictable username 'admin' (IDNT-05) (route=unknown)
+
+[0;36m================================================================[0m
+[0;36m  WSTG-ATHN (4) – Authentication Testing[0m
+[0;36m================================================================[0m
+
+
+[0;34m  --- WSTG-ATHN-01: Test Credentials Transported over Encrypted Channel ---\033[0m
+
+  [1;33m[WARN][0m Login cookie Secure flag not observed on HTTP (ATHN-01 – expected in HTTP-only deploy)
+
+[0;34m  --- WSTG-ATHN-02: Test Default Credentials ---\033[0m
+
+  [0;32m[PASS][0m Default credentials admin/admin (ATHN-02) (route=unknown)
+  [0;32m[PASS][0m Default credentials admin/password (ATHN-02) (route=unknown)
+
+[0;34m  --- WSTG-ATHN-03: Test Account Lockout ---\033[0m
+
+  [0;31m[FAIL][0m Session after brute-force routed to honeypot (ATHN-03) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-ATHN-04: Test for Bypassing Authentication Schema ---\033[0m
+
+  [0;31m[FAIL][0m wp-admin direct access without auth (ATHN-04) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-ATHN-05: Test Remember Password Functionality ---\033[0m
+
+  [1;33m[SKIP][0m ATHN-05 (remember-me token analysis) requires valid login session – skipped
+
+[0;34m  --- WSTG-ATHN-06: Test Browser Cache Weaknesses ---\033[0m
+
+  [1;33m[WARN][0m Login Cache-Control not restrictive: '' (ATHN-06)
+
+[0;34m  --- WSTG-ATHN-07: Test Password Policy ---\033[0m
+
+  [0;31m[FAIL][0m Weak password via REST API (ATHN-07) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-ATHN-08: Test Security Questions ---\033[0m
+
+  [1;33m[SKIP][0m ATHN-08 (security questions) – not applicable to WordPress
+
+[0;34m  --- WSTG-ATHN-09: Test Password Reset Functionality ---\033[0m
+
+  [0;32m[PASS][0m Password reset endpoint probe (ATHN-09) (route=unknown)
+
+[0;34m  --- WSTG-ATHN-10: Test XML-RPC Authentication ---\033[0m
+
+  [0;31m[FAIL][0m XML-RPC system.listMethods probe (ATHN-10) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m XML-RPC brute-force multicall (ATHN-10) → expected=honeypot got=unknown
+
+[0;36m================================================================[0m
+[0;36m  WSTG-AUTHZ (5) – Authorization Testing[0m
+[0;36m================================================================[0m
+
+
+[0;34m  --- WSTG-AUTHZ-01: Test Directory Traversal / File Include ---\033[0m
+
+  [0;32m[PASS][0m Path traversal ../etc/passwd (AUTHZ-01) → honeypot
+  [0;32m[PASS][0m URL-encoded traversal %2e%2e (AUTHZ-01) → honeypot
+  [0;32m[PASS][0m LFI via file parameter (AUTHZ-01) → honeypot
+  [0;32m[PASS][0m PHP wrapper LFI php://filter (AUTHZ-01) → honeypot
+
+[0;34m  --- WSTG-AUTHZ-02: Test Bypassing Authorization Schema ---\033[0m
+
+  [0;31m[FAIL][0m Unauthenticated wp-admin REST users list (AUTHZ-02) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m IDOR order data access (AUTHZ-02) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-AUTHZ-03: Test Privilege Escalation ---\033[0m
+
+  [0;31m[FAIL][0m Privilege escalation via WCPAY header (AUTHZ-03) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Options update via cwmpUpdateOptions (AUTHZ-03) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-AUTHZ-04: Test Insecure Direct Object References ---\033[0m
+
+  [0;31m[FAIL][0m Private post IDOR via REST API (AUTHZ-04) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m WooCommerce customer IDOR (AUTHZ-04) → expected=honeypot got=unknown
+
+[0;36m================================================================[0m
+[0;36m  WSTG-SESS (6) – Session Management Testing[0m
+[0;36m================================================================[0m
+
+
+[0;34m  --- WSTG-SESS-01: Test Session Management Schema ---\033[0m
+
+  [1;33m[WARN][0m HttpOnly flag not observed on session cookie (SESS-01)
+
+[0;34m  --- WSTG-SESS-02: Test Cookie Attributes ---\033[0m
+
+  [1;33m[WARN][0m SameSite attribute not observed (SESS-02 – may be WordPress default)
+
+[0;34m  --- WSTG-SESS-03: Test Session Fixation ---\033[0m
+
+  [0;32m[PASS][0m Session fixation attempt via forged cookie (SESS-03) (route=unknown)
+
+[0;34m  --- WSTG-SESS-04: Test Exposed Session Variables ---\033[0m
+
+  [0;32m[PASS][0m X-Honeypot-Pool header not exposed to clients (SESS-04)
+
+[0;34m  --- WSTG-SESS-05: Test CSRF ---\033[0m
+
+  [0;31m[FAIL][0m CSRF POST to admin-post.php (SESS-05) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-SESS-06: Test Cookie Persistence ---\033[0m
+
+  [0;32m[PASS][0m Stale auth cookie replay attempt (SESS-06) (route=unknown)
+
+[0;34m  --- WSTG-SESS-07: Test Session Timeout ---\033[0m
+
+  [1;33m[SKIP][0m SESS-07 (session timeout) requires a live authenticated session – skipped
+
+[0;34m  --- WSTG-SESS-08: Test Session Puzzling ---\033[0m
+
+  [0;31m[FAIL][0m Escalation from clean session with SQLi (SESS-08) → expected=honeypot got=production
+
+[0;34m  --- WSTG-SESS-09: Test JWT Weaknesses ---\033[0m
+
+  [1;33m[SKIP][0m SESS-09 (JWT weaknesses) – not applicable without a JWT plugin
+
+[0;36m================================================================[0m
+[0;36m  WSTG-INPV (7) – Input Validation Testing[0m
+[0;36m================================================================[0m
+
+
+[0;34m  --- WSTG-INPV-01: Test Reflected Cross-Site Scripting ---\033[0m
+
+  [0;31m[FAIL][0m Reflected XSS in search param (INPV-01) → expected=honeypot got=production
+  [0;31m[FAIL][0m Reflected XSS img onerror (INPV-01) → expected=honeypot got=production
+
+[0;34m  --- WSTG-INPV-02: Test Stored Cross-Site Scripting ---\033[0m
+
+  [0;31m[FAIL][0m Stored XSS via comment POST (INPV-02) → expected=honeypot got=production
+
+[0;34m  --- WSTG-INPV-03: Test HTTP Verb Tampering ---\033[0m
+
+  [0;31m[FAIL][0m HTTP verb FUZZ (INPV-03) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-INPV-04: Test HTTP Parameter Pollution ---\033[0m
+
+  [0;32m[PASS][0m Parameter pollution ?id=1&id=2 (INPV-04) → honeypot
+
+[0;34m  --- WSTG-INPV-05: Test SQL Injection ---\033[0m
+
+  [0;32m[PASS][0m SQLi OR 1=1 in id param (INPV-05) → honeypot
+  [0;32m[PASS][0m SQLi UNION SELECT (INPV-05) → honeypot
+  [0;31m[FAIL][0m SQLi time-based SLEEP (INPV-05) → expected=honeypot got=production
+  [0;32m[PASS][0m SQLi via CVE-2024-2387 integration_id (INPV-05) → honeypot
+
+[0;34m  --- WSTG-INPV-06: Test LDAP Injection ---\033[0m
+
+  [1;33m[SKIP][0m INPV-06 (LDAP injection) – not applicable without LDAP plugin
+
+[0;34m  --- WSTG-INPV-07: Test XML Injection ---\033[0m
+
+  [0;31m[FAIL][0m XML injection via xmlrpc.php (INPV-07) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-INPV-08: Test SSI Injection ---\033[0m
+
+  [0;32m[PASS][0m SSI injection in search (INPV-08) → honeypot
+
+[0;34m  --- WSTG-INPV-09: Test XPath Injection ---\033[0m
+
+  [0;32m[PASS][0m XPath injection in login (INPV-09) (route=unknown)
+
+[0;34m  --- WSTG-INPV-10: Test IMAP/SMTP Injection ---\033[0m
+
+  [1;33m[SKIP][0m INPV-10 (IMAP/SMTP injection) – not applicable
+
+[0;34m  --- WSTG-INPV-11: Test Code Injection ---\033[0m
+
+  [0;32m[PASS][0m PHP code injection in template param (INPV-11) → honeypot
+
+[0;34m  --- WSTG-INPV-12: Test Command Injection ---\033[0m
+
+  [0;32m[PASS][0m OS command injection via cmd param (INPV-12) → honeypot
+  [0;32m[PASS][0m OS command injection pipe ls (INPV-12) → honeypot
+  [0;31m[FAIL][0m OS command injection backtick (INPV-12) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-INPV-13: Test Buffer Overflow ---\033[0m
+
+  [0;32m[PASS][0m Oversized search parameter (INPV-13) → honeypot
+
+[0;34m  --- WSTG-INPV-14: Test Incubated Vulnerability ---\033[0m
+
+  [0;31m[FAIL][0m File upload probe for incubated exec (INPV-14) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-INPV-15: Test HTTP Splitting/Smuggling ---\033[0m
+
+  [0;31m[FAIL][0m CRLF injection via redirect param (INPV-15) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-INPV-16: Test HTTP Request Smuggling ---\033[0m
+
+  [1;33m[SKIP][0m INPV-16 (HTTP request smuggling) – requires raw TCP socket tooling
+
+[0;34m  --- WSTG-INPV-17: Test Web Messaging ---\033[0m
+
+  [1;33m[SKIP][0m INPV-17 (web messaging) – client-side, not applicable here
+
+[0;34m  --- WSTG-INPV-18: Test DOM-based XSS ---\033[0m
+
+  [1;33m[SKIP][0m INPV-18 (DOM-based XSS) – requires browser execution context
+
+[0;34m  --- WSTG-INPV-19: Test Local File Inclusion ---\033[0m
+
+  [0;32m[PASS][0m LFI via php://input wrapper (INPV-19) → honeypot
+  [0;32m[PASS][0m LFI data:// wrapper (INPV-19) → honeypot
+  [0;32m[PASS][0m LFI file:///etc/passwd (INPV-19) → honeypot
+
+[0;36m================================================================[0m
+[0;36m  Scenario 02 – OWASP WSTG Final Report[0m
+[0;36m================================================================[0m
+
+Total checks : 96
+[0;32mPassed       : 46[0m
+[1;33mSkipped      : 10[0m
+[0;31mFailed       : 40[0m
+
+[0;31mSCENARIO FAILED – 40 check(s) did not route as expected.[0m
+
+[0;36m================================================================[0m
+[0;36m  Scenario 03 – WPScan Enumeration and Vulnerability Coverage[0m
+[0;36m================================================================[0m
+
+Target    : https://127.0.0.1:443
+Report dir: /tmp/wpscan_report_suwyTP
+
+
+[0;36m================================================================[0m
+[0;36m  Phase 1 – Passive Fingerprinting (WPScan UA)[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Homepage with WPScan UA → expected=honeypot got=unknown
+  [0;31m[FAIL][0m robots.txt with WPScan UA → expected=honeypot got=unknown
+  [1;33m[WARN][0m Suricata alert not yet visible (async): Suricata WPScan UA alert
+
+[0;36m================================================================[0m
+[0;36m  Phase 2 – WordPress Version Detection Probes[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m readme.html version disclosure probe → expected=honeypot got=unknown
+  [0;31m[FAIL][0m wp-includes/version.php probe → expected=honeypot got=unknown
+  [0;31m[FAIL][0m license.txt probe → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Homepage HTML source for version meta (WPScan UA) → expected=honeypot got=unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 3 – Plugin Enumeration (Aggressive Mode)[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Plugin PHP probe: woocommerce-payments/admin.php → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin PHP probe: woocommerce-payments/includes/payment-gateway.php → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin PHP probe: abandoned-cart-lite/checkout.php → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin PHP probe: abandoned-cart-lite/includes/wcal-abandoned-carts-table.php → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin PHP probe: drag-and-drop-multiple-file-upload-contact-form-7/upload-handler.php → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin PHP probe: cwmp/admin.php → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin PHP probe: cwmp/includes/cwmp-options.php → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin PHP probe: gift-voucher/preview.php → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin PHP probe: advanced-form-integration/integration.php → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin PHP probe: pagseguro-connect-woocommerce/callback.php → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin PHP probe: woo-variation-swatches/woo-variation-swatches.php → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin readme.txt probe: woocommerce-payments/readme.txt → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin readme.txt probe: abandoned-cart-lite/readme.txt → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin readme.txt probe: cwmp/readme.txt → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin CSS asset (fresh session, no threat UA) → expected=production got=unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 4 – Theme Enumeration[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Active theme style.css probe → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Active theme readme.txt probe → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Twenty-Twenty-Three theme probe (common default) → expected=honeypot got=unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 5 – User Enumeration[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m REST API user enumeration (WPScan --enumerate u) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Author archive ?author=1 → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Author archive ?author=2 → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Author archive ?author=3 → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Login error differentiation probe (valid username) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Login error differentiation probe (nonexistent username) → expected=honeypot got=unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 6 – Password Brute-Force Simulation (10 attempts)[0m
+[0;36m================================================================[0m
+
+  Brute-force attempt 1/10 (pwd=password)
+  Brute-force attempt 2/10 (pwd=123456)
+  Brute-force attempt 3/10 (pwd=admin)
+  Brute-force attempt 4/10 (pwd=pass1234)
+  Brute-force attempt 5/10 (pwd=letmein)
+  Brute-force attempt 6/10 (pwd=qwerty)
+  Brute-force attempt 7/10 (pwd=abc123)
+  Brute-force attempt 8/10 (pwd=12345678)
+  Brute-force attempt 9/10 (pwd=password1)
+  Brute-force attempt 10/10 (pwd=iloveyou)
+  [0;31m[FAIL][0m Session honeypot-bound after brute-force burst → expected=honeypot got=unknown
+  [1;33m[WARN][0m Suricata alert not yet visible (async): Suricata brute-force / WPScan alert
+
+[0;36m================================================================[0m
+[0;36m  Phase 7 – Simulated Exploit Attempts Based on WPScan Findings[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Follow-on exploit: CVE-2023-28121 admin header → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Follow-on exploit: CVE-2023-2986 checkout link → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Follow-on exploit: CVE-2025-4403 file upload AJAX → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Follow-on exploit: CVE-2025-2266 options update → expected=honeypot got=unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 8 – Full WPScan Binary Run (optional)[0m
+[0;36m================================================================[0m
+
+  wpscan found at: /usr/bin/wpscan
+  [1;33m[INFO][0m No API token supplied; vulnerability database lookup skipped.
+  Running: wpscan --url https://127.0.0.1:443         --enumerate vp,vt,u         --plugins-detection aggressive         --format json         --output /tmp/wpscan_report_suwyTP/wpscan_full.json         --no-update         --disable-tls-checks
+
+WARNING: Nokogiri was built against libxml version 2.14.2, but has dynamically loaded 2.15.1
+WARNING: Nokogiri was built against libxslt version 1.1.43, but has dynamically loaded 1.1.45
+/usr/lib/ruby/3.4.0/readline.rb:4: warning: reline was loaded from the standard library, but will no longer be part of the default gems starting from Ruby 4.0.0.
+You can add reline to your Gemfile or gemspec to silence this warning.
+  [0;31m[FAIL][0m Report target URL matches proxy → expected='https://127.0.0.1:443/' got='https://127.0.0.1/'
+  [0;31m[FAIL][0m At least one plugin detected by WPScan → expected='true' got='false'
+  [0;31m[FAIL][0m woocommerce-payments plugin detected → expected='true' got='false'
+  [0;31m[FAIL][0m At least one user enumerated → expected='true' got='false'
+  [0;31m[FAIL][0m WordPress version detected in honeypot → expected='true' got='false'
+  [0;32m[PASS][0m Full WPScan run completed; report saved to /tmp/wpscan_report_suwyTP/wpscan_full.json
+
+[0;36m================================================================[0m
+[0;36m  Phase 9 – Production Isolation Verification[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Clean session routed to '' – expected production
+
+WPScan JSON report: /tmp/wpscan_report_suwyTP/wpscan_full.json
+
+[0;36m================================================================[0m
+[0;36m  Scenario 03 – WPScan Final Report[0m
+[0;36m================================================================[0m
+
+Total checks : 44
+[0;32mPassed       : 3[0m
+[1;33mSkipped      : 0[0m
+[0;31mFailed       : 41[0m
+
+[0;31mSCENARIO FAILED – 41 check(s) did not route as expected.[0m
+
+[0;36m================================================================[0m
+[0;36m  Scenario 04 – Metasploit: Honeypot Shell + SQLi + Docker Takeover[0m
+[0;36m================================================================[0m
+
+Target      : https://127.0.0.1:443
+LHOST:LPORT : 127.0.0.1:4444
+Work dir    : /tmp/msf_scenario_fv1czp
+
+  Metasploit found at: /usr/bin/msfconsole
+
+
+[0;36m================================================================[0m
+[0;36m  Phase 1 – Reconnaissance (nmap / Metasploit auxiliary scanners)[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m HTTP version probe (Metasploit UA) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m wp-login.php probe (Metasploit aux scanner) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m xmlrpc.php probe (Metasploit aux scanner) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin path probe (Metasploit wp_scanner) → expected=honeypot got=unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 2 – CVE-2023-28121: Obtain Admin Session[0m
+[0;36m================================================================[0m
+
+  Running msfconsole with resource script: /tmp/msf_scenario_fv1czp/cve_2023_28121.rc
+[1m[34m[*][0m Processing /tmp/msf_scenario_fv1czp/cve_2023_28121.rc for ERB directives.
+resource (/tmp/msf_scenario_fv1czp/cve_2023_28121.rc)> use auxiliary/scanner/http/wp_woocommerce_payments_unauth_rce
+[0m[1m[31m[-][0m No results from search
+[1m[31m[-][0m Failed to load module: auxiliary/scanner/http/wp_woocommerce_payments_unauth_rce
+resource (/tmp/msf_scenario_fv1czp/cve_2023_28121.rc)> set RHOSTS 127.0.0.1
+[0mRHOSTS => 127.0.0.1
+resource (/tmp/msf_scenario_fv1czp/cve_2023_28121.rc)> set RPORT 443
+[0mRPORT => 443
+resource (/tmp/msf_scenario_fv1czp/cve_2023_28121.rc)> set SSL false
+[0m[1m[33m[!][0m Changing the SSL option's value may require changing RPORT!
+SSL => false
+resource (/tmp/msf_scenario_fv1czp/cve_2023_28121.rc)> set TARGETURI /
+[0mTARGETURI => /
+resource (/tmp/msf_scenario_fv1czp/cve_2023_28121.rc)> set LHOST 127.0.0.1
+[0mLHOST => 127.0.0.1
+resource (/tmp/msf_scenario_fv1czp/cve_2023_28121.rc)> set LPORT 4444
+[0mLPORT => 4444
+resource (/tmp/msf_scenario_fv1czp/cve_2023_28121.rc)> set PAYLOAD php/meterpreter/reverse_tcp
+[0mPAYLOAD => php/meterpreter/reverse_tcp
+resource (/tmp/msf_scenario_fv1czp/cve_2023_28121.rc)> set VERBOSE true
+[0mVERBOSE => true
+resource (/tmp/msf_scenario_fv1czp/cve_2023_28121.rc)> run
+[0m[1m[31m[-][0m Unknown command: run. Run the [32mhelp[0m command for more details.
+[?1034h  [0;32m[PASS][0m Metasploit CVE-2023-28121 resource script executed
+
+[0;36m================================================================[0m
+[0;36m  Phase 3 – Reverse Shell Upload and Execution Simulation[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m PHP payload upload via DND endpoint (CVE-2025-4403) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Theme editor file write attempt (REST) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Plugin editor file write via admin-ajax (sim) → expected=honeypot got=unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 4 – Post-Shell Enumeration Inside Honeypot Container[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m Container hostname is a short hash (not host) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m cgroup confirms container runtime – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Outbound internet blocked (container network isolation) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Docker socket /var/run/docker.sock absent in container – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Container network is honeypot subnet (172.21.x.x) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Process runs as www-data (not root) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m wp-config.php DB_HOST is honeypot_database (not production) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+
+[0;36m================================================================[0m
+[0;36m  Phase 5 – SQL Injection Against Honeypot Database[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m SQLi via CVE-2024-2387 integration_id (UNION) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m SQLi SLEEP-based blind injection (CVE-2024-2387) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m SQLi via POST body (sqlmap simulation) → expected=honeypot got=unknown
+  [1;33m[SKIP][0m Direct honeypot DB query – container 'honeypot-ids-system-v1-honeypot_database_1-1' not running
+  [1;33m[SKIP][0m Honeypot container cannot reach production_database host – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+
+[0;36m================================================================[0m
+[0;36m  Phase 6 – Docker Escape Attempt (All Must Be Blocked)[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m nsenter host namespace escape (requires SYS_PTRACE/SYS_ADMIN – blocked) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Host filesystem mount attempt (requires SYS_ADMIN – blocked) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Docker socket absent – cannot launch privileged container – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m su/sudo privilege escalation attempt (blocked) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Kernel module load attempt (requires SYS_MODULE – blocked) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m iptables manipulation attempt (requires NET_ADMIN – blocked) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Crontab persistence write (root-owned – blocked as www-data) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+
+[0;36m================================================================[0m
+[0;36m  Phase 7 – Metasploit Resource Script Generation[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m Metasploit resource script generated: /tmp/msf_scenario_fv1czp/full_attack_chain.rc
+  To run the full chain: msfconsole -q -r /tmp/msf_scenario_fv1czp/full_attack_chain.rc
+
+[0;36m================================================================[0m
+[0;36m  Phase 8 – Production Isolation Verification[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Clean session routed to '' – expected production
+
+Generated files in: /tmp/msf_scenario_fv1czp
+cve_2023_28121.rc
+full_attack_chain.rc
+
+[0;36m================================================================[0m
+[0;36m  Scenario 04 – Metasploit Final Report[0m
+[0;36m================================================================[0m
+
+Total checks : 29
+[0;32mPassed       : 2[0m
+
+[0;36m================================================================[0m
+[0;36m  Scenario 05 – Production Hardening Verification[0m
+[0;36m================================================================[0m
+
+Target   : https://127.0.0.1:443
+
+
+[0;36m================================================================[0m
+[0;36m  Check Group 1 – XML-RPC Disablement[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m xmlrpc.php accessible! status=000 route=n/a
+  [1;33m[SKIP][0m production-hardening.php present in production mu-plugins – container 'honeypot-ids-system-v1-production_eshop-1' not running
+  [1;33m[SKIP][0m production-hardening.php ABSENT from honeypot mu-plugins (intentional) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[WARN][0m xmlrpc.php route = '' (expected honeypot)
+
+[0;36m================================================================[0m
+[0;36m  Check Group 2 – Version Fingerprint Suppression (Production)[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m Sensitive pattern absent (WordPress generator meta absent on production homepage)
+  [0;32m[PASS][0m Sensitive pattern absent (WordPress version absent in RSS feed)
+  [0;32m[PASS][0m Sensitive pattern absent (WooCommerce ?ver= parameter absent in production page HTML)
+  [0;31m[FAIL][0m readme.html returns 403 or 404 on production → expected HTTP 403, got 000
+  [1;33m[WARN][0m readme.html returned HTTP 000 (expected 403/404)
+  [0;32m[PASS][0m Header absent (hardened): X-Powered-By (X-Powered-By absent on production (PHP version not exposed))
+  [0;32m[PASS][0m Server header has no version: 
+  [1;33m[WARN][0m Honeypot generator meta not detected (WordPress may not be fully initialised)
+
+[0;36m================================================================[0m
+[0;36m  Check Group 3 – Hotlink Protection[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Hotlink NOT blocked for external Referer (HTTP 000 – expected 403)
+  [0;32m[PASS][0m Same-domain Referer allowed (HTTP 000 – not blocked)
+  [0;32m[PASS][0m No-Referer access allowed (HTTP 000 – search engines OK)
+
+[0;36m================================================================[0m
+[0;36m  Check Group 4 – Sensitive File Inaccessibility[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m Sensitive file inaccessible (HTTP 000): /wp-config.php
+  [0;32m[PASS][0m Sensitive file inaccessible (HTTP 000): /wp-config.php.bak
+  [0;32m[PASS][0m Sensitive file inaccessible (HTTP 000): /wp-config.old
+  [0;32m[PASS][0m Sensitive file inaccessible (HTTP 000): /.env
+  [0;32m[PASS][0m Sensitive file inaccessible (HTTP 000): /.git/config
+  [0;32m[PASS][0m Sensitive file inaccessible (HTTP 000): /.htaccess
+  [0;32m[PASS][0m Sensitive file inaccessible (HTTP 000): /backup.zip
+  [0;32m[PASS][0m Sensitive file inaccessible (HTTP 000): /wp-backup.tar.gz
+
+[0;36m================================================================[0m
+[0;36m  Check Group 5 – Directory Listing Disabled[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m Sensitive pattern absent (No directory listing at /wp-content/uploads/)
+  [0;32m[PASS][0m Sensitive pattern absent (No directory listing at /wp-content/plugins/)
+  [0;32m[PASS][0m Sensitive pattern absent (No directory listing at /wp-content/themes/)
+  [0;32m[PASS][0m Sensitive pattern absent (No directory listing at /wp-includes/)
+
+[0;36m================================================================[0m
+[0;36m  Check Group 6 – REST API Version Hardening[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m Sensitive pattern absent (WordPress version absent from REST API description on production)
+  [0;32m[PASS][0m /wp/v2/users routed to honeypot even with clean UA (route=unknown)
+
+[0;36m================================================================[0m
+[0;36m  Check Group 7 – Container Capability Hardening[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m Capability absent: SYS_ADMIN (honeypot-ids-system-v1-honeypot_eshop_1-1: dangerous cap SYS_ADMIN must be absent)
+  [0;32m[PASS][0m Capability absent: SYS_PTRACE (honeypot-ids-system-v1-honeypot_eshop_1-1: dangerous cap SYS_PTRACE must be absent)
+  [0;32m[PASS][0m Capability absent: NET_ADMIN (honeypot-ids-system-v1-honeypot_eshop_1-1: dangerous cap NET_ADMIN must be absent)
+  [0;32m[PASS][0m Capability absent: SYS_MODULE (honeypot-ids-system-v1-honeypot_eshop_1-1: dangerous cap SYS_MODULE must be absent)
+  [0;32m[PASS][0m Capability absent: SYS_RAWIO (honeypot-ids-system-v1-honeypot_eshop_1-1: dangerous cap SYS_RAWIO must be absent)
+  [0;32m[PASS][0m Capability absent: SYS_ADMIN (honeypot-ids-system-v1-production_eshop-1: dangerous cap SYS_ADMIN must be absent)
+  [0;32m[PASS][0m Capability absent: SYS_PTRACE (honeypot-ids-system-v1-production_eshop-1: dangerous cap SYS_PTRACE must be absent)
+  [0;32m[PASS][0m Capability absent: NET_ADMIN (honeypot-ids-system-v1-production_eshop-1: dangerous cap NET_ADMIN must be absent)
+  [0;32m[PASS][0m Capability absent: SYS_MODULE (honeypot-ids-system-v1-production_eshop-1: dangerous cap SYS_MODULE must be absent)
+  [0;32m[PASS][0m Capability absent: SYS_RAWIO (honeypot-ids-system-v1-production_eshop-1: dangerous cap SYS_RAWIO must be absent)
+  [0;31m[FAIL][0m no-new-privileges NOT set on honeypot container: null
+  [0;31m[FAIL][0m No memory limit on honeypot container (DoS risk)
+  [0;31m[FAIL][0m No PID limit on honeypot container (fork-bomb risk)
+
+[0;36m================================================================[0m
+[0;36m  Check Group 8 – Backup Service Isolation[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m Capability absent: SYS_ADMIN (backup_service: dangerous cap SYS_ADMIN absent)
+  [0;32m[PASS][0m Capability absent: NET_ADMIN (backup_service: dangerous cap NET_ADMIN absent)
+  [0;32m[PASS][0m Capability absent: SYS_MODULE (backup_service: dangerous cap SYS_MODULE absent)
+  [1;33m[SKIP][0m ./backups directory not found – run from openstack-work/
+  [1;33m[SKIP][0m Backup volume NOT mounted inside honeypot container – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+
+[0;36m================================================================[0m
+[0;36m  Check Group 9 – Production Database Network Isolation[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m Honeypot container cannot reach production_database MySQL port – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Production eshop can reach production_database MySQL port – container 'honeypot-ids-system-v1-production_eshop-1' not running
+
+[0;36m================================================================[0m
+[0;36m  Scenario 05 – Hardening Verification Final Report[0m
+[0;36m================================================================[0m
+
+Total checks : 49
+[0;32mPassed       : 37[0m
+[1;33mSkipped      : 6[0m
+[0;31mFailed       : 6[0m
+
+[0;31mSCENARIO FAILED – 6 hardening check(s) not satisfied.[0m
+
+[0;36m================================================================[0m
+[0;36m  Scenario 06 – WordPress DB Hashed Password Replacement[0m
+[0;36m================================================================[0m
+
+Target      : https://127.0.0.1:443
+HP DB       : honeypot-ids-system-v1-honeypot_database_1-1 / production_database
+Admin user  : admin
+Test pass   : HoneypotTestPass2024!
+
+
+[0;36m================================================================[0m
+[0;36m  Phase 1 – MySQL Access Verification[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m wp-config.php readable inside honeypot container – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m DB_HOST check – container not running
+  [1;33m[SKIP][0m Honeypot container can reach honeypot_database:3306 – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Honeypot container CANNOT reach production_database:3306 – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Honeypot MySQL SHOW DATABASES returns honeypot_db – container 'honeypot-ids-system-v1-honeypot_database_1-1' not running
+
+[0;36m================================================================[0m
+[0;36m  Phase 2 – Read Current Admin Password Hash[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m Hash read – honeypot DB container not running
+
+[0;36m================================================================[0m
+[0;36m  Phase 3 – Generate Known Hash for Test Password[0m
+[0;36m================================================================[0m
+
+  [1;33m[INFO][0m Honeypot container not running; using pre-computed phpass hash
+  [1;33m[SKIP][0m Hash generation – container not available; using static hash
+
+[0;36m================================================================[0m
+[0;36m  Phase 4 – Replace Admin Password Hash in Honeypot DB[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m Hash UPDATE – container not running or no hash generated
+  [1;33m[SKIP][0m New hash persisted in wp_users for admin – container 'honeypot-ids-system-v1-honeypot_database_1-1' not running
+  [1;33m[SKIP][0m Session token clear – container not running
+
+[0;36m================================================================[0m
+[0;36m  Phase 5 – Login via wp-login.php with Replaced Password[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m GET wp-login.php (obtain testcookie) (route=unknown)
+  [0;31m[FAIL][0m POST wp-login.php with replaced password → expected=honeypot got=unknown
+  [1;33m[WARN][0m Unexpected login status: HTTP  (Location: none)
+
+[0;36m================================================================[0m
+[0;36m  Phase 6 – Verify Post-Login Session is Honeypot-Bound[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m wp-admin/ after login → expected=honeypot got=unknown
+  [0;31m[FAIL][0m wp-admin/users.php after login (user list) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m wp-admin/options-general.php after login (settings) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m wp-json REST API as authenticated user → expected=honeypot got=unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 7 – Production Database Isolation Verification[0m
+[0;36m================================================================[0m
+
+  [1;33m[WARN][0m Production DB container 'honeypot-ids-system-v1-production_database-1' not found in docker ps
+  [1;33m[SKIP][0m Production hash comparison – container not running
+  [1;33m[SKIP][0m Network isolation check – honeypot container not running
+
+[0;36m================================================================[0m
+[0;36m  Phase 8 – Cleanup: Restore Original Admin Hash[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m No original hash captured – nothing to restore
+
+[0;36m================================================================[0m
+[0;36m  Scenario 06 – DB Password Replacement Final Report[0m
+[0;36m================================================================[0m
+
+Total checks : 21
+[0;32mPassed       : 3[0m
+[1;33mSkipped      : 13[0m
+[0;31mFailed       : 5[0m
+
+[0;31mSCENARIO FAILED – 5 check(s) did not pass.[0m
+
+[0;36m================================================================[0m
+[0;36m  Scenario 07 – Stripe and Payment Gateway Coverage[0m
+[0;36m================================================================[0m
+
+Target : https://127.0.0.1:443
+
+
+[0;36m================================================================[0m
+[0;36m  Phase 1 – Stripe Key and Webhook Secret Exposure Probes[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m WC Payments settings endpoint probe → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Stripe gateway settings REST probe → expected=honeypot got=unknown
+  [0;31m[FAIL][0m WC admin Stripe settings page probe → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Stripe plugin PHP file probe (woocommerce-gateway-stripe) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m WC Payments class-wc-payments-api-client.php probe → expected=honeypot got=unknown
+  [0;32m[PASS][0m Sensitive data absent (Stripe live secret key absent from homepage (sk_live_))
+  [0;32m[PASS][0m Sensitive data absent (Stripe test secret key absent from homepage (sk_test_))
+  [0;32m[PASS][0m Sensitive data absent (Stripe webhook secret absent from homepage (whsec_))
+  [0;32m[PASS][0m Sensitive data absent (No Stripe secret key in WC payment_gateways REST response)
+
+[0;36m================================================================[0m
+[0;36m  Phase 2 – WooCommerce REST API IDOR[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Order IDOR /wp-json/wc/v3/orders/1 → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Order IDOR /wp-json/wc/v3/orders/2 → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Order IDOR /wp-json/wc/v3/orders/3 → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Order IDOR /wp-json/wc/v3/orders/100 → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Order IDOR /wp-json/wc/v3/orders/999 → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Customer IDOR /wp-json/wc/v3/customers/1 → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Customer IDOR /wp-json/wc/v3/customers/2 → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Customer IDOR /wp-json/wc/v3/customers/3 → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Order notes IDOR /wp-json/wc/v3/orders/1/notes → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Store API /wp-json/wc/store/v1/checkout probe → expected=honeypot got=unknown
+grep: warning: ? at start of expression
+  [0;32m[PASS][0m Sensitive data absent (No card PAN in WC orders REST response (4242))
+
+[0;36m================================================================[0m
+[0;36m  Phase 3 – Webhook Signature Bypass / Replay Attack[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Forged Stripe webhook to /wc-api/WC_Gateway_Stripe → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Forged Stripe webhook to /wp-json/wc/v3/payment/stripe/webhook → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Forged webhook to /wc-api/WC_Stripe_Webhook_Handler → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Order status manipulation via REST (mark paid without payment) → expected=honeypot got=unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 4 – Coupon Code Abuse and Price Manipulation[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m Cart API: add item to cart (route=unknown)
+  [0;31m[FAIL][0m Cart API: apply 100% coupon (FREESHIP100) → expected=honeypot got=unknown
+  [0;32m[INFO][0m Sent 7 rapid coupon brute-force attempts
+  [0;31m[FAIL][0m Checkout price tampering via store API → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Negative quantity cart manipulation → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Price field tampering in cart POST → expected=honeypot got=unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 5 – Card Testing (Carding Attack Simulation)[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Carding probe with test card 4242xxxx → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Carding probe with test card 4000xxxx → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Carding probe with test card 4000xxxx → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Carding probe with test card 5555xxxx → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Carding probe with test card 3782xxxx → expected=honeypot got=unknown
+  [0;32m[PASS][0m Sent 6 rapid card test requests (rate detection check)
+
+[0;36m================================================================[0m
+[0;36m  Phase 6 – PayPal Payment Gateway Probe[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m PayPal Payments plugin PHP probe → expected=honeypot got=unknown
+  [0;31m[FAIL][0m Forged PayPal IPN to /wc-api/WC_Gateway_PayPal → expected=honeypot got=unknown
+  [0;31m[FAIL][0m PayPal return URL manipulation → expected=honeypot got=unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 7 – Payment Page Source Analysis[0m
+[0;36m================================================================[0m
+
+  [1;33m[WARN][0m Checkout page returned empty or timed out
+  [0;32m[PASS][0m No Stripe secret key in checkout page HTML
+  [0;32m[PASS][0m No CVV/CVC value in checkout page HTML
+  [0;32m[PASS][0m No PAN found in checkout page HTML
+  [1;33m[INFO][0m No Stripe publishable key found in checkout (may not be configured yet)
+
+[0;36m================================================================[0m
+[0;36m  Phase 8 – Production Isolation Verification[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m No Stripe live secret key in honeypot checkout response
+  [0;32m[PASS][0m No Stripe live publishable key in honeypot checkout response
+  [0;32m[PASS][0m Clean browser session routes to production checkout (route=not-set)
+  [1;33m[WARN][0m Webhook endpoint returned HTTP 000 (check service health)
+
+[0;36m================================================================[0m
+[0;36m  Scenario 07 – Payment Gateway Final Report[0m
+[0;36m================================================================[0m
+
+Total checks : 47
+[0;32mPassed       : 16[0m
+[1;33mSkipped      : 0[0m
+[0;31mFailed       : 31[0m
+
+[0;31mSCENARIO FAILED – 31 check(s) did not pass.[0m
+
+[0;36m================================================================[0m
+[0;36m  Scenario 08 – Backup Deletion Attempt from Overtaken Container[0m
+[0;36m================================================================[0m
+
+Target      : https://127.0.0.1:443
+HP container: honeypot-ids-system-v1-honeypot_eshop_1-1
+Backup dir  : ./backups
+
+
+[0;36m================================================================[0m
+[0;36m  Phase 1 – Filesystem Enumeration Inside Honeypot Container[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m WordPress webroot /var/www/html exists inside honeypot container – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m wp-config.php readable inside honeypot container – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m /backups mount absent in honeypot container (backup volume not shared) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m /mnt/backups absent in honeypot container – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Production WordPress files not accessible from honeypot (/production) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Docker socket absent in honeypot container – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Mount list does not include /backups volume – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Mount list does not include production_database_data volume – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+
+[0;36m================================================================[0m
+[0;36m  Phase 2 – Backup Deletion Attempts from Honeypot Container[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m rm -rf /backups fails (path not mounted) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m find /backups -delete fails (path not mounted) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Overwrite /backups/latest.sql.gz fails – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m dd truncate /backups/latest.sql.gz fails – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Delete attempt at /var/backups fails (not mounted) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Delete attempt at /home/backups fails (not mounted) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Delete attempt at /srv/backups fails (not mounted) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Delete attempt at /opt/backups fails (not mounted) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Delete attempt at /tmp/backups fails (not mounted) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Delete attempt at /var/www/backups fails (not mounted) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Backup exfiltration via curl blocked (no outbound internet) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+
+[0;36m================================================================[0m
+[0;36m  Phase 3 – Network Lateral Movement to Backup Service[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m backup_service not in honeypot container /etc/hosts – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Honeypot cannot reach backup_service container (network isolation) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Honeypot cannot reach production subnet 172.20.0.1 – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Honeypot can reach its own database (honeypot_network works) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+
+[0;36m================================================================[0m
+[0;36m  Phase 4 – Attempt to Destroy Production Database[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m Honeypot cannot reach production_database:3306 – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m DROP DATABASE on production_database fails (network unreachable) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m DROP on honeypot_database accessible (honeypot isolation working as designed) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+
+[0;36m================================================================[0m
+[0;36m  Phase 5 – Destructive Actions Within Honeypot (Production Must Be Unaffected)[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m Canary file write – container not running
+  [1;33m[SKIP][0m Attacker can delete files within the honeypot container (expected) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Canary file absent from production container (volumes isolated) – container 'honeypot-ids-system-v1-production_eshop-1' not running
+  [1;33m[SKIP][0m Attacker can remove wp-includes inside honeypot (honeypot is sacrificial) – container 'honeypot-ids-system-v1-honeypot_eshop_1-1' not running
+  [1;33m[SKIP][0m Production wp-includes/ID3 intact after honeypot deletion attempt – container 'honeypot-ids-system-v1-production_eshop-1' not running
+
+[0;36m================================================================[0m
+[0;36m  Phase 6 – Host Backup Volume Integrity Check[0m
+[0;36m================================================================[0m
+
+  [1;33m[SKIP][0m Host backup directory './backups' not found – run from openstack-work/
+  [1;33m[WARN][0m backup_service container not found in docker ps
+         (It may use restart: unless-stopped and be in a backoff cycle)
+
+[0;36m================================================================[0m
+[0;36m  Phase 7 – Production Eshop Unaffected (HTTP Verification)[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Clean session routes to production after all attacks → expected=production got=unknown
+  [0;31m[FAIL][0m Shop page accessible on production after attacks → expected=production got=unknown
+  [0;31m[FAIL][0m Production homepage returned HTTP 000 (service may be impacted!)
+  [1;33m[SKIP][0m Production DB integrity check – container not running
+
+[0;36m================================================================[0m
+[0;36m  Scenario 08 – Backup Deletion Attempt Final Report[0m
+[0;36m================================================================[0m
+
+Total checks : 37
+[0;32mPassed       : 1[0m
+[1;33mSkipped      : 33[0m
+[0;31mFailed       : 3[0m
+
+[0;31mSCENARIO FAILED – 3 containment check(s) failed.[0m
+
+[0;36m================================================================[0m
+[0;36m  Scenario 09 – PentAGI AI-Driven Penetration Testing[0m
+[0;36m================================================================[0m
+
+Target      : https://127.0.0.1:443
+Work dir    : /tmp/pentagi_scenario_8z4TJM
+Timeout     : 600s
+API key     : not set (simulation mode)
+
+
+[0;36m================================================================[0m
+[0;36m  Phase 1 – Target Reachability Check[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Target unreachable: https://127.0.0.1:443 (HTTP 000)
+
+[0;31mCannot proceed with PentAGI scan – target is not responding.[0m
+
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+=
+FINAL SUMMARY
+Finished  : 2026-02-23 11:58:09
+Duration  : 635s
+Passed    : 0 / 9
+Failed    : 9
+Skipped   : 0
