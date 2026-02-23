@@ -107,36 +107,13 @@ outputs:
   # NOTE: unified2-alert output was removed – it is not supported in Suricata 7.x
   # and causes a fatal startup error. The eve-log output above replaces it.
 
-  # HTTP log
-  - http-log:
-      enabled: yes
-      filename: http.log
-      append: yes
-      extended: yes
+  # NOTE: http-log, tls-log, dns-log, and alert-fastlog outputs were removed
+  # as they are deprecated in Suricata 8.0. Use eve-log for all event logging.
 
-  # TLS log
-  - tls-log:
-      enabled: yes
-      filename: tls.log
-      append: yes
-      extended: yes
-
-  # DNS log
-  - dns-log:
-      enabled: yes
-      filename: dns.log
-      append: yes
-
-  # Alert debug log
+  # Alert debug log (disabled by default)
   - alert-debug:
       enabled: no
       filename: alert-debug.log
-      append: yes
-
-  # Alert fast log with packet info
-  - alert-fastlog:
-      enabled: yes
-      filename: alert-fast.log
       append: yes
 
 # Logging settings
@@ -335,7 +312,7 @@ threading:
 af-packet:
   - interface: eth0
     # Number of threads
-    threads: auto
+    threads: 1
     # Default packet size
     default-packet-size: 1500
     # Promiscuous mode
@@ -346,10 +323,12 @@ af-packet:
     bypass: no
     # Buffer size
     buffer-size: 65535
-    # Set fanout to load balance across multiple threads
-    fanout-mode: hash
-    # Use AF_PACKET ring buffer
-    use-evanics: no
+    # Cluster type for multi-thread
+    cluster-type: cluster_flow
+    # Cluster ID
+    cluster-id: 99
+    # BPF filter - match all packets (required for Suricata 8.x)
+    bpf-filter: "ip or ip6 or arp"
     # Roll over when file reaches size
     #rolling:
     #  size: 100mb

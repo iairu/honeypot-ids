@@ -632,7 +632,8 @@ services:
       - ids_network
     # NET_ADMIN: required for AF_PACKET socket-based capture.
     # SYS_NICE: allows Suricata to manage its own thread scheduling priority.
-    # All other capabilities are dropped (no SYS_ADMIN needed for AF_PACKET).
+    # privileged: required for AF_PACKET socket creation on some systems.
+    privileged: true
     cap_add:
       - NET_ADMIN
       - SYS_NICE

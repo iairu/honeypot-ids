@@ -1,0 +1,129 @@
+Honeynet Test Suite Run
+Target    : https://127.0.0.1:443
+Started   : 2026-02-23 18:12:00
+Scenarios : 1,2,3,4,5,6,7,8,9
+======================================================================
+
+[0;36m================================================================[0m
+[0;36m  Scenario 01 – TryHackMe WooCommerce CVE-2023-28121[0m
+[0;36m================================================================[0m
+
+Target : https://127.0.0.1:443
+Cookie : /tmp/scenario01_cookies_SYopdC.txt
+
+
+[0;36m================================================================[0m
+[0;36m  Phase 1 – Passive Reconnaissance[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Homepage baseline (clean session) → expected production, got honeypot
+  [0;31m[FAIL][0m robots.txt enumeration → expected production, got honeypot
+  [0;31m[FAIL][0m readme.html version disclosure probe → expected honeypot, got unknown
+  [0;31m[FAIL][0m REST API user enumeration (/wp/v2/users) → expected honeypot, got unknown
+  [0;32m[PASS][0m REST API user enumeration (rest_route param) → routed to honeypot
+  [1;33m[WARN][0m Suricata alert not found (may be async): WPScan user-agent alert
+
+[0;36m================================================================[0m
+[0;36m  Phase 2 – Plugin Fingerprinting[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m WC Payments static asset (CSS – should stay on production) → expected production, got unknown
+  [0;31m[FAIL][0m WC Payments PHP entrypoint probe → expected honeypot, got unknown
+  [0;31m[FAIL][0m WC Payments includes path probe → expected honeypot, got unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 3 – CVE-2023-28121 Exploitation[0m
+[0;36m================================================================[0m
+
+  [0;32m[PASS][0m CVE-2023-28121 header injection (user=1) → routed to honeypot
+  [0;31m[FAIL][0m CVE-2023-28121 header injection (user=admin) → expected honeypot, got unknown
+  [0;31m[FAIL][0m CVE-2023-28121 rogue admin creation POST → expected honeypot, got unknown
+  [1;33m[WARN][0m Suricata alert not found (may be async): Suricata CVE-2023-28121 alert
+
+[0;36m================================================================[0m
+[0;36m  Phase 4 – Attacker Authentication[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m wp-login.php POST (rogue account) → expected honeypot, got unknown
+  [0;31m[FAIL][0m wp-admin dashboard access (post-login) → expected honeypot, got unknown
+  [0;31m[FAIL][0m wp-admin plugin upload page access → expected honeypot, got unknown
+
+[0;36m================================================================[0m
+[0;36m  Phase 5 – Web-Shell Upload (Post-Exploitation)[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Plugin ZIP upload via wp-admin (web-shell) → expected honeypot, got unknown
+  [0;31m[FAIL][0m PHP shell upload via dnd-upload AJAX endpoint → expected honeypot, got unknown
+  [1;33m[WARN][0m Suricata alert not found (may be async): Suricata file-upload alert
+
+[0;36m================================================================[0m
+[0;36m  Phase 6 – Production Isolation Verification[0m
+[0;36m================================================================[0m
+
+  [0;31m[FAIL][0m Clean session routed to '' – expected production
+
+[0;36m================================================================[0m
+[0;36m  Scenario 01 – Final Report[0m
+[0;36m================================================================[0m
+
+Total checks : 20
+[0;32mPassed       : 5[0m
+[0;31mFailed       : 15[0m
+
+[0;31mSCENARIO FAILED – 15 check(s) did not route as expected.[0m
+
+[0;36m================================================================[0m
+[0;36m  Scenario 02 – OWASP WSTG Categories 1-7[0m
+[0;36m================================================================[0m
+
+Target : https://127.0.0.1:443
+
+
+[0;36m================================================================[0m
+[0;36m  WSTG-INFO (1) – Information Gathering[0m
+[0;36m================================================================[0m
+
+
+[0;34m  --- WSTG-INFO-01: Search Engine Discovery ---\033[0m
+
+  [0;31m[FAIL][0m robots.txt fetch (INFO-01) → expected=production got=honeypot
+  [0;32m[PASS][0m sitemap.xml fetch (INFO-01) → production
+
+[0;34m  --- WSTG-INFO-02: Web Server Fingerprinting ---\033[0m
+
+  [0;31m[FAIL][0m Header missing: Server (Server header must not include version (INFO-02))
+  [0;32m[PASS][0m Header absent (hardened): X-Powered-By (X-Powered-By absent on production (INFO-02))
+
+[0;34m  --- WSTG-INFO-03: Web Application Fingerprinting ---\033[0m
+
+  [0;31m[FAIL][0m readme.html with scanner UA (INFO-03) → expected=honeypot got=unknown
+  [0;31m[FAIL][0m license.txt with browser UA (INFO-03) → expected=production got=unknown
+
+[0;34m  --- WSTG-INFO-04: Enumerate Web Application ---\033[0m
+
+  [0;32m[PASS][0m wp-config.php probe (INFO-04) → honeypot
+  [0;31m[FAIL][0m wp-config.php.bak probe (INFO-04) → expected=honeypot got=unknown
+  [0;32m[PASS][0m .env probe (INFO-04) → honeypot
+
+[0;34m  --- WSTG-INFO-05: Review Web Page Comments and Metadata ---\033[0m
+
+  [0;32m[PASS][0m Sensitive info not exposed (WordPress generator meta must be absent on production (INFO-05))
+
+[0;34m  --- WSTG-INFO-06: Identify Application Entry Points ---\033[0m
+
+  [0;31m[FAIL][0m REST API root (INFO-06) → expected=production got=unknown
+
+[0;34m  --- WSTG-INFO-07: Map Execution Paths Through Application ---\033[0m
+
+  [0;32m[PASS][0m Nikto scanner UA (INFO-07) → honeypot
+
+[0;34m  --- WSTG-INFO-08: Fingerprint Web Application Framework ---\033[0m
+
+  [0;32m[PASS][0m Sensitive info not exposed (WooCommerce version absent in page source (INFO-08))
+
+[0;34m  --- WSTG-INFO-09: Map Application Architecture ---\033[0m
+
+  [0;31m[FAIL][0m wp-admin probe with Acunetix UA (INFO-09) → expected=honeypot got=unknown
+
+[0;34m  --- WSTG-INFO-10: Map Network/Application Architecture ---\033[0m
+
