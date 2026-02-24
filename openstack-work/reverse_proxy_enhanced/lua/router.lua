@@ -114,7 +114,7 @@ end
 --                                   .update_session  boolean
 --                                   .session_data    fields to merge into session
 -- ---------------------------------------------------------------------------
-function _M.decide_route(session_data, threat_result, remote_ip)
+function _M.decide_route(session_data, threat_result, remote_ip, session_id)
     local routing_decision = {
         target = "production",
         upstream = "production_backend",
@@ -140,7 +140,8 @@ function _M.decide_route(session_data, threat_result, remote_ip)
     -- for five minutes to avoid Redis round-trips on every request.
     if not session_data then
         local session_handler = require "session_handler"
-        session_data = session_handler.create_session(remote_ip, ngx.var.http_user_agent, "production")
+        -- Use provided session_id or generate new one
+        session_data = session_handler.create_session(remote_ip, ngx.var.http_user_agent, "production", session_id)
         routing_decision.update_session = true
         routing_decision.session_data = session_data
         ngx.log(ngx.INFO, "[ROUTING] New session created for IP: ", remote_ip, " | Session ID: ", session_data.id)
@@ -330,7 +331,10 @@ function _M.decide_route(session_data, threat_result, remote_ip)
     -- session and the detect_automation() result from threat_analyzer.
     -- Threshold is 20 req/s to avoid penalising legitimate single-page apps
     -- that prefetch multiple API endpoints on load.
-    if _M.is_rapid_automation(session_data, threat_result) then
+    -- NOTE: Only route to honeypot if automation is detected AND the threat
+    -- score is already elevated (>= 40). This prevents false positives on
+    -- legitimate CLI tools like curl accessing the homepage.
+    if _M.is_rapid_automation(session_data, threat_result) and threat_result.score >= 40 then
         assign_honeypot_pool(routing_decision, {
             threat_score    = math.max(threat_result.score, 45),
             honeypot_reason = "rapid_automation_detected",

@@ -9,6 +9,7 @@ Oblasť: Kombinované bezpečnostné riešenia
 
 On siem vm first:
 
+sudo apt install docker docker-compose curl wget zip unzip git jq
 cd openstack-siem-work/elk_dockerized/docker
 sudo docker compose up
 
@@ -16,6 +17,7 @@ wait for siem-vm-ip:5601/app/home#/ to be available
 
 then on main vm:
 
+sudo apt install docker docker-compose curl wget zip unzip git jq
 cd openstack-work
 sudo docker compose up
 

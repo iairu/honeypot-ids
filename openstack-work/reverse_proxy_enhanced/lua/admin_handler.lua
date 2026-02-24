@@ -221,7 +221,9 @@ function _M.analyze_admin_patterns(uri, user_agent, method)
     end
     
     -- Check for admin enumeration attempts
-    if string.find(uri_lower, "wp%-json/wp/v2/users") then
+    -- WordPress REST API can be accessed via /wp-json/wp/v2/users or ?rest_route=/wp/v2/users
+    if string.find(uri_lower, "wp%-json/wp/v2/users") or 
+       (string.find(args_lower, "rest_route=") and string.find(args_lower, "/wp/v2/users")) then
         analysis.suspicious = true
         analysis.reason = "user_enumeration"
         analysis.score = 25

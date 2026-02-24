@@ -6,6 +6,7 @@
 
 # Hardening to be done
 
+make sure that after each of these is completed (currently work in progress) that all services are running correctly (run_all_scenarios.sh works)
 1. Add equivalently named section into latex 4_implement.tex
 2. disable xmlrpc in wordpress
 3. add hotlink protection within nginx

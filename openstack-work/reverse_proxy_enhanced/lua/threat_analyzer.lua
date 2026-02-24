@@ -311,7 +311,12 @@ function _M.analyze_uri_patterns(uri)
         {pattern = "/phpmyadmin",   score = 10, name = "phpmyadmin_scan"},
         {pattern = "/backup",       score = 10, name = "backup_scan"},
         -- WSTG-CONF-01: .env file exposure reveals secrets and DB credentials.
-        {pattern = "/%.env",        score = 20, name = "env_file_scan"}
+        {pattern = "/%.env",        score = 20, name = "env_file_scan"},
+        
+        -- WSTG-IDNT: WordPress user enumeration via REST API
+        -- Supports both /wp-json/wp/v2/users and ?rest_route=/wp/v2/users patterns
+        {pattern = "/wp%-json/wp/v2/users", score = 25, name = "wp_user_enumeration"},
+        {pattern = "rest_route=.*/wp/v2/users", score = 25, name = "wp_user_enumeration_rest"}
     }
     
     for _, check in ipairs(specific_checks) do

@@ -102,8 +102,23 @@ _G.config = {
         ip_whitelist = {
             "127.0.0.1/32",
             "100.64.0.0/10",    -- Tailscale
-            "172.16.0.0/12",    -- STUBA
-            "10.0.0.0/8"        -- Private networks
+            "172.16.0.0/12",    -- STUBA / Docker bridge networks
+            "10.0.0.0/8",       -- Private networks
+            "172.17.0.0/16",    -- Docker default bridge network
+            "172.18.0.0/16",    -- Docker compose networks
+            "172.19.0.0/16",    -- Docker compose networks
+            "172.20.0.0/16",    -- Docker compose networks
+            "172.21.0.0/16",    -- Docker compose networks
+            "172.22.0.0/16",    -- Docker compose networks
+            "172.23.0.0/16",    -- Docker compose networks
+            "172.24.0.0/16",    -- Docker compose networks
+            "172.25.0.0/16",    -- Docker compose networks
+            "172.26.0.0/16",    -- Docker compose networks
+            "172.27.0.0/16",    -- Docker compose networks
+            "172.28.0.0/16",    -- Docker compose networks
+            "172.29.0.0/16",    -- Docker compose networks
+            "172.30.0.0/16",    -- Docker compose networks
+            "172.31.0.0/16"     -- Docker compose networks
         },
         max_threat_score = 100,
         honeypot_threshold = 80,  -- Raised from 50 to prevent false positives

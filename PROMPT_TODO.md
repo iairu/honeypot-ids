@@ -1,5 +1,13 @@
 Connect over "ssh arch", sudo requires no password, project is mounted at /mnt/hgfs/openstack-work: 
 
+majority of test scenarios have mostly failing tests, lest fix them one by one, for now plan and focus solely on scenario 2 until all scenario_01_thm_woocommerce.sh tests pass:
+
+
+
+---
+
+Connect over "ssh arch", sudo requires no password, project is mounted at /mnt/hgfs/openstack-work: 
+
 run all test scenarios - install any other packages necessary to run the tests completely on the archlinux machine, make code more robust
 
 

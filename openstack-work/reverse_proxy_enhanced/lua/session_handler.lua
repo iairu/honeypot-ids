@@ -59,8 +59,9 @@ function _M.get_session(session_id)
 end
 
 -- Create a new session
-function _M.create_session(ip_address, user_agent, initial_route)
-    local session_id = _M.generate_session_id()
+function _M.create_session(ip_address, user_agent, initial_route, provided_session_id)
+    -- Use provided session_id or generate new one
+    local session_id = provided_session_id or _M.generate_session_id()
     local current_time = ngx.time()
     
     local session_data = {

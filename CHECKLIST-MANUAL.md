@@ -21,3 +21,17 @@ One wordpress frontend connected to both production and honeypot databases makes
 # Bonus
 
 Honeypot Setup Frontend extended with the following AI/LLM feature: Fetch latest CVEs from internet and generate (duplicate and adjust existing scenarios) CVE-related LUA for Nginx
+
+# Remaining test scenarios' issues
+
+## scenario 1
+
+Remaining Failures (7):**
+- Session persistence works manually but test script shows empty cookie values (environmental issue)
+- WC Payments CSS file doesn't exist (404)
+- Phase 6 shows empty X-Route-Target header
+
+The core honeypot routing functionality is working correctly. The remaining session persistence issue in the test script appears to be environmental - the same curl commands work correctly when run manually.
+
+## scenario 2
+
