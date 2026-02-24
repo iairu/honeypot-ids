@@ -239,23 +239,11 @@ function _M.analyze_uri_patterns(uri)
     end
     
     local uri_lower = string.lower(uri)
-    -- URL decode the URI to catch encoded attack patterns
-    local function url_decode(str)
-        str = string.gsub(str, "%%(%x%x)", function(h)
-            return string.char(tonumber(h, 16))
-        end)
-        str = string.gsub(str, "+", " ")
-        return str
-    end
-    
-    local uri_decoded = url_decode(uri)
-    local uri_lower_decoded = string.lower(uri_decoded)
-
     
     -- Layer 1: generic suspicious patterns defined in init.lua config.
     -- These cover the broadest attack categories from OWASP WSTG-INPV.
     for _, pattern in ipairs(_G.config.threat.suspicious_patterns) do
-        if string.find(uri_lower_decoded, pattern) or string.find(uri_lower, pattern) then
+        if string.find(uri_lower, pattern) then
             result.score = result.score + 15
             table.insert(result.patterns, pattern)
         end
@@ -313,27 +301,6 @@ function _M.analyze_uri_patterns(uri)
         {pattern = "/wp%-admin/install%.php",  score = 25, name = "wp_install_access"},
         {pattern = "wp%-admin.*user%-new%.php", score = 20, name = "wp_user_creation"},
         {pattern = "xmlrpc%.php",              score = 15, name = "wp_xmlrpc"},
-        -- WSTG-CONF-03/04: Backup files
-        {pattern = "wp%-config%.php%.bak", score = 80, name = "wp_config_bak"},
-        {pattern = "wp%-config%-",         score = 30, name = "wp_config_variant"},
-        {pattern = "%.bak$",               score = 20, name = "bak_file"},
-        {pattern = "%.old$",               score = 20, name = "old_file"},
-        {pattern = "backup%.zip",          score = 25, name = "backup_zip"},
-        {pattern = "wp%-backup",           score = 25, name = "wp_backup"},
-        {pattern = "phpinfo%.php",         score = 30, name = "phpinfo_file"},
-        {pattern = "%.htaccess",           score = 25, name = "htaccess_file"},
-        {pattern = "install%.php",         score = 30, name = "install_php"},
-        -- WSTG-AUTHZ-01: Path traversal
-        {pattern = "etc/passwd",           score = 30, name = "etc_passwd"},
-        -- WSTG-INPV-02: XSS encoded
-        {pattern = "%%3[cC]script",        score = 25, name = "enc_script"},
-        -- WSTG-ATHN-10: XML-RPC attacks
-        {pattern = "system%.listMethods",  score = 25, name = "xmlrpc_methods"},
-        {pattern = "multicall",            score = 25, name = "xmlrpc_multicall"},
-        -- WSTG-SESS-05: CSRF
-        {pattern = "admin%-post%.php",     score = 20, name = "admin_post"},
-        -- WSTG-IDNT: Author enumeration
-        {pattern = "author=%d+",           score = 80, name = "author_enum"},
         
         -- WSTG-INFO-02 / WSTG-INFO-03: Reconnaissance probes.
         -- Low-score signals; they are relevant as part of a cumulative pattern
@@ -353,7 +320,7 @@ function _M.analyze_uri_patterns(uri)
     }
     
     for _, check in ipairs(specific_checks) do
-        if string.find(uri_lower_decoded, check.pattern) or string.find(uri_lower, check.pattern) then
+        if string.find(uri_lower, check.pattern) then
             result.score = result.score + check.score
             table.insert(result.patterns, check.name)
         end
@@ -421,7 +388,6 @@ function _M.analyze_headers(headers)
         "nmap",      -- Network/service scanner  (WSTG-INFO-01)
         "masscan",   -- Mass port scanner
         "zap",       -- OWASP Zed Attack Proxy   (all WSTG-INPV categories)
-        "acunetix", -- Web vulnerability scanner
         "nikto",     -- Web vulnerability scanner (WSTG-CONF, WSTG-INFO)
         "dirb",      -- Directory brute-forcer    (WSTG-INFO-02)
         "gobuster",  -- Directory/DNS brute-forcer

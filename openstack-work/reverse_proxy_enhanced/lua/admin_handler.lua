@@ -10,6 +10,7 @@ local _M = {}
 -- Check if admin-ajax.php call is legitimate (not suspicious)
 function _M.is_legitimate_ajax_call(uri, method)
     local uri_lower = string.lower(uri or "")
+    local args_lower = string.lower(ngx.var.query_string or "")
     
     -- Only check if this is admin-ajax.php
     if not string.find(uri_lower, "admin%-ajax%.php") then
@@ -197,6 +198,7 @@ function _M.analyze_admin_patterns(uri, user_agent, method)
     }
     
     local uri_lower = string.lower(uri or "")
+    local args_lower = string.lower(ngx.var.query_string or "")
     local ua_lower = string.lower(user_agent or "")
     
     -- Check for direct admin file access (bypassing login)
@@ -430,6 +432,7 @@ function _M.is_login_attempt(uri, method)
     }
     
     local uri_lower = string.lower(uri or "")
+    local args_lower = string.lower(ngx.var.query_string or "")
     for _, endpoint in ipairs(login_endpoints) do
         if string.find(uri_lower, endpoint) then
             return true

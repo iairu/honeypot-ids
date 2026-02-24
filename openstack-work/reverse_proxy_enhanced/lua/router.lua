@@ -154,6 +154,13 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
     -- a single persistent target: WordPress state changes they made in earlier
     -- requests (cookies, wp-login tokens, uploaded files) are still visible.
     if session_data.honeypot_bound then
+        -- Re-evaluate: if current threat score is low, allow production access
+        if threat_result.score < 30 then
+            routing_decision.target = "production"
+            routing_decision.upstream = "production_backend"
+            ngx.log(ngx.INFO, "[ROUTING] Session bound but low threat - allowing production | Score: ", threat_result.score)
+            return routing_decision
+        end
         -- Re-use the pool number that was stored when the session was first
         -- flagged.  If the session pre-dates pooling (no honeypot_pool field)
         -- fall back to a fresh pool assignment so the IP is properly tracked.

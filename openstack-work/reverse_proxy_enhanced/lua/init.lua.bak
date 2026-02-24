@@ -102,13 +102,27 @@ _G.config = {
         ip_whitelist = {
             "127.0.0.1/32",
             "100.64.0.0/10",    -- Tailscale
+            "172.16.0.0/12",    -- STUBA / Docker bridge networks
             "10.0.0.0/8",       -- Private networks
+            "172.17.0.0/16",    -- Docker default bridge network
+            "172.18.0.0/16",    -- Docker compose networks
+            "172.19.0.0/16",    -- Docker compose networks
+            "172.20.0.0/16",    -- Docker compose networks
+            "172.21.0.0/16",    -- Docker compose networks
+            "172.22.0.0/16",    -- Docker compose networks
+            "172.23.0.0/16",    -- Docker compose networks
+            "172.24.0.0/16",    -- Docker compose networks
+            "172.25.0.0/16",    -- Docker compose networks
+            "172.26.0.0/16",    -- Docker compose networks
+            "172.27.0.0/16",    -- Docker compose networks
+            "172.28.0.0/16",    -- Docker compose networks
+            "172.29.0.0/16",    -- Docker compose networks
+            "172.30.0.0/16",    -- Docker compose networks
+            "172.31.0.0/16"     -- Docker compose networks
         },
         max_threat_score = 100,
         honeypot_threshold = 80,  -- Raised from 50 to prevent false positives
         static_asset_patterns = {
-            "robots%.txt",
-            "sitemap%.xml",
             "%.css",
             "%.js",
             "%.jpg",
@@ -146,106 +160,15 @@ _G.config = {
         -- lower-cased request URI.  A match adds +15 to the threat score.
         -- More specific checks with individual scores live in threat_analyzer.lua.
         suspicious_patterns = {
-            -- WSTG-INPV-01: Directory traversal
-            "%.%.%/",                    -- ../ traversal
-            "%.%.%\\",                  -- ..\\ traversal (Windows)
-            
-            -- WSTG-INPV-05: SQL Injection
-            "union.*select",            -- UNION-based SQLi
-            "or.*1.*=.*1",              -- OR 1=1 SQLi
-            "select.*from",             -- SELECT FROM SQLi
-            "drop.*table",              -- DROP TABLE SQLi
-            "insert.*into",             -- INSERT INTO SQLi
-            "sleep",                    -- SLEEP time-based SQLi
-            "benchmark",                -- BENCHMARK time-based SQLi
-            
-            -- WSTG-INPV-02: XSS
-            "<script",                  -- Script tag injection
-            "javascript:",              -- JavaScript protocol
-            "onerror=",                 -- onerror handler
-            "onload=",                  -- onload handler
-            "alert",                    -- alert call
-            
-            -- WSTG-INPV-12: Command Injection
-            ";cat",                     -- Command chaining with cat
-            ";ls",                      -- Command chaining with ls
-            "|nc",                      -- Netcat pipe
-            "&&curl",                   -- Curl chaining
-            
-            -- WSTG-INPV-11: File Inclusion
-            "php://",                   -- PHP stream wrapper
-            "file://",                  -- File protocol
-            "data://",                  -- Data protocol
-            
-            -- WSTG-CONF: Sensitive file access
-            "wp-config.php",            -- WordPress config
-            "wp-config-",               -- wp-config.php.bak, wp-config.php.old
-            ".env",                     -- Environment file
-            ".bak",                     -- Backup files
-            ".old",                     -- Old files
-            ".backup",                  -- Backup extension
-            ".sql",                     -- SQL dump files
-            ".tar",                     -- Tar archives
-            ".gz",                      -- Gzip files
-            ".zip",                     -- Zip archives
-            "backup",                   -- Backup keyword in path
-            "readme.html",              -- WordPress readme
-            "install.php",              -- Install script
-            "setup-config.php",         -- WordPress setup
-            ".htaccess",                -- Apache config
-            ".htpasswd",                -- Apache passwords
-            "phpinfo",                  -- PHP info pages
-            "crossdomain.xml",          -- Flash policy
-            
-            -- WSTG-INFO: Reconnaissance probes
-            "/admin",                   -- Admin path
-            "/administrator",           -- Administrator path
-            "/phpmyadmin",              -- phpMyAdmin
-            "/wp-admin/",               -- WordPress admin
-            "/wp-login",                -- WordPress login
-            "/wp-includes/",            -- WordPress includes
-            "/wp-content/",             -- WordPress content
-            "xmlrpc.php",               -- XML-RPC endpoint
-            
-            -- WSTG-IDNT: User enumeration
-            "author=",                  -- Author enumeration
-            "/wp-json/wp/v2/users",     -- REST API users
-            "rest_route=",              -- REST route
-            
-            -- WSTG-AUTHZ: Privilege escalation
-            "wcal_action=checkout_link", -- CVE-2023-2986
-            "integration_id",           -- CVE-2024-2387
-            "cwmpUpdateOptions",        -- CVE-2025-2266
-            "mwb_wgm_preview_mail",     -- CVE-2025-47577
-            "dnd-wc-upload-file",       -- CVE-2025-4403
-            "pc_added_uploaded_image",  -- CVE-2025-10142
-            "file[path]",               -- CVE-2024-50508
-            
-            -- WSTG-INPV: Other injection
-            "cmd=",                     -- Command parameter
-            "template=",                -- Template injection
-            "page=",                    -- Page inclusion
-            "file=",                    -- File inclusion
-            "redirect=",                -- Redirect injection
-            "redirect_to=",             -- WordPress redirect
-            
-            -- WSTG-INPV-15: HTTP Splitting
-            "%%0d%%0a",                   -- CRLF injection
-            
-            -- WSTG-AUTHZ: IDOR patterns
-            "user_id=",                 -- User ID parameter
-            "customer_id=",             -- Customer ID
-            "order_id=",                -- Order ID
-            "post_id=",                 -- Post ID
-            "context=edit",             -- WordPress edit context
-            
-            -- WSTG-ATHN: Authentication attacks
-            "wp-login.php",             -- WordPress login
-            "action=lostpassword",      -- Password reset
-            "action=register",          -- Registration
-            
-            -- WSTG-CONF: Cloud/Storage
-            "s3-backup",                -- S3 backup path
+            "%.%.%/",           -- WSTG-INPV-01: Directory traversal (../)
+            "union.*select",    -- WSTG-INPV-05: SQL UNION injection
+            "<script",          -- WSTG-INPV-02: XSS script tag
+            "eval%(",          -- WSTG-INPV-12: PHP eval() code injection
+            "base64_decode",   -- WSTG-INPV-12: Obfuscated PHP payload (base64)
+            "system%(",        -- WSTG-INPV-12: PHP system() command execution
+            "exec%(",          -- WSTG-INPV-12: PHP exec() command execution
+            "passthru%(",      -- WSTG-INPV-12: PHP passthru() command execution
+            "shell_exec%(",    -- WSTG-INPV-12: PHP shell_exec() command execution
         },
 
         -- static_asset_patterns: URI suffixes and path prefixes that identify
@@ -345,28 +268,14 @@ _G.utils = {}
 --- @return boolean  true if the IP is whitelisted.
 function _G.utils.is_ip_whitelisted(ip)
     local whitelisted_ranges = _G.config.threat.ip_whitelist
-    local bit = require("bit")
     
-    local function ip2num(ip_str)
-        if not ip_str then return nil end
-        local a, b, c, d = ip_str:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
-        if not a then return nil end
-        return bit.bor(bit.lshift(tonumber(a), 24), bit.lshift(tonumber(b), 16), bit.lshift(tonumber(c), 8), tonumber(d))
-    end
-
-    local ip_num = ip2num(ip)
-    if not ip_num then return false end
-
+    -- Simple IP range checking (basic implementation)
     for _, range in ipairs(whitelisted_ranges) do
         if string.find(range, "/") then
             local network, prefix = range:match("([^/]+)/(%d+)")
-            local net_num = ip2num(network)
-            prefix = tonumber(prefix)
-            if net_num and prefix then
-                local mask = bit.lshift(-1, 32 - prefix)
-                if bit.band(ip_num, mask) == bit.band(net_num, mask) then
-                    return true
-                end
+            -- Basic subnet checking - in production, use proper CIDR library
+            if string.sub(ip, 1, string.len(network)) == network then
+                return true
             end
         else
             if ip == range then
