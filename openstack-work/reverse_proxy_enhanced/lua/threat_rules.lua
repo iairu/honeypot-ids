@@ -23,25 +23,16 @@
 -- earlier in this codebase (e.g. sophistication_analyzer's lost UA field)
 -- came from exactly that kind of implicit, easy-to-miss dependency.
 
+local pattern_utils = require "lua_pattern_utils"
+
 local _M = {}
 
--- ---------------------------------------------------------------------------
--- url_decode(str)
---
--- Local, pure re-implementation of _G.utils.url_decode (init.lua) so this
--- module has zero dependency on _G.* being initialised. Kept in sync by
--- inspection since it's a tiny, stable, 3-line transform; if it ever grows
--- more logic, promote it to a small shared pure-string-utils module instead
--- of letting the two copies drift.
--- ---------------------------------------------------------------------------
-local function url_decode(str)
-    if not str then return "" end
-    str = string.gsub(str, "%%(%x%x)", function(h)
-        return string.char(tonumber(h, 16))
-    end)
-    str = string.gsub(str, "+", " ")
-    return str
-end
+-- Re-exported for backward compatibility with anything already calling
+-- threat_rules.url_decode() directly (e.g. existing tests); the actual
+-- implementation now lives in lua_pattern_utils.lua, shared with
+-- router_rules.lua/vulnerability_rules.lua/upload_rules.lua instead of each
+-- keeping its own copy.
+local url_decode = pattern_utils.url_decode
 _M.url_decode = url_decode
 
 -- ---------------------------------------------------------------------------

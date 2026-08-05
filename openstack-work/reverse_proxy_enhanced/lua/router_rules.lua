@@ -29,24 +29,15 @@
 -- requireable, but see threat_rules.lua's is_static_asset docstring, which
 -- now cross-references this one.
 
+local pattern_utils = require "lua_pattern_utils"
+
 local _M = {}
 
--- ---------------------------------------------------------------------------
--- escape_pattern(s)
---
--- Escapes Lua pattern magic characters so a plain literal string (e.g. a
--- plugin slug) can be safely concatenated into a string.find() pattern.
--- Without this, hyphens in slugs like "woocommerce-payments" are
--- interpreted as Lua's lazy-repetition magic character instead of a
--- literal "-", silently breaking the match -- this was a real, confirmed
--- bug in is_vulnerable_plugin_access() below (and in the equivalent
--- function this was extracted from), where every plugin in the
--- vulnerable_plugins list except "cwmp" never actually matched. See
--- vulnerability_rules.lua's copy of this same fix/rationale.
--- ---------------------------------------------------------------------------
-local function escape_pattern(s)
-    return (s:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1"))
-end
+-- escape_pattern: see lua_pattern_utils.lua for the implementation and the
+-- is_vulnerable_plugin_access() hyphen-escaping bug this fixes. Re-exported
+-- here for backward compatibility with anything already calling
+-- router_rules.escape_pattern() directly.
+local escape_pattern = pattern_utils.escape_pattern
 _M.escape_pattern = escape_pattern
 
 -- ---------------------------------------------------------------------------
