@@ -26,6 +26,51 @@ transforms:
       # .source.geo = get_enrichment_table_record!("geoip_city", { "ip": .src_ip })
       # .source.asn = get_enrichment_table_record!("geoip_asn", { "ip": .src_ip })
 
+      #####################################################
+      ###### PARSE NGINX ACCESS/SECURITY LOG MESSAGES ######
+      #####################################################
+
+      # .message for nginx_access/nginx_security is a raw combined-log-format
+      # line (see openstack-work/reverse_proxy_enhanced/nginx.conf's
+      # log_format main/security) -- previously shipped as one opaque text
+      # blob, meaning none of it (status code, route decision, threat score)
+      # was actually queryable/aggregatable in Kibana. Added this session
+      # specifically so real dashboards (threat overview, session analysis)
+      # have real fields to build on instead of just Suricata's already-
+      # structured alert.* fields.
+      if .log_type == "nginx_access" || .log_type == "nginx_security" {
+        common, common_err = parse_regex(.message,
+          r'^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time_local>[^\]]+)\] "(?P<method>\S+) (?P<uri>\S+) (?P<http_version>\S+)" (?P<status>\d+) (?P<body_bytes_sent>\d+) "(?P<referer>[^"]*)" "(?P<user_agent>[^"]*)" "(?P<xff>[^"]*)"')
+        if common_err == null {
+          # No object!() here (unlike parse_json's result elsewhere in this
+          # pipeline): parse_regex()'s success value is already statically
+          # known to be an object of string captures, so VRL's compiler
+          # rejects an object!() cast on it as a no-op "abort on a failure
+          # that can't happen" -- confirmed live (E620) when this used the
+          # same object!() pattern as the parse_json call below.
+          . = merge(., common)
+          .status = to_int(.status) ?? null
+          .body_bytes_sent = to_int(.body_bytes_sent) ?? null
+        }
+      }
+
+      if .log_type == "nginx_security" {
+        sec, sec_err = parse_regex(.message,
+          r'session_id="(?P<session_id>[^"]*)" route="(?P<route>[^"]*)" threat_score="(?P<threat_score>[^"]*)" suspicious="(?P<suspicious>[^"]*)"')
+        if sec_err == null {
+          . = merge(., sec)
+          .threat_score = to_int(.threat_score) ?? 0
+          .suspicious = to_bool(.suspicious) ?? false
+          # nginx's "-" placeholder for an unset PHPSESSID cookie isn't a
+          # real session id -- normalize it to actually-absent rather than
+          # the literal three-character string "-", so a "how many distinct
+          # sessions" cardinality aggregation isn't off by one forever.
+          if .session_id == "-" {
+            del(.session_id)
+          }
+        }
+      }
+
       #######################################
       ###### REMOVE UNNECESSARY FIELDS ######
       #######################################
