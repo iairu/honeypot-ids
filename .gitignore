@@ -14,3 +14,6 @@
 *-blx.bib
 _minted
 !_minted/default.style.minted
+*.crt
+*.key
+*.srl

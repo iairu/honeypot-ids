@@ -951,6 +951,21 @@ services:
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-honeypot-ids-system-v1}
     networks:
       - monitoring_network
+    # Lets this container resolve "host.docker.internal" to the Docker
+    # host's own gateway IP (Docker Engine 20.10+; Docker Desktop has this
+    # built in, native Linux Engine needs it declared explicitly). This is
+    # what makes single-host testing/development work: this project and
+    # openstack-siem-work/elk_dockerized are two INDEPENDENT compose
+    # projects with no shared network, by design (see README's two-host
+    # split note) -- but the SIEM's vector aggregator already publishes its
+    # port to 0.0.0.0 on the host, so setting VECTOR_HOST=host.docker.internal
+    # (instead of the real remote SIEM VM's IP) reaches it without needing
+    # any change to the SIEM stack's own network topology or joining the
+    # two projects onto a shared network. Harmless in the real two-host
+    # deployment: VECTOR_HOST there is still the real remote IP, and an
+    # unused DNS alias doesn't affect anything.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: --config /etc/vector/vector.yaml
     restart: unless-stopped
 

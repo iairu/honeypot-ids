@@ -47,7 +47,16 @@ sinks:
     endpoints:
       - "${ELASTIC_HOSTS}" # Replace with your Elasticsearch URL
     bulk:
-      index: hello-world-index # Index name in Elasticsearch
+      # Was the literal placeholder "hello-world-index" -- every shipped
+      # event (nginx access/error/security, suricata, docker, redis) landed
+      # in the same untyped bucket, with no date rotation. The edge
+      # shipper's vector.yaml already tags every event with .log_type
+      # (docker/suricata/suricata_fast/nginx_access/nginx_security/
+      # nginx_error/redis) specifically so the aggregator could split on
+      # it -- this just actually uses that field. Daily rotation matches
+      # standard ELK/Kibana index-pattern conventions (index per day,
+      # e.g. for retention/ILM policies).
+      index: "honeypot-{{ log_type }}-%Y.%m.%d"
     auth:
       strategy: basic
       user: "${ELASTIC_USERNAME}"
