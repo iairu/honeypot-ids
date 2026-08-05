@@ -27,12 +27,12 @@ A WordPress/WooCommerce e-commerce site with an OpenResty (Nginx + Lua) reverse 
 
 ### Two-host run order
 
-This system spans **two separate hosts/VMs** — a detail easy to miss since they live in two disconnected top-level directories with no other cross-link (`openstack-work/` and `openstack-siem-work/`):
+This system spans **two separate hosts/VMs**, each its own independent `docker-compose.yml` project (`openstack-work/` and `openstack-siem-work/`) with no shared files or networks — see `ARCHITECTURE.md` at the repo root for the full write-up (data-flow diagram, why the split is a deliberate security boundary rather than an accident, and exactly how to run both together on a single host for testing without merging them):
 
 ```bash
 # 1. On the SIEM VM first:
 sudo apt install docker docker-compose curl wget zip unzip git jq
-cd openstack-siem-work/elk_dockerized/docker
+cd openstack-siem-work/elk_dockerized/certs/root-ca && ./gen_elk_certs.sh && cd ../../docker
 sudo docker compose up
 # wait for http://<siem-vm-ip>:5601/app/home#/ to be reachable
 
@@ -42,7 +42,7 @@ cd openstack-work
 sudo docker compose up
 ```
 
-The SIEM half is optional for local development — the main stack runs standalone without it; you only need it if you want shipped logs to land somewhere (see [§6](#6-observability-elk--siem)).
+The SIEM half is optional for local development — the main stack runs standalone without it; you only need it if you want shipped logs to land somewhere (see [§6](#6-observability-elk--siem)). For running *both* halves together on one machine (e.g. to actually test the log pipeline rather than just the honeypot itself), see `ARCHITECTURE.md`'s "Running both on one host" section — verified working this session, including two real bugs it surfaced in the SIEM side that also affected the genuine two-host deployment.
 
 ### First-time setup (main VM / local dev)
 
@@ -116,6 +116,7 @@ openstack-work/
 └── .env / .env.example
 
 openstack-siem-work/elk_dockerized/   # SEPARATE docker-compose project — SIEM backend, own host
+ARCHITECTURE.md                       # the two-host split: why, data flow, single-host testing — see §1/§6
 master-thesis-latex/                  # the thesis itself (LaTeX)
 ```
 
@@ -332,9 +333,11 @@ Cross-referenced against internal telemetry: the agent's session classified as `
 
 ## 6. Observability (ELK / SIEM)
 
-Two-host split (see §1): a local **Vector** agent (`openstack-work/vector/vector.yaml`, profile-gated) tails Docker/nginx/Suricata/Redis logs and ships them over mTLS to a **Vector aggregator** on the SIEM host, which re-emits to **Elasticsearch**, visualized in **Kibana**. Nothing today documents this cross-host relationship outside two lines in §1 of this file — a standalone `ARCHITECTURE.md` cross-linking both projects' own READMEs would help a reader who lands in either directory alone.
+Two-host split (see §1, and now `ARCHITECTURE.md` at the repo root for the full data-flow diagram and single-host testing instructions — added this session, closing the gap this paragraph used to describe): a local **Vector** agent (`openstack-work/vector/vector.yaml`, profile-gated) tails Docker/nginx/Suricata/Redis logs and ships them over mTLS to a **Vector aggregator** on the SIEM host, which re-emits to **Elasticsearch**, visualized in **Kibana**.
 
-Indices: `honeypot-ids-*` (Suricata EVE JSON — alerts, HTTP transactions, DNS, TLS, flows) and `honeypot-nginx-*` (nginx access/security logs + Lua security events — routing decisions, threat scores, CVE matches). Recommended Kibana dashboards: real-time threat overview, IDS alerts, session analysis, attack patterns. None of this is built yet in Kibana itself — still open work (see §8).
+**Verified live end-to-end this session** (previously designed but never actually run/tested together): brought up both `docker-compose.yml` projects on one host (see `ARCHITECTURE.md` for how, without merging them), generated real traffic, and confirmed real documents landing in Elasticsearch with a Kibana data view (`honeypot-*`) able to query them. Two real bugs found and fixed along the way — the aggregator's own Docker healthcheck used `wget`, which doesn't exist in its image, so it always reported unhealthy regardless of Vector's actual state; and the aggregator's TLS server certificate had no Subject Alternative Names, so hostname verification failed for every connection method *except* the literal string `vector` — including the real two-host deployment's own default (an IP address). See `ARCHITECTURE.md` for both fixes in detail.
+
+Indices: **`honeypot-{log_type}-%Y.%m.%d`**, one per day per log category (`honeypot-nginx_access-*`, `honeypot-nginx_error-*`, `honeypot-nginx_security-*`, `honeypot-suricata-*` [EVE JSON], `honeypot-suricata_fast-*` [alerts only], `honeypot-docker-*`, `honeypot-redis-*`) — `log_type` is tagged by the edge shipper on every event and the aggregator's Elasticsearch sink now actually uses it. **Fixed this session**: the sink's index name was the literal placeholder string `hello-world-index` — every event of every type and every day landed in one single untyped, non-rotating index; this had presumably never been exercised end-to-end before, since a placeholder that blatant would fail obvious review otherwise. A `honeypot-*` Kibana data view now exists and can query all of them together. **Still open**: no actual dashboards built yet (real-time threat overview, IDS alerts, session analysis, attack patterns) — the data view is the prerequisite for that, not the dashboards themselves — see §8.
 
 To enable: set `ELK_ENABLED=true` plus `ELASTICSEARCH_HOST`/`PORT`/credentials in `.env`, install the ES CA cert to `vector/certs/ca.crt`, then `docker compose --profile elk up -d`. Expected data volume: ~200–750 MB/day combined.
 
