@@ -270,6 +270,39 @@ services:
       - production_network
       - honeypot_network  # Added: Allow access to honeypot database for SQL routing
       - monitoring_network
+    # -------------------------------------------------------------------------
+    # Container hardening -- added this session. Every other service in this
+    # compose file (honeypot_eshop_1/2/3, both database families,
+    # backup_service) already had cap_drop/security_opt/resource limits;
+    # production_eshop was the one exception, running with full default
+    # Docker capabilities and no memory/CPU/pids ceiling at all. That's
+    # backwards for a container serving real customer traffic and running a
+    # large, third-party-plugin-heavy PHP application -- a compromise here
+    # (a supply-chain issue in an installed plugin, a real unpatched CVE)
+    # deserves the same containment as the honeypot side, and an unbounded
+    # container can take down the whole host on its own even without being
+    # compromised (a runaway request, a plugin bug).
+    #
+    # Same minimal capability set as honeypot_eshop_1 (Apache+PHP needs the
+    # same things regardless of which side it's on); mem_limit/cpus set
+    # higher than the honeypot pools (1024m/1.0 vs 512m/0.5) since this
+    # instance is expected to carry real traffic and was already observed
+    # comfortably using ~640MB unconstrained.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+      - KILL
+    mem_limit: 1024m
+    cpus: "1.0"
+    pids_limit: 300
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
@@ -508,8 +541,20 @@ services:
       - SETUID
       - NET_BIND_SERVICE
       - KILL
-    mem_limit: 512m
-    cpus: "0.5"
+    # mem_limit/cpus bumped 512m/0.5 -> 1024m/1.0 this session: confirmed
+    # live via `docker stats` that all three pools were sitting at
+    # ~434-436MB *idle* against the old 512m cap (near-zero headroom) after
+    # the new plugin roster (Wordfence, Elementor, etc. -- see README §3.4)
+    # pushed the per-instance footprint up by several hundred MB. One pool
+    # was observed pegged at 300%+ CPU and its own Docker healthcheck
+    # timing out -- cgroup memory pressure thrashing, not an application
+    # bug. Matches production_eshop's own newly-added ceiling (see that
+    # service's comment) so honeypot pools aren't now the *more*
+    # resource-starved side, which would undermine realism (an attacker
+    # who fingerprints response latency shouldn't see the honeypot
+    # struggling under routine load that production handles fine).
+    mem_limit: 1024m
+    cpus: "1.0"
     pids_limit: 300
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
@@ -555,8 +600,20 @@ services:
       - SETUID
       - NET_BIND_SERVICE
       - KILL
-    mem_limit: 512m
-    cpus: "0.5"
+    # mem_limit/cpus bumped 512m/0.5 -> 1024m/1.0 this session: confirmed
+    # live via `docker stats` that all three pools were sitting at
+    # ~434-436MB *idle* against the old 512m cap (near-zero headroom) after
+    # the new plugin roster (Wordfence, Elementor, etc. -- see README §3.4)
+    # pushed the per-instance footprint up by several hundred MB. One pool
+    # was observed pegged at 300%+ CPU and its own Docker healthcheck
+    # timing out -- cgroup memory pressure thrashing, not an application
+    # bug. Matches production_eshop's own newly-added ceiling (see that
+    # service's comment) so honeypot pools aren't now the *more*
+    # resource-starved side, which would undermine realism (an attacker
+    # who fingerprints response latency shouldn't see the honeypot
+    # struggling under routine load that production handles fine).
+    mem_limit: 1024m
+    cpus: "1.0"
     pids_limit: 300
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
@@ -602,8 +659,20 @@ services:
       - SETUID
       - NET_BIND_SERVICE
       - KILL
-    mem_limit: 512m
-    cpus: "0.5"
+    # mem_limit/cpus bumped 512m/0.5 -> 1024m/1.0 this session: confirmed
+    # live via `docker stats` that all three pools were sitting at
+    # ~434-436MB *idle* against the old 512m cap (near-zero headroom) after
+    # the new plugin roster (Wordfence, Elementor, etc. -- see README §3.4)
+    # pushed the per-instance footprint up by several hundred MB. One pool
+    # was observed pegged at 300%+ CPU and its own Docker healthcheck
+    # timing out -- cgroup memory pressure thrashing, not an application
+    # bug. Matches production_eshop's own newly-added ceiling (see that
+    # service's comment) so honeypot pools aren't now the *more*
+    # resource-starved side, which would undermine realism (an attacker
+    # who fingerprints response latency shouldn't see the honeypot
+    # struggling under routine load that production handles fine).
+    mem_limit: 1024m
+    cpus: "1.0"
     pids_limit: 300
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
