@@ -1,0 +1,301 @@
+-- router_rules.lua - Pure routing predicates used by router.lua
+--
+-- PURPOSE:
+--   Holds the standalone "is this request/session suspicious in way X"
+--   predicates that router.lua's decide_route() consults. Factored out with
+--   the same intent as threat_rules.lua: no ngx.* dependency, no reliance on
+--   _G.config/_G.utils, plain-`lua`-interpreter testable (see
+--   tests/test_router_rules.lua).
+--
+--   decide_route() itself is NOT moved here. Its staged pipeline deeply
+--   interleaves session mutation with Redis I/O (pool_router, AbuseIPDB
+--   report-back via assign_honeypot_pool) at almost every stage -- forcing
+--   that into a pure core would mean either faking a large I/O surface in
+--   tests or fundamentally restructuring the routing algorithm, both of
+--   which risk introducing a subtle bug in the single most safety-critical
+--   function in this codebase (get honeypot/production separation wrong and
+--   the entire deception layer is compromised). router.lua stays the
+--   adapter for that function; only the self-contained predicate checks
+--   below move here.
+--
+-- NOTE ON is_static_asset: this used to have two independently-maintained
+-- copies (router.lua and threat_analyzer.lua) that disagreed on whether to
+-- strip the query string before matching -- router.lua's stripped it,
+-- threat_analyzer.lua's (now threat_rules.lua's) didn't, so a request like
+-- "style.css?v=123" was classified as static by one and not the other.
+-- This module's version (query-string-stripping, the more correct
+-- behaviour) is now the single implementation router.lua uses; threat_rules
+-- still has its own copy since the two modules must stay independently
+-- requireable, but see threat_rules.lua's is_static_asset docstring, which
+-- now cross-references this one.
+
+local _M = {}
+
+-- ---------------------------------------------------------------------------
+-- escape_pattern(s)
+--
+-- Escapes Lua pattern magic characters so a plain literal string (e.g. a
+-- plugin slug) can be safely concatenated into a string.find() pattern.
+-- Without this, hyphens in slugs like "woocommerce-payments" are
+-- interpreted as Lua's lazy-repetition magic character instead of a
+-- literal "-", silently breaking the match -- this was a real, confirmed
+-- bug in is_vulnerable_plugin_access() below (and in the equivalent
+-- function this was extracted from), where every plugin in the
+-- vulnerable_plugins list except "cwmp" never actually matched. See
+-- vulnerability_rules.lua's copy of this same fix/rationale.
+-- ---------------------------------------------------------------------------
+local function escape_pattern(s)
+    return (s:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1"))
+end
+_M.escape_pattern = escape_pattern
+
+-- ---------------------------------------------------------------------------
+-- is_static_asset(uri, static_asset_patterns)
+--
+-- @param uri                     string|nil
+-- @param static_asset_patterns   table|nil  List of Lua patterns (from
+--                                            _G.config.threat.static_asset_patterns).
+-- @return boolean
+-- ---------------------------------------------------------------------------
+function _M.is_static_asset(uri, static_asset_patterns)
+    if not uri then
+        return false
+    end
+
+    local uri_lower = string.lower(uri)
+
+    -- Strip query string for pattern matching (e.g. "style.css?v=123" should
+    -- still match "%.css$").
+    local uri_path = uri_lower:match("^([^?]+)") or uri_lower
+
+    if static_asset_patterns then
+        for _, pattern in ipairs(static_asset_patterns) do
+            if string.find(uri_path, pattern) then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+-- ---------------------------------------------------------------------------
+-- is_vulnerable_plugin_access(uri, vulnerable_plugins, static_asset_patterns)
+--
+-- @param uri                     string|nil
+-- @param vulnerable_plugins      table  List of plugin slugs (from
+--                                       _G.config.vulnerability.plugins).
+-- @param static_asset_patterns   table|nil
+-- @return boolean
+-- ---------------------------------------------------------------------------
+function _M.is_vulnerable_plugin_access(uri, vulnerable_plugins, static_asset_patterns)
+    if not uri then
+        return false
+    end
+
+    -- Don't flag static assets from plugins as vulnerable.
+    if _M.is_static_asset(uri, static_asset_patterns) then
+        return false
+    end
+
+    local uri_lower = string.lower(uri)
+
+    for _, plugin in ipairs(vulnerable_plugins or {}) do
+        if string.find(uri_lower, "/wp%-content/plugins/" .. escape_pattern(plugin) .. "/") then
+            return true
+        end
+    end
+
+    return false
+end
+
+-- ---------------------------------------------------------------------------
+-- is_admin_access(uri)
+--
+-- @param uri  string|nil
+-- @return boolean
+-- ---------------------------------------------------------------------------
+function _M.is_admin_access(uri)
+    if not uri then
+        return false
+    end
+
+    local uri_lower = string.lower(uri)
+
+    local admin_patterns = {
+        "/wp%-admin/",
+        "/wp%-login%.php",
+        "/admin/",
+        "/administrator/",
+        "/wp%-config%.php"
+    }
+
+    for _, pattern in ipairs(admin_patterns) do
+        if string.find(uri_lower, pattern) then
+            return true
+        end
+    end
+
+    return false
+end
+
+-- ---------------------------------------------------------------------------
+-- is_rapid_automation(session_data, threat_result, current_time)
+--
+-- @param session_data  table|nil
+-- @param threat_result table|nil
+-- @param current_time  number  e.g. ngx.time()
+-- @return boolean
+-- ---------------------------------------------------------------------------
+function _M.is_rapid_automation(session_data, threat_result, current_time)
+    if not session_data then
+        return false
+    end
+
+    -- Check request frequency.
+    if session_data.created_at and session_data.request_count then
+        local session_duration = current_time - session_data.created_at
+        if session_duration > 0 then
+            local requests_per_second = session_data.request_count / session_duration
+            if requests_per_second > 20 then
+                return true
+            end
+        end
+    end
+
+    -- Check for automation tool signatures.
+    if threat_result and threat_result.details then
+        for _, detail in ipairs(threat_result.details) do
+            if string.find(detail, "automation_detected") then
+                return true
+            end
+        end
+    end
+
+    -- Check timing patterns.
+    if session_data.last_activity then
+        local time_diff = current_time - session_data.last_activity
+        if time_diff < 1 and session_data.request_count and session_data.request_count > 50 then
+            return true
+        end
+    end
+
+    return false
+end
+
+-- ---------------------------------------------------------------------------
+-- is_suspicious_upload(method, uri, content_type, args)
+--
+-- @param method        string|nil  e.g. ngx.var.request_method
+-- @param uri           string|nil  e.g. ngx.var.request_uri
+-- @param content_type  string|nil  e.g. ngx.var.content_type
+-- @param args          string|nil  e.g. ngx.var.args
+-- @return boolean
+-- ---------------------------------------------------------------------------
+function _M.is_suspicious_upload(method, uri, content_type, args)
+    if method ~= "POST" then
+        return false
+    end
+
+    uri = uri or ""
+    content_type = content_type or ""
+    args = args or ""
+
+    if string.find(string.lower(uri), "upload") or
+       string.find(string.lower(content_type), "multipart/form%-data") then
+
+        local suspicious_upload_patterns = {
+            "%.php", "%.jsp", "%.asp", "%.exe", "%.sh", "%.bat", "%.cmd"
+        }
+
+        for _, pattern in ipairs(suspicious_upload_patterns) do
+            if string.find(string.lower(args), pattern) then
+                return true
+            end
+        end
+
+        if string.find(args, "dnd_codedropz_upload") or
+           string.find(args, "mwb_wgm_preview_mail") or
+           string.find(args, "pc_added_uploaded_image") then
+            return true
+        end
+    end
+
+    return false
+end
+
+-- ---------------------------------------------------------------------------
+-- check_geographic_anomalies(session_data, current_ip)
+--
+-- @param session_data  table|nil
+-- @param current_ip    string
+-- @return table  { anomaly_detected, anomaly_type, score_increase }
+-- ---------------------------------------------------------------------------
+function _M.check_geographic_anomalies(session_data, current_ip)
+    if session_data and session_data.ip_address and session_data.ip_address ~= current_ip then
+        return {
+            anomaly_detected = true,
+            anomaly_type = "ip_change",
+            score_increase = 15
+        }
+    end
+
+    return {
+        anomaly_detected = false,
+        score_increase = 0
+    }
+end
+
+-- ---------------------------------------------------------------------------
+-- analyze_behavior_patterns(session_data, current_time, request_uri)
+--
+-- @param session_data  table|nil
+-- @param current_time  number  e.g. ngx.time()
+-- @param request_uri   string|nil  e.g. ngx.var.request_uri
+-- @return table  { score, patterns[] }
+-- ---------------------------------------------------------------------------
+function _M.analyze_behavior_patterns(session_data, current_time, request_uri)
+    if not session_data then
+        return { score = 0, patterns = {} }
+    end
+
+    local behavior_score = 0
+    local patterns = {}
+
+    if session_data.request_count then
+        if session_data.created_at then
+            local session_age = current_time - session_data.created_at
+            if session_age > 0 and session_data.request_count / session_age > 3 then
+                behavior_score = behavior_score + 20
+                table.insert(patterns, "high_request_frequency")
+            end
+        end
+
+        if session_data.request_count == 1 and _M.is_admin_access(request_uri) then
+            behavior_score = behavior_score + 15
+            table.insert(patterns, "direct_admin_access")
+        end
+    end
+
+    if session_data.suspicious_activities then
+        local recent_activities = 0
+
+        for _, activity in ipairs(session_data.suspicious_activities) do
+            if current_time - activity.timestamp < 300 then
+                recent_activities = recent_activities + 1
+            end
+        end
+
+        if recent_activities >= 3 then
+            behavior_score = behavior_score + 25
+            table.insert(patterns, "multiple_recent_suspicious_activities")
+        end
+    end
+
+    return {
+        score = behavior_score,
+        patterns = patterns
+    }
+end
+
+return _M

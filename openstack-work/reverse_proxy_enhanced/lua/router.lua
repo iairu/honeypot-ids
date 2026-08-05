@@ -48,6 +48,7 @@
 --   _G.utils       – utility helpers (init.lua)
 
 local cjson = require "cjson"
+local router_rules = require "router_rules"
 
 local _M = {}
 
@@ -454,160 +455,39 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
     return routing_decision
 end
 
+-- Thin delegating wrappers over router_rules.lua's pure predicates -- see
+-- that file's header comment for why decide_route() itself stays here as
+-- the adapter rather than being made pure too.
+
 -- Check if request is for static assets (CSS, JS, images, fonts)
 function _M.is_static_asset(uri)
-    if not uri then
-        return false
+    local is_static = router_rules.is_static_asset(uri, _G.config.threat.static_asset_patterns)
+    if is_static then
+        ngx.log(ngx.INFO, "Static asset matched: ", uri)
     end
-    
-    local uri_lower = string.lower(uri)
-    
-    -- Strip query string for pattern matching
-    local uri_path = uri_lower:match("^([^?]+)")
-    if not uri_path then
-        uri_path = uri_lower
-    end
-    
-    -- Check against static asset patterns
-    if _G.config.threat.static_asset_patterns then
-        for _, pattern in ipairs(_G.config.threat.static_asset_patterns) do
-            if string.find(uri_path, pattern) then
-                ngx.log(ngx.INFO, "Static asset matched: ", uri, " (pattern: ", pattern, ")")
-                return true
-            end
-        end
-    end
-    
-    return false
+    return is_static
 end
 
 -- Check if the request is accessing vulnerable plugins
 function _M.is_vulnerable_plugin_access(uri)
-    if not uri then
-        return false
-    end
-    
-    local uri_lower = string.lower(uri)
-    
-    -- Don't flag static assets from plugins as vulnerable
-    if _M.is_static_asset(uri) then
-        return false
-    end
-    
-    for _, plugin in ipairs(_G.config.vulnerability.plugins) do
-        if string.find(uri_lower, "/wp%-content/plugins/" .. plugin .. "/") then
-            return true
-        end
-    end
-    
-    return false
+    return router_rules.is_vulnerable_plugin_access(
+        uri, _G.config.vulnerability.plugins, _G.config.threat.static_asset_patterns)
 end
 
 -- Check if the request is accessing admin areas
 function _M.is_admin_access(uri)
-    if not uri then
-        return false
-    end
-    
-    local uri_lower = string.lower(uri)
-    
-    local admin_patterns = {
-        "/wp%-admin/",
-        "/wp%-login%.php",
-        "/admin/",
-        "/administrator/",
-        "/wp%-config%.php"
-    }
-    
-    for _, pattern in ipairs(admin_patterns) do
-        if string.find(uri_lower, pattern) then
-            return true
-        end
-    end
-    
-    return false
+    return router_rules.is_admin_access(uri)
 end
 
 -- Check for rapid automation patterns
 function _M.is_rapid_automation(session_data, threat_result)
-    if not session_data then
-        return false
-    end
-    
-    local current_time = ngx.time()
-    
-    -- Check request frequency (increased threshold from 5 to 20 to avoid false positives)
-    if session_data.created_at and session_data.request_count then
-        local session_duration = current_time - session_data.created_at
-        if session_duration > 0 then
-            local requests_per_second = session_data.request_count / session_duration
-            if requests_per_second > 20 then
-                return true
-            end
-        end
-    end
-    
-    -- Check for automation tool signatures
-    if threat_result.details then
-        for _, detail in ipairs(threat_result.details) do
-            if string.find(detail, "automation_detected") then
-                return true
-            end
-        end
-    end
-    
-    -- Check timing patterns (increased threshold from 10 to 50 to avoid false positives)
-    if session_data.last_activity then
-        local time_diff = current_time - session_data.last_activity
-        if time_diff < 1 and session_data.request_count and session_data.request_count > 50 then
-            return true
-        end
-    end
-    
-    return false
+    return router_rules.is_rapid_automation(session_data, threat_result, ngx.time())
 end
 
 -- Check for suspicious file uploads
 function _M.is_suspicious_upload()
-    local method = ngx.var.request_method
-    if method ~= "POST" then
-        return false
-    end
-    
-    local uri = ngx.var.request_uri or ""
-    local content_type = ngx.var.content_type or ""
-    
-    -- Check for file upload endpoints
-    if string.find(string.lower(uri), "upload") or 
-       string.find(string.lower(content_type), "multipart/form%-data") then
-        
-        -- Check for suspicious file upload parameters
-        local args = ngx.var.args or ""
-        local suspicious_upload_patterns = {
-            "%.php",
-            "%.jsp",
-            "%.asp",
-            "%.exe",
-            "%.sh",
-            "%.bat",
-            "%.cmd"
-        }
-        
-        for _, pattern in ipairs(suspicious_upload_patterns) do
-            if string.find(string.lower(args), pattern) then
-                return true
-            end
-        end
-        
-        -- Check for known vulnerable upload actions
-        if string.find(args, "dnd_codedropz_upload") or
-           string.find(args, "mwb_wgm_preview_mail") or
-           string.find(args, "pc_added_uploaded_image") then
-            return true
-        end
-    end
-    
-    return false
+    return router_rules.is_suspicious_upload(
+        ngx.var.request_method, ngx.var.request_uri, ngx.var.content_type, ngx.var.args)
 end
 
 -- Apply routing decision and set appropriate variables
@@ -647,70 +527,12 @@ end
 
 -- Check for geographic anomalies (if GeoIP data is available)
 function _M.check_geographic_anomalies(session_data, current_ip)
-    -- This would require GeoIP integration
-    -- For now, just check for rapid IP changes
-    if session_data and session_data.ip_address and session_data.ip_address ~= current_ip then
-        return {
-            anomaly_detected = true,
-            anomaly_type = "ip_change",
-            score_increase = 15
-        }
-    end
-    
-    return {
-        anomaly_detected = false,
-        score_increase = 0
-    }
+    return router_rules.check_geographic_anomalies(session_data, current_ip)
 end
 
 -- Behavioral analysis for routing decisions
 function _M.analyze_behavior_patterns(session_data)
-    if not session_data then
-        return { score = 0, patterns = {} }
-    end
-    
-    local behavior_score = 0
-    local patterns = {}
-    
-    -- Analyze request patterns
-    if session_data.request_count then
-        -- Too many requests in short time
-        if session_data.created_at then
-            local session_age = ngx.time() - session_data.created_at
-            if session_age > 0 and session_data.request_count / session_age > 3 then
-                behavior_score = behavior_score + 20
-                table.insert(patterns, "high_request_frequency")
-            end
-        end
-        
-        -- Single request to admin area (potential targeted attack)
-        if session_data.request_count == 1 and _M.is_admin_access(ngx.var.request_uri) then
-            behavior_score = behavior_score + 15
-            table.insert(patterns, "direct_admin_access")
-        end
-    end
-    
-    -- Analyze navigation patterns
-    if session_data.suspicious_activities then
-        local recent_activities = 0
-        local current_time = ngx.time()
-        
-        for _, activity in ipairs(session_data.suspicious_activities) do
-            if current_time - activity.timestamp < 300 then -- Last 5 minutes
-                recent_activities = recent_activities + 1
-            end
-        end
-        
-        if recent_activities >= 3 then
-            behavior_score = behavior_score + 25
-            table.insert(patterns, "multiple_recent_suspicious_activities")
-        end
-    end
-    
-    return {
-        score = behavior_score,
-        patterns = patterns
-    }
+    return router_rules.analyze_behavior_patterns(session_data, ngx.time(), ngx.var.request_uri)
 end
 
 -- ---------------------------------------------------------------------------

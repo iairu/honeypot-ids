@@ -539,7 +539,17 @@ function _M.should_block_admin_access(ip)
         return false
     end
     
-    local threat_data = red:get('threat_ips') or '{}'
+    -- red:get() returns the ngx.null userdata sentinel for a missing key,
+    -- not Lua nil -- "or '{}'" alone doesn't catch that since ngx.null is
+    -- truthy, so cjson.decode() would crash with "string expected, got
+    -- userdata" on a key that's never been set (e.g. right after a fresh
+    -- deploy or a Redis flush). See threat_analyzer.lua/router.lua etc. for
+    -- the established `x and x ~= ngx.null` idiom used elsewhere in this
+    -- codebase; fixed here to match.
+    local threat_data = red:get('threat_ips')
+    if not threat_data or threat_data == ngx.null then
+        threat_data = '{}'
+    end
     local threats = cjson.decode(threat_data)
     _G.redis_pool.close_connection(red)
     

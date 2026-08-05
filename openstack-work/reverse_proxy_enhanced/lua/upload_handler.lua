@@ -4,6 +4,7 @@
 local cjson = require "cjson"
 local resty_sha1 = require "resty.sha1"
 local str = require "resty.string"
+local upload_rules = require "upload_rules"
 
 local _M = {}
 
@@ -84,343 +85,32 @@ function _M.analyze_upload(headers, args)
     return analysis.is_suspicious
 end
 
--- Check if request is a file upload
+-- Thin delegating wrappers over upload_rules.lua's pure functions -- see
+-- that file's header comment. analyze_upload() above is the adapter that
+-- orchestrates these plus the ngx.log/Redis I/O.
+
 function _M.is_file_upload(content_type, args)
-    -- Check content type
-    if string.find(string.lower(content_type), "multipart/form%-data") then
-        return true
-    end
-    
-    -- Check for upload-related parameters
-    local args_lower = string.lower(args or "")
-    local upload_indicators = {
-        "upload", "file", "attachment", "document", "image", "media"
-    }
-    
-    for _, indicator in ipairs(upload_indicators) do
-        if string.find(args_lower, indicator) then
-            return true
-        end
-    end
-    
-    return false
+    return upload_rules.is_file_upload(content_type, args)
 end
 
--- Analyze content type header for suspicious patterns
 function _M.analyze_content_type(content_type)
-    local analysis = {
-        suspicious = false,
-        score = 0,
-        reason = "clean"
-    }
-    
-    if not content_type or content_type == "" then
-        analysis.suspicious = true
-        analysis.score = 10
-        analysis.reason = "missing_content_type"
-        return analysis
-    end
-    
-    local ct_lower = string.lower(content_type)
-    
-    -- Check for content type spoofing
-    local suspicious_combinations = {
-        { pattern = "image/.*php", score = 40, reason = "php_disguised_as_image" },
-        { pattern = "text/.*executable", score = 35, reason = "executable_disguised_as_text" },
-        { pattern = "application/.*script", score = 30, reason = "script_content_type" },
-        { pattern = "image/.*script", score = 35, reason = "script_disguised_as_image" }
-    }
-    
-    for _, check in ipairs(suspicious_combinations) do
-        if string.match(ct_lower, check.pattern) then
-            analysis.suspicious = true
-            analysis.score = check.score
-            analysis.reason = check.reason
-            return analysis
-        end
-    end
-    
-    -- Check for unusual content types for web uploads
-    local unusual_types = {
-        "application/x%-executable",
-        "application/x%-msdos%-program",
-        "application/x%-msdownload",
-        "application/x%-winexe",
-        "application/x%-java%-archive"
-    }
-    
-    for _, type_pattern in ipairs(unusual_types) do
-        if string.find(ct_lower, type_pattern) then
-            analysis.suspicious = true
-            analysis.score = 25
-            analysis.reason = "unusual_executable_type"
-            break
-        end
-    end
-    
-    return analysis
+    return upload_rules.analyze_content_type(content_type)
 end
 
--- Analyze upload parameters for malicious patterns
 function _M.analyze_upload_parameters(args)
-    local analysis = {
-        score = 0,
-        risk_factors = {}
-    }
-    
-    if not args or args == "" then
-        return analysis
-    end
-    
-    local args_lower = string.lower(args)
-    
-    -- Check for suspicious file extensions in parameters
-    local dangerous_extensions = {
-        { ext = "%.php", score = 40, factor = "php_extension" },
-        { ext = "%.asp", score = 35, factor = "asp_extension" },
-        { ext = "%.jsp", score = 35, factor = "jsp_extension" },
-        { ext = "%.exe", score = 45, factor = "executable_extension" },
-        { ext = "%.bat", score = 40, factor = "batch_file" },
-        { ext = "%.sh", score = 40, factor = "shell_script" },
-        { ext = "%.py", score = 25, factor = "python_script" },
-        { ext = "%.pl", score = 25, factor = "perl_script" },
-        { ext = "%.rb", score = 25, factor = "ruby_script" }
-    }
-    
-    for _, ext_check in ipairs(dangerous_extensions) do
-        if string.find(args_lower, ext_check.ext) then
-            analysis.score = analysis.score + ext_check.score
-            table.insert(analysis.risk_factors, ext_check.factor)
-        end
-    end
-    
-    -- Check for upload bypass techniques in parameters
-    local bypass_patterns = {
-        { pattern = "%.php%.", score = 35, factor = "double_extension_bypass" },
-        { pattern = "%.php%%00", score = 40, factor = "null_byte_injection" },
-        { pattern = "%.php%%20", score = 30, factor = "space_bypass" },
-        { pattern = "%.phtml", score = 35, factor = "phtml_variant" },
-        { pattern = "%.php3", score = 35, factor = "php3_variant" },
-        { pattern = "%.php4", score = 35, factor = "php4_variant" },
-        { pattern = "%.php5", score = 35, factor = "php5_variant" }
-    }
-    
-    for _, bypass in ipairs(bypass_patterns) do
-        if string.find(args_lower, bypass.pattern) then
-            analysis.score = analysis.score + bypass.score
-            table.insert(analysis.risk_factors, bypass.factor)
-        end
-    end
-    
-    -- Check for directory traversal in file paths
-    local traversal_patterns = {
-        "%.%.%/", "%2e%2e%2f", "%.%./", "%2e%2e/"
-    }
-    
-    for _, pattern in ipairs(traversal_patterns) do
-        if string.find(args_lower, pattern) then
-            analysis.score = analysis.score + 30
-            table.insert(analysis.risk_factors, "directory_traversal")
-            break
-        end
-    end
-    
-    -- Check for suspicious upload destinations
-    local suspicious_destinations = {
-        { pattern = "/wp%-admin/", score = 20, factor = "admin_directory_upload" },
-        { pattern = "/wp%-content/themes/", score = 25, factor = "theme_directory_upload" },
-        { pattern = "/wp%-includes/", score = 30, factor = "includes_directory_upload" },
-        { pattern = "/cgi%-bin/", score = 35, factor = "cgi_directory_upload" }
-    }
-    
-    for _, dest in ipairs(suspicious_destinations) do
-        if string.find(args_lower, dest.pattern) then
-            analysis.score = analysis.score + dest.score
-            table.insert(analysis.risk_factors, dest.factor)
-        end
-    end
-    
-    return analysis
+    return upload_rules.analyze_upload_parameters(args)
 end
 
--- Analyze upload endpoint for known vulnerabilities
 function _M.analyze_upload_endpoint(uri)
-    local analysis = {
-        score = 0,
-        risk_factors = {}
-    }
-    
-    if not uri then
-        return analysis
-    end
-    
-    local uri_lower = string.lower(uri)
-    
-    -- Known vulnerable upload endpoints
-    local vulnerable_endpoints = {
-        -- CVE-2025-4403: Drag and Drop file upload
-        { pattern = "dnd_codedropz_upload", score = 50, factor = "cve_2025_4403_endpoint" },
-        
-        -- CVE-2025-47577 & CVE-2024-8425: Gift Voucher upload
-        { pattern = "mwb_wgm_preview_mail", score = 50, factor = "cve_2025_47577_endpoint" },
-        
-        -- CVE-2025-10142: PagSeguro file upload
-        { pattern = "pc_added_uploaded_image", score = 45, factor = "cve_2025_10142_endpoint" },
-        
-        -- Generic WordPress admin-ajax vulnerabilities
-        { pattern = "wp%-admin/admin%-ajax%.php", score = 20, factor = "admin_ajax_upload" },
-        
-        -- Theme/Plugin file editors
-        { pattern = "theme%-editor%.php", score = 40, factor = "theme_editor_access" },
-        { pattern = "plugin%-editor%.php", score = 40, factor = "plugin_editor_access" },
-        
-        -- File managers
-        { pattern = "file%-manager", score = 30, factor = "file_manager_access" },
-        { pattern = "filemanager", score = 30, factor = "file_manager_variant" },
-        
-        -- Backup/restore endpoints
-        { pattern = "backup", score = 25, factor = "backup_endpoint" },
-        { pattern = "restore", score = 25, factor = "restore_endpoint" },
-        
-        -- Media upload endpoints
-        { pattern = "media%-upload", score = 15, factor = "media_upload_endpoint" },
-        { pattern = "upload%.php", score = 25, factor = "generic_upload_script" }
-    }
-    
-    for _, endpoint in ipairs(vulnerable_endpoints) do
-        if string.find(uri_lower, endpoint.pattern) then
-            analysis.score = analysis.score + endpoint.score
-            table.insert(analysis.risk_factors, endpoint.factor)
-        end
-    end
-    
-    return analysis
+    return upload_rules.analyze_upload_endpoint(uri)
 end
 
--- Analyze user agent for upload automation tools
 function _M.analyze_upload_user_agent(user_agent)
-    local analysis = {
-        score = 0,
-        risk_factors = {}
-    }
-    
-    if not user_agent or user_agent == "" then
-        analysis.score = 15
-        table.insert(analysis.risk_factors, "missing_user_agent")
-        return analysis
-    end
-    
-    local ua_lower = string.lower(user_agent)
-    
-    -- Known upload automation tools
-    local automation_tools = {
-        { pattern = "curl", score = 20, factor = "curl_upload" },
-        { pattern = "wget", score = 20, factor = "wget_upload" },
-        { pattern = "python%-requests", score = 25, factor = "python_requests" },
-        { pattern = "postman", score = 15, factor = "postman_client" },
-        { pattern = "burpsuite", score = 35, factor = "burp_suite" },
-        { pattern = "sqlmap", score = 40, factor = "sqlmap_tool" },
-        { pattern = "metasploit", score = 45, factor = "metasploit_framework" },
-        { pattern = "exploit", score = 40, factor = "exploit_tool" },
-        { pattern = "payload", score = 35, factor = "payload_delivery" },
-        { pattern = "scanner", score = 30, factor = "vulnerability_scanner" }
-    }
-    
-    for _, tool in ipairs(automation_tools) do
-        if string.find(ua_lower, tool.pattern) then
-            analysis.score = analysis.score + tool.score
-            table.insert(analysis.risk_factors, tool.factor)
-        end
-    end
-    
-    -- Check for suspicious user agent patterns
-    if string.len(user_agent) < 10 then
-        analysis.score = analysis.score + 20
-        table.insert(analysis.risk_factors, "suspiciously_short_ua")
-    end
-    
-    if not string.find(ua_lower, "mozilla") and not string.find(ua_lower, "webkit") and
-       not string.find(ua_lower, "chrome") and not string.find(ua_lower, "firefox") and
-       not string.find(ua_lower, "safari") then
-        analysis.score = analysis.score + 15
-        table.insert(analysis.risk_factors, "non_browser_ua")
-    end
-    
-    return analysis
+    return upload_rules.analyze_upload_user_agent(user_agent)
 end
 
--- Analyze upload bypass techniques
 function _M.analyze_upload_bypass_techniques(content_type, args)
-    local analysis = {
-        score = 0,
-        risk_factors = {}
-    }
-    
-    local ct_lower = string.lower(content_type or "")
-    local args_lower = string.lower(args or "")
-    
-    -- Content-Type bypass techniques
-    if string.find(ct_lower, "multipart/form%-data") then
-        -- Check for boundary manipulation
-        if not string.find(ct_lower, "boundary=") then
-            analysis.score = analysis.score + 20
-            table.insert(analysis.risk_factors, "missing_boundary")
-        end
-        
-        -- Check for unusual boundary values
-        local boundary_match = string.match(ct_lower, "boundary=([^;%s]+)")
-        if boundary_match then
-            if string.len(boundary_match) > 50 then
-                analysis.score = analysis.score + 15
-                table.insert(analysis.risk_factors, "unusual_boundary_length")
-            end
-            
-            if string.find(boundary_match, "%.%.") or string.find(boundary_match, "%%00") then
-                analysis.score = analysis.score + 25
-                table.insert(analysis.risk_factors, "malicious_boundary_pattern")
-            end
-        end
-    end
-    
-    -- Parameter manipulation techniques
-    local bypass_techniques = {
-        -- File extension bypasses
-        { pattern = "%.php%.", score = 35, factor = "double_extension" },
-        { pattern = "%.php%%00", score = 40, factor = "null_byte_injection" },
-        { pattern = "%.php%%20", score = 30, factor = "trailing_space" },
-        { pattern = "%.php%s+", score = 25, factor = "trailing_whitespace" },
-        { pattern = "%.pHp", score = 20, factor = "case_variation" },
-        { pattern = "%.PhP", score = 20, factor = "case_variation" },
-        
-        -- MIME type bypasses
-        { pattern = "image/gif.*php", score = 40, factor = "gif_php_polyglot" },
-        { pattern = "image/jpeg.*php", score = 40, factor = "jpeg_php_polyglot" },
-        { pattern = "image/png.*php", score = 40, factor = "png_php_polyglot" },
-        
-        -- Path manipulation
-        { pattern = "%.%./", score = 30, factor = "path_traversal" },
-        { pattern = "%%2e%%2e/", score = 35, factor = "encoded_path_traversal" },
-        { pattern = "/%.%./", score = 25, factor = "absolute_path_traversal" },
-        
-        -- Special characters
-        { pattern = "%%00", score = 30, factor = "null_byte" },
-        { pattern = "%%0a", score = 20, factor = "line_feed_injection" },
-        { pattern = "%%0d", score = 20, factor = "carriage_return_injection" },
-        
-        -- Upload parameter manipulation
-        { pattern = "filename.*%.php", score = 25, factor = "php_filename" },
-        { pattern = "name.*%.php", score = 25, factor = "php_field_name" },
-        { pattern = "type.*script", score = 30, factor = "script_type_override" }
-    }
-    
-    for _, technique in ipairs(bypass_techniques) do
-        if string.find(args_lower, technique.pattern) or string.find(ct_lower, technique.pattern) then
-            analysis.score = analysis.score + technique.score
-            table.insert(analysis.risk_factors, technique.factor)
-        end
-    end
-    
-    return analysis
+    return upload_rules.analyze_upload_bypass_techniques(content_type, args)
 end
 
 -- Log suspicious upload attempts
@@ -463,7 +153,16 @@ function _M.update_ip_threat_for_upload(ip, upload_threat_score)
         return
     end
     
-    local threat_data = red:get('threat_ips') or '{}'
+    -- red:get() returns the ngx.null userdata sentinel for a missing key,
+    -- not Lua nil -- "or '{}'" doesn't catch that (ngx.null is truthy), so
+    -- cjson.decode() crashed with "string expected, got userdata" on a
+    -- fresh/flushed Redis. Confirmed live: this crash aborted the request
+    -- (500) right after analyze_upload() had already correctly detected a
+    -- malicious upload, so the honeypot reroute never happened either.
+    local threat_data = red:get('threat_ips')
+    if not threat_data or threat_data == ngx.null then
+        threat_data = '{}'
+    end
     local threats = cjson.decode(threat_data)
     
     if not threats[ip] then
@@ -540,52 +239,7 @@ end
 
 -- Check if upload should be blocked
 function _M.should_block_upload(analysis)
-    -- Block uploads with very high threat scores
-    if analysis.threat_score >= 70 then
-        return true, "high_threat_score"
-    end
-    
-    -- Block uploads with multiple high-risk factors
-    local critical_factors = {
-        "php_extension", "executable_extension", "cve_2025_4403_endpoint",
-        "cve_2025_47577_endpoint", "metasploit_framework", "exploit_tool"
-    }
-    
-    local critical_count = 0
-    for _, factor in ipairs(analysis.risk_factors) do
-        for _, critical in ipairs(critical_factors) do
-            if factor == critical then
-                critical_count = critical_count + 1
-                break
-            end
-        end
-    end
-    
-    if critical_count >= 2 then
-        return true, "multiple_critical_factors"
-    end
-    
-    -- Block based on specific dangerous combinations
-    local has_executable = false
-    local has_bypass = false
-    local has_cve_endpoint = false
-    
-    for _, factor in ipairs(analysis.risk_factors) do
-        if string.find(factor, "extension") and 
-           (string.find(factor, "php") or string.find(factor, "executable")) then
-            has_executable = true
-        elseif string.find(factor, "bypass") or string.find(factor, "injection") then
-            has_bypass = true
-        elseif string.find(factor, "cve_") then
-            has_cve_endpoint = true
-        end
-    end
-    
-    if (has_executable and has_bypass) or (has_executable and has_cve_endpoint) then
-        return true, "dangerous_combination"
-    end
-    
-    return false, "allowed"
+    return upload_rules.should_block_upload(analysis)
 end
 
 return _M
