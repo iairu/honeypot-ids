@@ -45,8 +45,35 @@ if ( ! defined( 'ABSPATH' ) ) {
 //      * DDoS amplification via pingback.extensions.getPingbacks
 //      * Remote code execution chains (CVE-2019-17671, etc.)
 //    Disabling XML-RPC and returning 403 at the WordPress layer is a belt-and-
-//    suspenders measure on top of any Nginx-level block.
+//    suspenders measure on top of the Nginx-level block (see nginx.conf's
+//    access_by_lua_block, "XML-RPC block") -- the primary, externally-facing
+//    defense; this is what fires for anything that ever reaches PHP-FPM
+//    regardless of how.
+//
+//    Unconditional, dispatch-independent check: WordPress's own
+//    'xmlrpc_call' action (added below) turned out NOT to fire for the
+//    base IXR_Server introspection methods (system.listMethods,
+//    system.multicall, system.getCapabilities) -- confirmed live by
+//    POSTing system.listMethods directly at this container (bypassing
+//    nginx) and getting a normal, fully-formed methodResponse back
+//    instead of the 403 this file's own comments claimed was guaranteed.
+//    Those introspection methods can't leak anything on their own (every
+//    WordPress-specific method they could enumerate via system.multicall
+//    is confirmed gone -- xmlrpc_methods below correctly empties that
+//    list, verified via a direct wp.getUsersBlogs call returning
+//    "method does not exist"), but "XML-RPC completely disabled" should
+//    mean the endpoint doesn't respond at all, not "responds to
+//    everything except the specific methods we individually removed".
+//    This check runs unconditionally, before WordPress's hook system is
+//    even fully bootstrapped, so it doesn't depend on which internal
+//    class actually ends up dispatching a given method name.
 // ============================================================================
+
+if ( isset( $_SERVER['SCRIPT_NAME'] ) && substr( $_SERVER['SCRIPT_NAME'], -11 ) === '/xmlrpc.php' ) {
+    http_response_code( 403 );
+    header( 'Content-Type: text/plain; charset=UTF-8' );
+    exit( 'XML-RPC services are disabled on this server.' );
+}
 
 /**
  * Disable XML-RPC transport entirely.
@@ -220,6 +247,28 @@ add_action( 'init', function (): void {
     // WooCommerce hooks its generator into 'get_the_generator_html' and also
     // directly onto 'wp_head' with 'wc_generator_tag'.
     remove_action( 'wp_head', 'wc_generator_tag' );
+} );
+
+/**
+ * Suppress Elementor's own generator meta tag.
+ *
+ * Added this session, alongside the WordPress/WooCommerce equivalents
+ * above -- Elementor (installed this session, see README §3.4) hooks its
+ * own generator tag directly onto 'wp_head' via a bound object method
+ * (elementor/modules/generator-tag/module.php), which can't be removed
+ * with remove_action() the way the plain-function WordPress/WooCommerce
+ * hooks above can (remove_action needs the exact same callable, and
+ * there's no handle to that plugin-internal object instance from here).
+ * Elementor's own render_generator_tag() checks
+ * get_option('elementor_meta_generator_tag') === '1' and returns early
+ * without printing anything if so -- this is Elementor's own first-class
+ * "Generator Tag: Disable" setting (Settings > Advanced in wp-admin),
+ * used here instead of fighting the hook system.
+ */
+add_action( 'init', function (): void {
+    if ( get_option( 'elementor_meta_generator_tag' ) !== '1' ) {
+        update_option( 'elementor_meta_generator_tag', '1' );
+    }
 } );
 
 /**
