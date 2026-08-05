@@ -1,6 +1,6 @@
 # ELK SIEM Integration Guide
 
-This document describes how to integrate the Honeypot IDS System with an external ELK (Elasticsearch, Logstash, Kibana) SIEM for centralized security monitoring and analysis.
+This document describes how to integrate the Honeypot IDS System with an external ELK (Elasticsearch, Vector, Kibana) SIEM for centralized security monitoring and analysis.
 
 ## Architecture Overview
 
@@ -9,7 +9,7 @@ This document describes how to integrate the Honeypot IDS System with an externa
 │                    Honeypot IDS System                       │
 │                                                              │
 │  ┌──────────────┐         ┌─────────────┐                  │
-│  │  Suricata    │────────▶│  Filebeat   │────┐             │
+│  │  Suricata    │────────▶│   Vector    │────┐             │
 │  │  (EVE JSON)  │         │             │    │             │
 │  └──────────────┘         └─────────────┘    │             │
 │                                               │             │
@@ -49,7 +49,7 @@ This document describes how to integrate the Honeypot IDS System with an externa
 ### 1. Suricata IDS Logs
 - **Format**: EVE JSON (Suricata native format)
 - **Location**: `/var/log/suricata/eve.json`
-- **Shipped by**: Filebeat
+- **Shipped by**: Vector
 - **Index**: `honeypot-ids-YYYY.MM.DD`
 - **Contents**:
   - IDS Alerts
@@ -63,7 +63,7 @@ This document describes how to integrate the Honeypot IDS System with an externa
 ### 2. Nginx Access Logs
 - **Format**: Extended log format
 - **Location**: `/var/log/nginx/access.log`
-- **Shipped by**: Filebeat
+- **Shipped by**: Vector
 - **Index**: `honeypot-nginx-YYYY.MM.DD`
 - **Contents**:
   - Request details
@@ -74,7 +74,7 @@ This document describes how to integrate the Honeypot IDS System with an externa
 ### 3. Nginx Security Logs
 - **Format**: Custom security format
 - **Location**: `/var/log/nginx/security.log`
-- **Shipped by**: Filebeat
+- **Shipped by**: Vector
 - **Index**: `honeypot-nginx-YYYY.MM.DD`
 - **Contents**:
   - Session IDs
@@ -101,7 +101,7 @@ This document describes how to integrate the Honeypot IDS System with an externa
 1. External ELK Stack (v8.x) running with:
    - Elasticsearch
    - Kibana
-   - (Optional) Logstash
+   - (Optional) Vector
 
 2. Network connectivity from honeypot to ELK server
 
@@ -149,11 +149,11 @@ Copy your Elasticsearch CA certificate to the honeypot system:
 cat /etc/elasticsearch/certs/http_ca.crt
 
 # On honeypot system
-cat > filebeat/certs/ca.crt <<'EOF'
+cat > vector/certs/ca.crt <<'EOF'
 [Paste certificate content here]
 EOF
 
-chmod 644 filebeat/certs/ca.crt
+chmod 644 vector/certs/ca.crt
 ```
 
 ### Step 3: Restart Services
@@ -165,10 +165,10 @@ docker compose up -d
 
 ### Step 4: Verify Integration
 
-Check Filebeat logs:
+Check Vector logs:
 
 ```bash
-docker compose logs filebeat | tail -50
+docker compose logs vector | tail -50
 ```
 
 Look for successful connection messages:
@@ -345,12 +345,10 @@ route_decision:"honeypot" AND threat_score:>80
 
 ## Performance Considerations
 
-### Filebeat Settings
+### Vector Settings
 
-- **Batch size**: 50 events
-- **Workers**: 1
-- **Timeout**: 90 seconds
-- **Buffering**: Local queue before shipping
+- **Buffering**: In-memory queue per sink before shipping (configurable to disk-backed in `vector/vector.yaml`)
+- **Transport**: Vector-to-Vector protocol over mTLS to the SIEM aggregator
 
 ### Nginx Lua ELK Logger
 
@@ -403,11 +401,11 @@ Recommended ILM policy:
 
 ## Troubleshooting
 
-### Filebeat Not Connecting
+### Vector Not Connecting
 
 **Check logs**:
 ```bash
-docker compose logs filebeat
+docker compose logs vector
 ```
 
 **Common issues**:
@@ -419,7 +417,7 @@ docker compose logs filebeat
 **Solution**:
 ```bash
 # Test connection manually
-docker exec filebeat curl -k -u elastic:password https://your-elk-server:9200
+docker exec vector curl -k -u elastic:password https://your-elk-server:9200
 ```
 
 ### Nginx Lua Not Sending Events
@@ -485,6 +483,6 @@ Logs will continue to be written locally but won't be shipped to ELK.
 
 ## Support and Documentation
 
-- Filebeat Documentation: https://www.elastic.co/guide/en/beats/filebeat/current/index.html
+- Vector Documentation: https://vector.dev/docs/
 - Elasticsearch API: https://www.elastic.co/guide/en/elasticsearch/reference/current/docs.html
 - Kibana User Guide: https://www.elastic.co/guide/en/kibana/current/index.html

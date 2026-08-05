@@ -57,7 +57,7 @@ todo: show that saved threat and suricata data from redis is used for immediate 
 - **IDS Integration**: Suricata IDS with 70+ custom WordPress vulnerability detection rules
 - **Session Tracking**: Redis-backed session management with threat scoring
 - **Attack Detection**: CVE pattern matching, SQL injection, XSS, directory traversal detection
-- **SIEM Integration**: Ready for external ELK (Elasticsearch, Logstash, Kibana) integration via Filebeat
+- **SIEM Integration**: Ready for external ELK (Elasticsearch, Vector, Kibana) integration via Vector
 - **Security Logging**: Comprehensive logging to local files and optional external SIEM
 
 ## Local development setup
@@ -155,7 +155,7 @@ These are the versions Docker Compose uses:
 - Suricata IDS: `jasonish/suricata:latest` (intrusion detection with 70+ custom WordPress rules) - **ENABLED**
 - Session Store: `redis:7-alpine` (stores session data and threat intelligence)
 - Threat Intel: `python:3.11-slim` (updates IP reputation and attack patterns) - **DISABLED**
-- Filebeat: `docker.elastic.co/beats/filebeat:8.11.0` (ships logs to ELK SIEM) - **ENABLED** (optional)
+- Vector: `timberio/vector:0.43.0-debian` (ships logs to ELK SIEM) - **ENABLED** (optional)
 
 If Docker wasn't present this would need to be done manually:
 - install these versions yourself - see `Dockerfile` in each service for instructions
@@ -244,7 +244,7 @@ curl -I http://localhost/ | grep X-Route-Target
 - `honeypot_database_data/` contains MySQL data for honeypot WordPress (auto-synced from production)
 - `redis_data/` contains session data and threat intelligence ([see redis_data/README.md](redis_data/README.md) for details)
 - `nginx_logs/` contains access logs and security event logs
-- `filebeat/` contains Filebeat configuration for shipping logs to ELK SIEM
+- `vector/` contains Vector configuration for shipping logs to ELK SIEM
 - Database volumes are managed by Docker; use `docker volume inspect` to find locations on host machine
 - **ELK SIEM Integration**: See [ELK_INTEGRATION.md](ELK_INTEGRATION.md) for complete setup guide
 - **SQL Proxy Routing**: See [SQL_PROXY_ROUTING.md](SQL_PROXY_ROUTING.md) for database routing architecture

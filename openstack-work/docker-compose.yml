@@ -675,7 +675,7 @@ services:
       retries: 5
       start_period: 60s
 
-  # Filebeat for shipping logs to ELK SIEM (on OpenStack SIEM VM 147.175.151.193)
+  # Vector for shipping logs to ELK SIEM (on OpenStack SIEM VM 147.175.151.193)
   # ---------------------------------------------------------------------------
   # Automated backup service
   # ---------------------------------------------------------------------------
@@ -732,8 +732,8 @@ services:
     pids_limit: 50
     restart: unless-stopped
 
-  filebeat:
-    image: docker.elastic.co/beats/filebeat:8.11.0
+  vector:
+    image: timberio/vector:0.43.0-debian
     profiles:
       - elk
     user: root
@@ -741,12 +741,12 @@ services:
       reverse_proxy:
         condition: service_started
     volumes:
-      - ./filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
-      - ./filebeat/certs:/etc/filebeat/certs:ro
+      - ./vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - ./vector/certs:/etc/vector/certs:ro
       - ./suricata_logs:/var/log/suricata:ro
       - ./nginx_logs:/var/log/nginx:ro
-      - ./filebeat/data:/usr/share/filebeat/data
-      - ./filebeat/logs:/var/log/filebeat
+      - ./vector/data:/var/lib/vector
+      - ./vector/logs:/var/log/vector
       # Docker socket and container logs for monitoring all containers
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -754,8 +754,8 @@ services:
       - redis_data:/var/log/redis:ro
     environment:
       - ELK_ENABLED=${ELK_ENABLED:-true}
-      - LOGSTASH_HOST=${LOGSTASH_HOST:-147.175.151.193}
-      - LOGSTASH_PORT=${LOGSTASH_PORT:-5044}
+      - VECTOR_HOST=${VECTOR_HOST:-147.175.151.193}
+      - VECTOR_PORT=${VECTOR_PORT:-6000}
       - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-147.175.151.193}
       - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
       - ELASTICSEARCH_PROTOCOL=${ELASTICSEARCH_PROTOCOL:-https}
@@ -772,7 +772,7 @@ services:
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-honeypot-ids-system-v1}
     networks:
       - monitoring_network
-    command: filebeat -e -strict.perms=false
+    command: --config /etc/vector/vector.yaml
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
@@ -866,7 +866,7 @@ services:
 
   # DEAD CODE: log_aggregator (Fluent Bit)
   # Originally intended as an alternative log shipper. Superseded by the
-  # filebeat service which fulfils the same role (shipping Nginx + Suricata
+  # vector service which fulfils the same role (shipping Nginx + Suricata
   # logs to the ELK SIEM). No fluent_bit_config/ directory exists in the
   # project, so this service cannot be started without further work.
   # log_aggregator:

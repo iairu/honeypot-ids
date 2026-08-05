@@ -110,19 +110,17 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  logstash:
-    image: docker.elastic.co/logstash/logstash:${STACK_VERSION}
-    container_name: logstash
+  vector:
+    image: timberio/vector:${VECTOR_VERSION}-debian
+    container_name: vector
     environment:
       - ELASTIC_USERNAME=${ELASTIC_USERNAME}
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
       - ELASTIC_HOSTS=https://es01:9200
     ports:
-      - "0.0.0.0:${LOGSTASH_PORT}:${LOGSTASH_PORT}"
+      - "0.0.0.0:${VECTOR_PORT}:${VECTOR_PORT}"
     healthcheck:
-      test: [
-        "CMD", 
-        "curl -I -f --cacert config/certs/ca/ca.crt https://logstash:9600/_node/stats"] #TODO xpack/security is not turned on
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8686/health"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -132,11 +130,10 @@ services:
       kibana:
         condition: service_healthy
     volumes:
-      - ../logstash/certs:/usr/share/logstash/certs:ro
-      - ../logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro 
-      - ../logstash/pipeline.conf:/usr/share/logstash/pipeline/logstash.conf:ro
-      - ../logstash/geoip/dbs/:/geoip
-      - logstash_data:/usr/share/logstash/data
+      - ../vector/certs:/usr/share/vector/certs:ro
+      - ../vector/vector.yaml:/etc/vector/vector.yaml:ro
+      - ../vector/geoip/dbs/:/geoip
+      - vector_data:/var/lib/vector
     networks:
       - elastic
     logging:
@@ -150,7 +147,7 @@ volumes:
     driver: local
   kibana_data:
     driver: local
-  logstash_data:
+  vector_data:
     driver: local
 
 networks:

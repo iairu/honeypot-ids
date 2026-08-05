@@ -19,9 +19,9 @@ ssl_certificates/*
 *_diff*
 *.har
 .env
-filebeat/data/*
-!filebeat/data/placeholder
-filebeat/logs/*
-!filebeat/logs/placeholder
-filebeat/certs/*.crt
-filebeat/certs/*.key
+vector/data/*
+!vector/data/placeholder
+vector/logs/*
+!vector/logs/placeholder
+vector/certs/*.crt
+vector/certs/*.key

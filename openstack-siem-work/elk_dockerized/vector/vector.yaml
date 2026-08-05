@@ -1,0 +1,60 @@
+sources:
+  agent_in:
+    type: vector
+    version: "2"
+    address: 0.0.0.0:6000
+    tls:
+      enabled: true
+      crt_file: /usr/share/vector/certs/vector/vector.crt
+      key_file: /usr/share/vector/certs/vector/vector.key
+      ca_file: /usr/share/vector/certs/ca/ca.crt
+      verify_certificate: true # enforces client certificate verification (mTLS)
+
+transforms:
+  enrich:
+    type: remap
+    inputs:
+      - agent_in
+    source: |
+      ###################################
+      ###### GEOIP DATA ENRICHMENT ######
+      ###################################
+
+      # GeoIP enrichment disabled - databases not available
+      # To enable: download GeoLite2 databases from MaxMind, mount them under
+      # /geoip, register them as "enrichment_tables" in this file, and uncomment below
+      # .source.geo = get_enrichment_table_record!("geoip_city", { "ip": .src_ip })
+      # .source.asn = get_enrichment_table_record!("geoip_asn", { "ip": .src_ip })
+
+      #######################################
+      ###### REMOVE UNNECESSARY FIELDS ######
+      #######################################
+
+      del(.tags)
+      del(.ecs.version)
+      del(.input.type)
+      del(.dst_ip)
+      del(.dst_port)
+      del(.log.file.path)
+      del(.log.offset)
+      del(.source.ip)
+
+sinks:
+  elasticsearch_out:
+    type: elasticsearch
+    inputs:
+      - enrich
+    endpoints:
+      - "${ELASTIC_HOSTS}" # Replace with your Elasticsearch URL
+    bulk:
+      index: hello-world-index # Index name in Elasticsearch
+    auth:
+      strategy: basic
+      user: "${ELASTIC_USERNAME}"
+      password: "${ELASTIC_PASSWORD}"
+    tls:
+      ca_file: /usr/share/vector/certs/ca/ca.crt
+
+api:
+  enabled: true
+  address: 0.0.0.0:8686

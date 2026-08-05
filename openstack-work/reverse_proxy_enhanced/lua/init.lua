@@ -423,8 +423,8 @@ function _G.utils.calculate_threat_score(patterns_matched, cve_matched, ip_reput
 end
 
 --- Append a structured security event to the Nginx error log.
---- The JSON-encoded entry is readable by Filebeat (nginx_error input in
---- filebeat.yml) and forwarded to Elasticsearch via Logstash.
+--- The JSON-encoded entry is readable by Vector (nginx_error_in source in
+--- vector.yaml) and forwarded to Elasticsearch via the Vector aggregator.
 ---
 --- @param event_type  string  Short identifier (e.g. "cve_pattern_detected").
 --- @param details     table   Arbitrary key-value context for the event.

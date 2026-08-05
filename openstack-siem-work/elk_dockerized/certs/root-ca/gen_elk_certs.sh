@@ -4,7 +4,7 @@
 CERTS_DIR="certs"
 ROOT_CA_NAME="rootCA"
 DAYS_VALID=365   # 1 year validity
-ELASTIC_HOSTS=("es01" "logstash" "kibana")  # ELK components
+ELASTIC_HOSTS=("es01" "vector" "kibana" "vector-agent")  # ELK components (vector-agent is the client cert for the remote shipper)
 
 # Create directory to store certificates
 mkdir -p $CERTS_DIR
@@ -68,18 +68,25 @@ cp kibana.key ../../../kibana/certs/kibana/kibana.key
 cp kibana.crt ../../../kibana/certs/kibana/kibana.crt
 cp es01.crt ../../../kibana/certs/es01/es01.crt
 
-# Logstash certificates
-mkdir -p ../../../logstash/certs/ca
-mkdir -p ../../../logstash/certs/logstash
+# Vector (aggregator) certificates
+mkdir -p ../../../vector/certs/ca
+mkdir -p ../../../vector/certs/vector
+mkdir -p ../../../vector/certs/vector-agent
 
-cp rootCA.crt ../../../logstash/certs/ca/ca.crt
-cp logstash.key ../../../logstash/certs/logstash/logstash.key
-cp logstash.crt ../../../logstash/certs/logstash/logstash.crt
+cp rootCA.crt ../../../vector/certs/ca/ca.crt
+cp vector.key ../../../vector/certs/vector/vector.key
+cp vector.crt ../../../vector/certs/vector/vector.crt
+
+# Vector-agent client certificate (copy vector-agent.crt/key + ca.crt to the
+# honeypot VM's vector/certs/ directory for mTLS to the aggregator above)
+cp rootCA.crt ../../../vector/certs/vector-agent/ca.crt
+cp vector-agent.key ../../../vector/certs/vector-agent/vector-agent.key
+cp vector-agent.crt ../../../vector/certs/vector-agent/vector-agent.crt
 
 
 # TODO oneday change to dedicated user in Dockerfile maybe
 chown 1000:1000 ../../../kibana/certs/kibana/kibana.key
-chown 1000:1000 ../../../logstash/certs/logstash/logstash.key
+chown 1000:1000 ../../../vector/certs/vector/vector.key
 chown 1000:1000 ../../../elasticsearch/certs/es01/es01.key
 
 echo "✅ Certificates copied successfully!"
