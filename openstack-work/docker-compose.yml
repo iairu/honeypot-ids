@@ -627,9 +627,24 @@ services:
       - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
       - ELASTICSEARCH_USER=${ELASTICSEARCH_USER:-}
       - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
-    networks:
-      - monitoring_network
-      - ids_network
+    # network_mode: host -- NOT the usual `networks:` list. Confirmed live
+    # (attack-test-2026-08-05.log, repo root) that plain bridge-network
+    # *membership* (this container was on ids_network, same as
+    # reverse_proxy) does not mean shared traffic *visibility*: each
+    # container's virtual NIC only ever receives frames addressed to
+    # itself, not a copy of everything else on the bridge. A full mixed
+    # attack run against the stack produced zero http/alert events in
+    # eve.json -- only background flow/stats noise on this container's own
+    # otherwise-idle interface. Real client traffic reaches reverse_proxy
+    # via published-port DNAT and its own backend traffic flows over
+    # production_network/honeypot_network -- neither path ever touched
+    # ids_network. Host networking gives this container the same view of
+    # traffic as the Docker host itself (including the actual bridge
+    # interfaces those other networks use), which is what
+    # suricata_config/suricata.yaml's af-packet `interface: any` (see that
+    # file) is written to capture across. `networks:` and `network_mode:`
+    # are mutually exclusive in Compose, hence the removal below.
+    network_mode: host
     # NET_ADMIN: required for AF_PACKET socket-based capture.
     # SYS_NICE: allows Suricata to manage its own thread scheduling priority.
     # privileged: required for AF_PACKET socket creation on some systems.
@@ -692,21 +707,28 @@ services:
         # on /dev/null was never actually verified to block indefinitely on
         # this image's base OS.
         #
-        # `--af-packet` is used bare (no interface value) rather than
-        # `--af-packet eth0`. Suricata's real CLI syntax is
-        # `--af-packet[=<dev>]` -- an *equals sign* is required to attach an
-        # interface value; a space-separated `eth0` is instead parsed as a
-        # separate positional argument, which suricata treats as an ad-hoc
-        # BPF filter expression to compile. "eth0" is not a valid BPF filter,
-        # so that produced `failed to compile BPF "eth0": can't parse filter
-        # expression: syntax error` -- confirmed live, and confirmed via
-        # `suricata --help` that the space-separated form was never valid.
-        # Since suricata_config/suricata.yaml's own `af-packet:` section
-        # already fully specifies `interface: eth0` (plus thread count,
-        # packet size, bpf-filter, etc.), bare `--af-packet` is both the fix
-        # and the more maintainable form -- the interface only needs to be
-        # named in one place.
-        exec suricata -c /etc/suricata/suricata.yaml --af-packet -l /var/log/suricata
+        # `--pcap` is used bare (no interface value), reading the capture
+        # config from suricata_config/suricata.yaml's `pcap:` section
+        # instead (interface: any) -- see that file's comment for why PCAP
+        # capture mode was chosen over AF_PACKET (AF_PACKET has no working
+        # equivalent of libpcap's "any" pseudo-device, and this container's
+        # network_mode: host setup means the real interface to listen on is
+        # one of several dynamically-named, unpredictable docker bridge
+        # interfaces rather than a single fixed name).
+        #
+        # Note for posterity: an earlier version of this line used
+        # `--af-packet eth0` (space-separated), which is invalid CLI syntax
+        # -- Suricata's real syntax is `--af-packet[=<dev>]`, requiring an
+        # *equals sign* to attach an interface value. The space-separated
+        # form gets parsed as two separate arguments, and the bare "eth0"
+        # is then treated as an ad-hoc BPF filter expression to compile,
+        # producing `failed to compile BPF "eth0": can't parse filter
+        # expression: syntax error`. Confirmed live, and confirmed via
+        # `suricata --help`. The same equals-sign requirement applies to
+        # `--pcap[=<dev>]` -- passing a bare flag (no value at all, as done
+        # here) sidesteps the whole issue by deferring entirely to the
+        # config file, which is also the more maintainable form regardless.
+        exec suricata -c /etc/suricata/suricata.yaml --pcap -l /var/log/suricata
     healthcheck:
       test: ["CMD", "test", "-f", "/var/log/suricata/fast.log"]
       interval: 30s

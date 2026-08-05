@@ -6,7 +6,21 @@
 vars:
   # Networks
   address-groups:
-    HOME_NET: "[172.20.0.0/24,172.21.0.0/24,172.22.0.0/24,172.23.0.0/24,172.24.0.0/24]"
+    # 127.0.0.0/8 added after confirming live that every local.rules signature
+    # requires direction $EXTERNAL_NET -> $HOME_NET, but real capture (once
+    # network_mode: host + PCAP `any` actually made traffic visible at all --
+    # see the af-packet/pcap comments above) showed test traffic against
+    # https://127.0.0.1/ landing with destination 127.0.0.1, which is outside
+    # every one of these docker-subnet ranges. Rules loaded fine (70/70,
+    # confirmed in suricata_logs/suricata.log) and the exact attack payloads
+    # were visible in decoded http events (confirmed in eve.json), but zero
+    # alerts fired until this was added, because the traffic never matched
+    # any rule's HOME_NET-as-destination requirement in the first place.
+    # This also matters beyond local testing: the arch VM referenced
+    # elsewhere in this repo's history is confirmed gone, so loopback-via-
+    # published-port is the only realistic way to exercise this stack at all
+    # right now.
+    HOME_NET: "[172.20.0.0/24,172.21.0.0/24,172.22.0.0/24,172.23.0.0/24,172.24.0.0/24,127.0.0.0/8]"
     EXTERNAL_NET: "!$HOME_NET"
     HTTP_SERVERS: "$HOME_NET"
     SMTP_SERVERS: "$HOME_NET"
@@ -308,31 +322,39 @@ threading:
         cpu: [ "all" ]
   detect-thread-ratio: 1.0
 
-# AF_PACKET capture configuration
-af-packet:
-  - interface: eth0
-    # Number of threads
-    threads: 1
-    # Default packet size
-    default-packet-size: 1500
+# PCAP capture configuration (interface: any)
+#
+# Paired with network_mode: host in docker-compose.yml, which was itself
+# added because plain Docker bridge-network *membership* (this container
+# used to sit on ids_network, same as reverse_proxy) does not mean shared
+# traffic *visibility* -- confirmed live (attack-test-2026-08-05.log, repo
+# root): a full attack run produced zero http/alert events, only background
+# flow/stats noise on this container's own otherwise-idle interface. Real
+# traffic reaches reverse_proxy via published-port DNAT and flows over
+# production_network/honeypot_network -- neither ever touched ids_network.
+#
+# Originally tried AF_PACKET with `interface: any`, but AF_PACKET is a raw
+# Linux socket API that binds to one real interface index -- unlike libpcap,
+# it has no special support for "any", and failed outright ("failed to find
+# interface type: No such device"). Host networking exposes several
+# dynamically-named bridge interfaces (br-<hash>, one per docker-compose
+# network, confirmed via `ip link` -- there is no way to predict or pin
+# their names across a fresh `docker compose up`), so hand-picking one real
+# interface isn't viable either. Switched capture method to PCAP instead:
+# libpcap's "any" pseudo-device (the same one `tcpdump -i any` uses) DOES
+# properly support capturing across every interface at once, which is what
+# actually gives this container visibility into whichever bridge ends up
+# carrying reverse_proxy's traffic, without needing to know its name.
+pcap:
+  - interface: any
     # Promiscuous mode
-    promiscuous: yes
-    # Checksum check
-    checksum-checks: kernel
-    # Bypass
-    bypass: no
-    # Buffer size
-    buffer-size: 65535
-    # Cluster type for multi-thread
-    cluster-type: cluster_flow
-    # Cluster ID
-    cluster-id: 99
-    # BPF filter - match all packets (required for Suricata 8.x)
+    promisc: yes
+    # BPF filter - match all packets
     bpf-filter: "ip or ip6 or arp"
-    # Roll over when file reaches size
-    #rolling:
-    #  size: 100mb
-    #  name: /var/log/suricata/suricata.pcap
+    # Checksum validation (disable: Docker veth/bridge traffic commonly has
+    # invalid/offloaded checksums that would otherwise cause valid packets
+    # to be dropped as "bad checksum" before they ever reach detection).
+    checksum-checks: no
 
 # Memory settings
 host:
