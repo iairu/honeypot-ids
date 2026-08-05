@@ -338,7 +338,7 @@ To enable: set `ELK_ENABLED=true` plus `ELASTICSEARCH_HOST`/`PORT`/credentials i
 
 ## 7. Refactoring History & Framework Choice
 
-A component-by-component diagram (37 nodes, responsibility/refactoring-needs/overlap-to-fuse notes on every one, color-coded by status) was built as an Obsidian Canvas (`architecture.canvas`) earlier in this project's history, but it was never committed to git and no longer exists in the repository — see §12's note. §3.2 and this section summarize the same information in prose below.
+See `architecture.canvas` (open the repo root as an Obsidian vault) for the full component-by-component diagram — 40 nodes, responsibility/refactoring-needs/overlap-to-fuse notes on every one, color-coded by status. It was lost for a stretch of this project's history (never committed to git, removed during an uncommitted cleanup pass) and has since been restored and brought up to date with everything described in this file, including this session's fixes. §3.2 and this section summarize the same information in prose below.
 
 Short version: this isn't one application, so MVC doesn't fit — it's three subsystems with their own idioms (a WordPress app with its own hook/theme conventions, Docker-Compose infra, and the actual thesis contribution: the Lua detection pipeline). For that pipeline, the chosen pattern is a **numbered middleware chain built from pure decision cores + thin I/O adapters** (§3.2). `lua_pattern_utils.lua` is the one concrete code-level "fuse" executed this session, consolidating `url_decode`/`escape_pattern`, which had drifted into 3 independent copies.
 
@@ -363,7 +363,7 @@ Two other real duplication/overlap findings, not (yet) fixed at the code level:
 ### Still open
 - ELK Dashboards (Kibana side is unbuilt — see §6)
 - Code-level docs beyond what exists in Lua comments
-- Diagrams: pooling architecture, hardening-vs-best-practices, test-scenario coverage map, proactive-defense overview (a 37-node Obsidian Canvas covering the last of these was built earlier in this project's history but no longer exists in the repository — see §12's note)
+- Diagrams: pooling architecture, hardening-vs-best-practices, test-scenario coverage map (`architecture.canvas`, restored and updated this session, covers the proactive-defense overview — see §7)
 - Data preparation for research use (interaction-depth metrics, session duration comparisons — see `COUNTERARGUMENTS.md` Q18)
 - Bonus/exploratory ideas (not committed to): a Honeypot Setup Frontend (toggle features/settings pre-deployment); single-WordPress-frontend-with-dual-database research comparison (see §9 — the SQL-proxy attempt already showed why this is hard); an LLM feature that fetches latest CVEs and generates matching Lua detection rules
 
@@ -469,8 +469,8 @@ Verified live end-to-end after all four fixes: `docker compose exec backup_servi
 ## 11. Related documentation still living in their own files
 
 - `openstack-work/testing/BLIND_PENTEST_PROTOCOL.md`, `openstack-work/testing/blind_pentest_report_run1.md` — blind pentest protocol + results
-- `architecture.canvas` (Obsidian Canvas, full system diagram — 37 nodes, responsibility/refactoring/overlap notes per node) and `openstack-work/elk-siem-testing.md` (a substantial prior academic report: SIEM/ELK technology evaluation — SecurityOnion, Splunk, QRadar, Wazuh comparison; Logstash JSON-parsing fragility findings that motivated switching to Vector) were both referenced from earlier versions of this file but **no longer exist in the repository** — neither was ever committed to git, and both were lost during a later, uncommitted cleanup pass. Remaining mentions of `architecture.canvas` elsewhere in this file describe what it contained, not a currently-browsable artifact.
-- `master-thesis-rewrite-plan/` — speculative, **not-yet-implemented** research proposals; see §12
+- `architecture.canvas` (Obsidian Canvas, full system diagram — 40 nodes, 28 edges, responsibility/refactoring/overlap notes per node, color-coded by status) — restored and brought current this session after being lost for a stretch of this project's history; open the repo root as an Obsidian vault to browse it
+- `openstack-work/elk-siem-testing.md` and `master-thesis-rewrite-plan/` were both referenced from earlier versions of this file but **no longer exist in the repository** — neither was ever committed to git, and both were lost during a later, uncommitted cleanup pass.
 - `openstack-siem-work/elk_dockerized/README.md` — the SIEM sub-project's own setup doc
 
 ---
