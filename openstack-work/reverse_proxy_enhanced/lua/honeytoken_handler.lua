@@ -61,6 +61,7 @@
 local cjson  = require "cjson"
 local sha1   = require "resty.sha1"
 local str    = require "resty.string"
+local honeytoken_rules = require "honeytoken_rules"
 
 local _M = {}
 
@@ -238,48 +239,44 @@ function _M.analyze_request_for_tokens()
     -- Concatenate corpus into a single searchable string.
     local corpus = table.concat(candidates, " ")
 
-    -- Scan for each token value.
-    for value, token in pairs(TOKEN_VALUE_MAP) do
-        if string.find(corpus, value, 1, true) then  -- plain string match (no regex)
-            -- Token found.  Increment use counter and log.
-            local use_count = _M.record_token_use(token.id, value)
+    -- Scan for a known token value. Pure matching logic lives in
+    -- honeytoken_rules.lua; this stays the adapter for the record-keeping
+    -- and logging that follow a match.
+    local token, value = honeytoken_rules.find_token_in_corpus(corpus, TOKEN_VALUE_MAP)
+    if token then
+        -- Token found.  Increment use counter and log.
+        local use_count = _M.record_token_use(token.id, value)
 
-            ngx.log(ngx.CRIT,
-                "[HONEYTOKEN] ⚠️  TOKEN USED: id=", token.id,
-                " type=", token.type,
-                " severity=", token.severity,
-                " use_count=", use_count,
-                " ip=", ngx.var.remote_addr,
-                " uri=", ngx.var.request_uri,
-                " | ", token.note)
+        ngx.log(ngx.CRIT,
+            "[HONEYTOKEN] ⚠️  TOKEN USED: id=", token.id,
+            " type=", token.type,
+            " severity=", token.severity,
+            " use_count=", use_count,
+            " ip=", ngx.var.remote_addr,
+            " uri=", ngx.var.request_uri,
+            " | ", token.note)
 
-            -- Log to ELK via utility (fire-and-forget; ELK unavailability must
-            -- not break the routing pipeline).
-            pcall(function()
-                _G.utils.log_security_event("honeytoken_used", {
-                    token_id   = token.id,
-                    token_type = token.type,
-                    severity   = token.severity,
-                    use_count  = use_count,
-                    ip         = ngx.var.remote_addr,
-                    uri        = ngx.var.request_uri,
-                    user_agent = ngx.var.http_user_agent,
-                    note       = token.note,
-                })
-            end)
+        -- Log to ELK via utility (fire-and-forget; ELK unavailability must
+        -- not break the routing pipeline).
+        pcall(function()
+            _G.utils.log_security_event("honeytoken_used", {
+                token_id   = token.id,
+                token_type = token.type,
+                severity   = token.severity,
+                use_count  = use_count,
+                ip         = ngx.var.remote_addr,
+                uri        = ngx.var.request_uri,
+                user_agent = ngx.var.http_user_agent,
+                note       = token.note,
+            })
+        end)
 
-            result = {
-                token_id  = token.id,
-                type      = token.type,
-                severity  = token.severity,
-                use_count = use_count,
-            }
-
-            -- Stop after the first match; one detected token is sufficient to
-            -- trigger an alert.  Multiple tokens in the same request are rare
-            -- and would just add noise to the log.
-            break
-        end
+        result = {
+            token_id  = token.id,
+            type      = token.type,
+            severity  = token.severity,
+            use_count = use_count,
+        }
     end
 
     return result

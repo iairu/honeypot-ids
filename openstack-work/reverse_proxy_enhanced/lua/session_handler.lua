@@ -1,9 +1,16 @@
 -- session_handler.lua - Session management module for Nginx Lua
 -- Handles session creation, retrieval, updates, and routing decisions
+--
+-- Adapter half of the pure/adapter split with session_rules.lua: this file
+-- does all the Redis/shared-dict I/O and ngx.log calls; session_rules.lua
+-- holds the actual anomaly-detection and honeypot-routing decision logic
+-- (zero ngx.*/_G.* dependency, plain-`lua`-interpreter testable).
 
 local cjson = require "cjson"
 local resty_sha1 = require "resty.sha1"
 local str = require "resty.string"
+local session_rules = require "session_rules"
+local router_rules = require "router_rules"
 
 local _M = {}
 
@@ -108,20 +115,19 @@ function _M.create_session(ip_address, user_agent, initial_route, provided_sessi
     return session_data
 end
 
--- Check if current request is for a static asset
+-- Check if current request is for a static asset.
+--
+-- Delegates to router_rules.is_static_asset() rather than maintaining its
+-- own copy. This used to be a THIRD independent implementation of the same
+-- check (router_rules.lua and threat_rules.lua already document having had
+-- two that disagreed on whether to strip the query string before matching,
+-- and were reconciled) -- this one was never reconciled and still didn't
+-- strip it, so e.g. "image.png?v=123" wasn't recognized as static here even
+-- though the other two modules correctly classify it as one, causing
+-- update_session() below to increment request_count for what should have
+-- been treated as a static asset load.
 function _M.is_static_asset_request()
-    local uri = ngx.var.request_uri or ""
-    local uri_lower = string.lower(uri)
-    
-    if _G.config.threat.static_asset_patterns then
-        for _, pattern in ipairs(_G.config.threat.static_asset_patterns) do
-            if string.find(uri_lower, pattern) then
-                return true
-            end
-        end
-    end
-    
-    return false
+    return router_rules.is_static_asset(ngx.var.request_uri, _G.config.threat.static_asset_patterns)
 end
 
 -- Update existing session data
@@ -230,42 +236,16 @@ function _M.mark_compromised(session_id, reason)
     return success
 end
 
--- Check if session should be routed to honeypot
+-- Check if session should be routed to honeypot.
+-- Thin adapter over session_rules.should_route_to_honeypot() -- fetches the
+-- config threshold and whitelist result the pure function needs, then
+-- delegates the actual decision.
 function _M.should_route_to_honeypot(session_data)
-    if not session_data then
-        return false
-    end
-    
-    -- Already bound to honeypot
-    if session_data.honeypot_bound then
-        return true
-    end
-    
-    -- Check threat score threshold
-    if session_data.threat_score >= _G.config.threat.honeypot_threshold then
-        return true
-    end
-    
-    -- Check if IP is in whitelist
-    if _G.utils.is_ip_whitelisted(session_data.ip_address) then
-        return false
-    end
-    
-    -- Check for too many suspicious activities
-    if session_data.suspicious_activities and #session_data.suspicious_activities >= 3 then
-        return true
-    end
-    
-    -- Check for rapid requests (potential automated tool)
-    -- Increased threshold to 20 requests per second to avoid false positives
-    if session_data.request_count and session_data.created_at then
-        local session_duration = ngx.time() - session_data.created_at
-        if session_duration > 0 and (session_data.request_count / session_duration) > 20 then
-            return true
-        end
-    end
-    
-    return false
+    local is_whitelisted = session_data
+        and _G.utils.is_ip_whitelisted(session_data.ip_address)
+        or false
+    return session_rules.should_route_to_honeypot(
+        session_data, _G.config.threat.honeypot_threshold, is_whitelisted, ngx.time())
 end
 
 -- Generate browser fingerprint for tracking
@@ -321,54 +301,55 @@ function _M.get_or_create_session()
     return session_data
 end
 
--- Analyze session for anomalies
+-- Analyze session for anomalies.
+-- Thin adapter over session_rules.analyze_session_anomalies() -- fetches
+-- the current IP/UA, decodes the malicious-agents list from the shared
+-- dict, and delegates the actual detection; then re-derives the same
+-- per-anomaly detail (old IP, which agent matched, request-rate figures)
+-- from data already in scope to keep the original log messages intact,
+-- since the pure function itself can't call ngx.log.
 function _M.analyze_session_anomalies(session_data)
-    local anomalies = {}
-    
     if not session_data then
-        return anomalies
+        return {}
     end
-    
-    -- Check for IP changes
-    if session_data.ip_address ~= ngx.var.remote_addr then
-        table.insert(anomalies, "ip_change")
-        ngx.log(ngx.WARN, "[SESSION] ⚠️  IP address changed | Session: ", session_data.id or "unknown", 
-                " | Old: ", session_data.ip_address, " | New: ", ngx.var.remote_addr)
-    end
-    
-    -- Check for user agent changes
+
+    local current_ip = ngx.var.remote_addr
     local current_ua = ngx.var.http_user_agent or ""
-    if session_data.user_agent ~= current_ua then
-        table.insert(anomalies, "user_agent_change")
-        ngx.log(ngx.WARN, "[SESSION] ⚠️  User-Agent changed | Session: ", session_data.id or "unknown")
-    end
-    
-    -- Check for suspicious user agents
-    local ua_lower = string.lower(current_ua)
-    local threat_intel = ngx.shared.threat_intel
-    local malicious_agents_json = threat_intel:get("malicious_agents")
+    local current_time = ngx.time()
+
+    local malicious_agents = nil
+    local malicious_agents_json = ngx.shared.threat_intel:get("malicious_agents")
     if malicious_agents_json then
-        local malicious_agents = cjson.decode(malicious_agents_json)
-        for _, agent in ipairs(malicious_agents) do
-            if string.find(ua_lower, string.lower(agent)) then
-                table.insert(anomalies, "malicious_user_agent")
-                ngx.log(ngx.ERR, "[SESSION] 🚨 Malicious User-Agent detected | Agent: ", agent, 
-                        " | Session: ", session_data.id or "unknown")
-                break
-            end
-        end
+        malicious_agents = cjson.decode(malicious_agents_json)
     end
-    
-    -- Check for rapid requests
-    if session_data.request_count and session_data.last_activity then
-        local time_diff = ngx.time() - session_data.last_activity
-        if time_diff < 1 and session_data.request_count > 5 then
-            table.insert(anomalies, "rapid_requests")
-            ngx.log(ngx.WARN, "[SESSION] ⚠️  Rapid requests detected | Session: ", session_data.id or "unknown", 
+
+    local anomalies = session_rules.analyze_session_anomalies(
+        session_data, current_ip, current_ua, malicious_agents, current_time)
+
+    for _, anomaly in ipairs(anomalies) do
+        if anomaly == "ip_change" then
+            ngx.log(ngx.WARN, "[SESSION] ⚠️  IP address changed | Session: ", session_data.id or "unknown",
+                    " | Old: ", session_data.ip_address, " | New: ", current_ip)
+        elseif anomaly == "user_agent_change" then
+            ngx.log(ngx.WARN, "[SESSION] ⚠️  User-Agent changed | Session: ", session_data.id or "unknown")
+        elseif anomaly == "malicious_user_agent" then
+            local ua_lower = string.lower(current_ua)
+            local matched_agent = "unknown"
+            for _, agent in ipairs(malicious_agents or {}) do
+                if string.find(ua_lower, string.lower(agent)) then
+                    matched_agent = agent
+                    break
+                end
+            end
+            ngx.log(ngx.ERR, "[SESSION] 🚨 Malicious User-Agent detected | Agent: ", matched_agent,
+                    " | Session: ", session_data.id or "unknown")
+        elseif anomaly == "rapid_requests" then
+            local time_diff = current_time - (session_data.last_activity or current_time)
+            ngx.log(ngx.WARN, "[SESSION] ⚠️  Rapid requests detected | Session: ", session_data.id or "unknown",
                     " | Count: ", session_data.request_count, " | Time diff: ", time_diff, "s")
         end
     end
-    
+
     return anomalies
 end
 

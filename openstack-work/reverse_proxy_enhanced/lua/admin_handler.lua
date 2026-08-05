@@ -1,78 +1,50 @@
 -- admin_handler.lua - Admin access handling module for Nginx Lua
 -- Handles WordPress admin panel access and authentication monitoring
+--
+-- Adapter half of the pure/adapter split with admin_rules.lua: this file
+-- does all the Redis/shared-dict I/O, request-body/args reading, and
+-- ngx.log calls; admin_rules.lua holds the actual decision logic (zero
+-- ngx.*/_G.* dependency, plain-`lua`-interpreter testable).
 
 local cjson = require "cjson"
 local resty_sha1 = require "resty.sha1"
 local str = require "resty.string"
+local admin_rules = require "admin_rules"
 
 local _M = {}
 
--- Check if admin-ajax.php call is legitimate (not suspicious)
+-- Check if admin-ajax.php call is legitimate (not suspicious).
+-- Thin adapter over admin_rules.is_suspicious_ajax_action() -- reads the
+-- POST body/GET action (I/O), delegates the actual pattern matching, then
+-- logs which specific pattern matched (the pure function returns it for
+-- exactly this purpose).
 function _M.is_legitimate_ajax_call(uri, method)
     local uri_lower = string.lower(uri or "")
-    local args_lower = string.lower(ngx.var.query_string or "")
-    
+
     -- Only check if this is admin-ajax.php
     if not string.find(uri_lower, "admin%-ajax%.php") then
         return false
     end
-    
-    -- Admin-ajax.php is legitimate for GET and most POST actions
-    -- We only flag specific suspicious POST actions
+
+    local post_data = nil
     if method == "POST" then
-        -- Read POST body to check for suspicious actions
         ngx.req.read_body()
-        local post_data = ngx.req.get_body_data()
-        
-        if post_data then
-            local post_lower = string.lower(post_data)
-            
-            -- Suspicious actions that should be flagged
-            local suspicious_actions = {
-                "action=upload%-plugin",
-                "action=install%-plugin",
-                "action=activate",
-                "action=delete%-plugin",
-                "action=edit%-theme%-plugin%-file",
-                "action=update%-plugin",
-                "action=update%-theme",
-                "action=delete%-theme",
-                "file=%.%./"  -- Directory traversal attempt
-            }
-            
-            for _, action in ipairs(suspicious_actions) do
-                if string.find(post_lower, action) then
-                    ngx.log(ngx.WARN, "[ADMIN] 🚨 Suspicious action in admin-ajax.php: ", action)
-                    return false  -- This is suspicious
-                end
-            end
-        end
+        post_data = ngx.req.get_body_data()
     end
-    
-    -- Check GET parameters for suspicious patterns
+
     local args = ngx.req.get_uri_args()
-    if args then
-        local action = args.action or ""
-        local action_lower = string.lower(action)
-        
-        -- Suspicious GET actions
-        local suspicious_get_actions = {
-            "upload%-plugin",
-            "install%-plugin", 
-            "delete%-plugin",
-            "edit%-theme%-plugin%-file",
-            "update%-plugin",
-            "update%-theme"
-        }
-        
-        for _, sus_action in ipairs(suspicious_get_actions) do
-            if string.find(action_lower, sus_action) then
-                ngx.log(ngx.WARN, "[ADMIN] 🚨 Suspicious GET action in admin-ajax.php: ", action)
-                return false  -- This is suspicious
-            end
+    local get_action = args and args.action or nil
+
+    local suspicious, matched, source = admin_rules.is_suspicious_ajax_action(post_data, get_action)
+    if suspicious then
+        if source == "post" then
+            ngx.log(ngx.WARN, "[ADMIN] 🚨 Suspicious action in admin-ajax.php: ", matched)
+        else
+            ngx.log(ngx.WARN, "[ADMIN] 🚨 Suspicious GET action in admin-ajax.php: ", matched)
         end
+        return false  -- This is suspicious
     end
-    
+
     -- If we get here, it's a legitimate admin-ajax.php call
     return true
 end
@@ -136,143 +108,57 @@ function _M.process_admin_request(remote_ip, uri)
 end
 
 -- Check for brute force login attempts
+-- Thin adapter over admin_rules.score_brute_force_attempts() -- reads the
+-- attempt-tracking record from the shared dict (I/O), delegates the actual
+-- window-filtering/scoring, then logs at the tier the pure function's
+-- score maps back to (kept here rather than in the pure function, since
+-- deriving "which tier fired" from the final score alone -- e.g. 55 could
+-- be tier-25-plus-rapid-bonus or some other combination -- would be
+-- ambiguous; the adapter re-checks the same count thresholds purely for
+-- log-message selection, not for the actual scoring decision).
 function _M.check_brute_force_attempts(ip)
     local rate_limit_dict = ngx.shared.rate_limit
     local current_time = ngx.time()
     local window_size = 300  -- 5 minutes
     local attempt_key = "admin_attempts:" .. ip
-    
+
     local attempts_json = rate_limit_dict:get(attempt_key)
-    local attempts_data
-    
+    local attempts, first_attempt
+
     if attempts_json then
-        attempts_data = cjson.decode(attempts_json)
-        
-        -- Clean old attempts outside window
-        local filtered_attempts = {}
-        for _, attempt in ipairs(attempts_data.attempts or {}) do
-            if current_time - attempt.timestamp <= window_size then
-                table.insert(filtered_attempts, attempt)
-            end
-        end
-        attempts_data.attempts = filtered_attempts
-        attempts_data.count = #filtered_attempts
+        local attempts_data = cjson.decode(attempts_json)
+        attempts = attempts_data.attempts
+        first_attempt = attempts_data.first_attempt
     else
-        attempts_data = {
-            count = 0,
-            attempts = {},
-            first_attempt = current_time
-        }
+        attempts = {}
+        first_attempt = current_time
     end
-    
-    -- Calculate brute force score
-    local score = 0
-    if attempts_data.count >= 10 then
-        score = 80  -- High score for many attempts
-        ngx.log(ngx.ERR, "[ADMIN] 🚨 High brute force score | IP: ", ip, " | Attempts: ", attempts_data.count, " | Score: ", score)
-    elseif attempts_data.count >= 5 then
-        score = 50  -- Medium score for moderate attempts
-        ngx.log(ngx.WARN, "[ADMIN] ⚠️  Moderate brute force score | IP: ", ip, " | Attempts: ", attempts_data.count, " | Score: ", score)
-    elseif attempts_data.count >= 3 then
-        score = 25  -- Low score for few attempts
-        ngx.log(ngx.INFO, "[ADMIN] ⚡ Low brute force score | IP: ", ip, " | Attempts: ", attempts_data.count, " | Score: ", score)
+
+    local score, filtered = admin_rules.score_brute_force_attempts(attempts, first_attempt, current_time, window_size)
+
+    if #filtered >= 10 then
+        ngx.log(ngx.ERR, "[ADMIN] 🚨 High brute force score | IP: ", ip, " | Attempts: ", #filtered, " | Score: ", score)
+    elseif #filtered >= 5 then
+        ngx.log(ngx.WARN, "[ADMIN] ⚠️  Moderate brute force score | IP: ", ip, " | Attempts: ", #filtered, " | Score: ", score)
+    elseif #filtered >= 3 then
+        ngx.log(ngx.INFO, "[ADMIN] ⚡ Low brute force score | IP: ", ip, " | Attempts: ", #filtered, " | Score: ", score)
     end
-    
-    -- Check for rapid succession attempts
-    if attempts_data.count >= 3 then
-        local time_span = current_time - attempts_data.first_attempt
-        if time_span < 60 then  -- 3+ attempts in less than 1 minute
-            score = score + 30
-        end
-    end
-    
+
     return score
 end
 
 -- Analyze admin access patterns for suspicious behavior
+-- Thin adapter over admin_rules.analyze_admin_patterns() -- fetches the
+-- query string (I/O) and delegates the actual pattern matching/scoring.
+-- No logging here: process_admin_request() (the only caller) already logs
+-- a summary line for any suspicious result. The original had per-pattern
+-- log lines inside this function too, which is lost in this extraction --
+-- an accepted trade-off (the "reason" field was already last-write-wins in
+-- the multi-match case, so those extra lines were partial detail, not the
+-- full picture, even before this change) in exchange for the actual
+-- decision logic being pure and unit-tested.
 function _M.analyze_admin_patterns(uri, user_agent, method)
-    local analysis = {
-        suspicious = false,
-        reason = "clean",
-        score = 0
-    }
-    
-    local uri_lower = string.lower(uri or "")
-    local args_lower = string.lower(ngx.var.query_string or "")
-    local ua_lower = string.lower(user_agent or "")
-    
-    -- Check for direct admin file access (bypassing login)
-    -- NOTE: admin-ajax.php is handled separately and not flagged here as it's a legitimate AJAX handler
-    local direct_access_patterns = {
-        "/wp%-admin/admin%-post%.php",
-        "/wp%-admin/users%.php",
-        "/wp%-admin/user%-new%.php",
-        "/wp%-admin/options%.php",
-        "/wp%-admin/install%.php",
-        "/wp%-admin/setup%-config%.php"
-    }
-    
-    for _, pattern in ipairs(direct_access_patterns) do
-        if string.find(uri_lower, pattern) then
-            analysis.suspicious = true
-            analysis.reason = "direct_admin_file_access"
-            analysis.score = 20
-            ngx.log(ngx.WARN, "[ADMIN] 🔍 Direct admin file access detected | Pattern: ", pattern, " | URI: ", uri)
-            break
-        end
-    end
-    
-    -- Check for admin enumeration attempts
-    -- WordPress REST API can be accessed via /wp-json/wp/v2/users or ?rest_route=/wp/v2/users
-    if string.find(uri_lower, "wp%-json/wp/v2/users") or 
-       (string.find(args_lower, "rest_route=") and string.find(args_lower, "/wp/v2/users")) then
-        analysis.suspicious = true
-        analysis.reason = "user_enumeration"
-        analysis.score = 25
-        ngx.log(ngx.WARN, "[ADMIN] 🔍 User enumeration attempt detected | URI: ", uri)
-    end
-    
-    -- Check for plugin/theme enumeration
-    if string.find(uri_lower, "wp%-content/plugins") and string.find(uri_lower, "readme%.txt") then
-        analysis.suspicious = true
-        analysis.reason = "plugin_enumeration"
-        analysis.score = 15
-        ngx.log(ngx.WARN, "[ADMIN] 🔍 Plugin enumeration attempt detected | URI: ", uri)
-    end
-    
-    -- Check for automated tool signatures in admin context
-    local automation_patterns = {
-        "wpscan", "wp%-cli", "curl", "wget", "python", "scanner"
-    }
-    
-    for _, pattern in ipairs(automation_patterns) do
-        if string.find(ua_lower, pattern) then
-            analysis.suspicious = true
-            analysis.reason = "automated_admin_tool"
-            analysis.score = 35
-            ngx.log(ngx.ERR, "[ADMIN] 🤖 Automated tool detected in admin area | Pattern: ", pattern, " | UA: ", user_agent:sub(1, 50))
-            break
-        end
-    end
-    
-    -- Check for suspicious admin parameters
-    local suspicious_params = {
-        "action=upload%-plugin",
-        "action=activate",
-        "action=delete",
-        "action=edit%-theme%-plugin%-file",
-        "file=%.%./"
-    }
-    
-    for _, param in ipairs(suspicious_params) do
-        if string.find(uri_lower, param) then
-            analysis.suspicious = true
-            analysis.reason = "suspicious_admin_action"
-            analysis.score = analysis.score + 20
-        end
-    end
-    
-    return analysis
+    return admin_rules.analyze_admin_patterns(uri, user_agent, ngx.var.query_string, method)
 end
 
 -- Track admin access attempts for pattern analysis
@@ -420,77 +306,24 @@ function _M.log_admin_access(admin_info, status, reason)
 end
 
 -- Check if current request is a login attempt
+-- Thin wrapper over admin_rules.is_login_attempt() -- already pure/no-I/O,
+-- kept here as a re-export so existing callers don't need to change.
 function _M.is_login_attempt(uri, method)
-    if method ~= "POST" then
-        return false
-    end
-    
-    -- Only actual login endpoints, not admin-ajax which handles general AJAX
-    local login_endpoints = {
-        "wp%-login%.php",
-        "xmlrpc%.php"
-    }
-    
-    local uri_lower = string.lower(uri or "")
-    local args_lower = string.lower(ngx.var.query_string or "")
-    for _, endpoint in ipairs(login_endpoints) do
-        if string.find(uri_lower, endpoint) then
-            return true
-        end
-    end
-    
-    return false
+    return admin_rules.is_login_attempt(uri, method)
 end
 
--- Analyze login POST data for credential stuffing
+-- Analyze login POST data for credential stuffing.
+-- Thin adapter over admin_rules.score_login_credential_stuffing() -- reads
+-- the POST body (I/O) and delegates the actual scoring.
 function _M.analyze_login_data()
     if ngx.var.request_method ~= "POST" then
         return { suspicious = false, score = 0 }
     end
-    
-    -- Read POST body
+
     ngx.req.read_body()
     local post_data = ngx.req.get_body_data()
-    
-    if not post_data then
-        return { suspicious = false, score = 0 }
-    end
-    
-    local analysis = {
-        suspicious = false,
-        score = 0,
-        patterns = {}
-    }
-    
-    local post_lower = string.lower(post_data)
-    
-    -- Check for common credential stuffing patterns
-    local stuffing_patterns = {
-        { pattern = "admin", score = 5, name = "common_username" },
-        { pattern = "password", score = 5, name = "common_password" },
-        { pattern = "123456", score = 10, name = "weak_password" },
-        { pattern = "qwerty", score = 10, name = "keyboard_pattern" },
-        { pattern = "test", score = 8, name = "test_credentials" }
-    }
-    
-    for _, check in ipairs(stuffing_patterns) do
-        if string.find(post_lower, check.pattern) then
-            analysis.score = analysis.score + check.score
-            table.insert(analysis.patterns, check.name)
-        end
-    end
-    
-    -- Check for automated login attempts (rapid-fire characteristics)
-    if string.len(post_data) < 50 then  -- Very short POST data
-        analysis.score = analysis.score + 10
-        table.insert(analysis.patterns, "short_post_data")
-    end
-    
-    if analysis.score >= 15 then
-        analysis.suspicious = true
-    end
-    
-    return analysis
+
+    return admin_rules.score_login_credential_stuffing(post_data)
 end
 
 -- Generate admin access report

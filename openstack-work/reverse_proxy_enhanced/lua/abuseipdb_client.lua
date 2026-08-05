@@ -40,6 +40,7 @@
 --   _G.config.abuseipdb – api_key / confidence_minimum / daily_check_limit.
 
 local cjson = require "cjson"
+local abuseipdb_rules = require "abuseipdb_rules"
 
 local http_ok, http = pcall(require, "resty.http")
 
@@ -263,23 +264,13 @@ function _M.check_ip_async(ip)
     end
 end
 
--- Maps a router.lua honeypot_reason to AbuseIPDB report category IDs.
--- Category reference: https://www.abuseipdb.com/categories
-local REASON_CATEGORIES = {
-    cve_pattern_match               = { 15, 21 },  -- Hacking, Web App Attack
-    vulnerable_plugin_access        = { 15, 21 },
-    multiple_admin_attempts         = { 18 },       -- Brute-Force
-    rapid_automation_detected       = { 19 },       -- Bad Web Bot
-    suspicious_file_upload          = { 21 }        -- Web App Attack
-}
-
---- Whether a given routing reason is confident enough to justify reporting
---- the IP to AbuseIPDB (deterministic signal, not an aggregate heuristic).
---- @param reason string  routing_decision.session_data.honeypot_reason
---- @return boolean
-function _M.is_reportable_reason(reason)
-    return REASON_CATEGORIES[reason] ~= nil
-end
+-- REASON_CATEGORIES / is_reportable_reason moved to abuseipdb_rules.lua
+-- (pure reason->category-ID whitelist + lookup, architecture.canvas's
+-- lowest-priority refactor candidate -- extracted for consistency with the
+-- rest of this session's pure/adapter splits, see tests/test_abuseipdb_rules.lua).
+-- Re-exported here for backward compatibility with anything already calling
+-- abuseipdb_client.is_reportable_reason() directly.
+_M.is_reportable_reason = abuseipdb_rules.is_reportable_reason
 
 -- ---------------------------------------------------------------------------
 -- report_ip_async(ip, reason, details)
@@ -310,11 +301,8 @@ function _M.report_ip_async(ip, reason, details)
     end
     threat_intel:set(dedup_key, true, 86400)
 
-    local categories = REASON_CATEGORIES[reason]
-    local comment = "Honeypot detection: " .. reason
-    if details and details.matched_cves then
-        comment = comment .. " (CVEs: " .. table.concat(details.matched_cves, ", ") .. ")"
-    end
+    local categories = abuseipdb_rules.get_categories(reason)
+    local comment = abuseipdb_rules.build_report_comment(reason, details)
 
     local ok, err = ngx.timer.at(0, function(premature)
         if premature then return end

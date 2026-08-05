@@ -156,13 +156,17 @@ As of this session, the request-handling Lua code follows a deliberate **pipelin
 | `router.lua` | `router_rules.lua` | 29 | Routing predicates (not the staged `decide_route()` itself — see below) |
 | `vulnerability_handler.lua` | `vulnerability_rules.lua` | 16 | CVE + exploit-kit pattern matching |
 | `upload_handler.lua` | `upload_rules.lua` | 32 | File-upload threat scoring |
+| `session_handler.lua` | `session_rules.lua` | 21 | Session anomaly detection + honeypot-routing eligibility |
+| `admin_handler.lua` | `admin_rules.lua` | 37 | Login/brute-force scoring, admin-pattern detection, ajax-action matching, credential-stuffing scoring |
+| `honeytoken_handler.lua` | `honeytoken_rules.lua` | 9 | Token-in-corpus matching |
+| `abuseipdb_client.lua` | `abuseipdb_rules.lua` | 14 | Report-eligibility + category mapping |
 | — | `prompt_injection_filter.lua` | 20 | OWASP LLM01-style detection (already pure by design, the original model for this pattern) |
 | — | `sophistication_analyzer.lua` | (fixed, untested pre-session) | Attacker classification |
 | — | `lua_pattern_utils.lua` | 9 | Shared `url_decode`/`escape_pattern`, deduplicated from 3 copies |
 
-**143 unit tests total, all passing** (`cd openstack-work/reverse_proxy_enhanced/lua/tests && for f in test_*.lua; do lua "$f"; done`). `router.decide_route()` deliberately stays impure — its 10-stage pipeline interleaves session mutation with Redis/AbuseIPDB I/O too deeply to safely extract without risking a bug in the single most consequential function in the system; only its self-contained predicates (`is_static_asset`, `is_admin_access`, `is_rapid_automation`, `is_suspicious_upload`, `is_vulnerable_plugin_access`) were moved out.
+**224 unit tests total, all passing** (`cd openstack-work/reverse_proxy_enhanced/lua/tests && for f in test_*.lua; do lua "$f"; done`). `router.decide_route()` deliberately stays impure — its 10-stage pipeline interleaves session mutation with Redis/AbuseIPDB I/O too deeply to safely extract without risking a bug in the single most consequential function in the system; only its self-contained predicates (`is_static_asset`, `is_admin_access`, `is_rapid_automation`, `is_suspicious_upload`, `is_vulnerable_plugin_access`) were moved out.
 
-**Not yet split** (assessed, lower value/higher risk than the above): `session_handler.lua`, `honeytoken_handler.lua`, `admin_handler.lua`, `abuseipdb_client.lua` are I/O-dominated with little pure logic. `pool_router.lua` is pure I/O with zero pattern-matching — no split needed, already clean.
+**Every `architecture.canvas` refactor candidate is now either split or confirmed to need no split.** The four adapters above (`session_handler.lua`, `admin_handler.lua`, `honeytoken_handler.lua`, `abuseipdb_client.lua`) were originally assessed as "I/O-dominated, lower value" and left unsplit — a later pass found genuinely pure decision cores in all four anyway (81 new tests) once the `ngx.*`/`_G.*` reads were turned into parameters. One real bug surfaced doing it: `session_handler.lua` had its own third, never-reconciled copy of the static-asset check (`router_rules.lua` and `threat_rules.lua` already document reconciling two disagreeing copies of this same check) that still didn't strip the query string, undercounting `request_count` for static-asset loads with cache-busting query strings. `pool_router.lua` is the one node that was assessed and correctly left alone both times — 100% Redis I/O, zero pattern-matching, no pure core exists to extract.
 
 Writing these tests surfaced **six real, previously-invisible bugs**, all fixed and verified live:
 1. `sophistication_analyzer.lua`'s `signals` audit list was silently empty on any session under 3 requests (Lua `ipairs`-over-a-leading-`nil`-hole gotcha).
@@ -322,7 +326,7 @@ Cross-referenced against internal telemetry: the agent's session classified as `
 
 ### 5.3 Unit tests
 
-143 tests across 5 suites (`tests/test_*.lua`), zero `ngx.*` dependency, runnable with a plain `lua` interpreter — see §3.2.
+224 tests across 10 suites (`tests/test_*.lua`), zero `ngx.*` dependency, runnable with a plain `lua` interpreter — see §3.2.
 
 ---
 
@@ -340,7 +344,7 @@ To enable: set `ELK_ENABLED=true` plus `ELASTICSEARCH_HOST`/`PORT`/credentials i
 
 See `architecture.canvas` (open the repo root as an Obsidian vault) for the full component-by-component diagram — 38 nodes, responsibility/refactoring-needs/overlap-to-fuse notes on every one, color-coded by status. It was lost for a stretch of this project's history (never committed to git, removed during an uncommitted cleanup pass) and has since been restored and brought up to date with everything described in this file, including this session's fixes. §3.2 and this section summarize the same information in prose below.
 
-Short version: this isn't one application, so MVC doesn't fit — it's three subsystems with their own idioms (a WordPress app with its own hook/theme conventions, Docker-Compose infra, and the actual thesis contribution: the Lua detection pipeline). For that pipeline, the chosen pattern is a **numbered middleware chain built from pure decision cores + thin I/O adapters** (§3.2). `lua_pattern_utils.lua` is the one concrete code-level "fuse" executed this session, consolidating `url_decode`/`escape_pattern`, which had drifted into 3 independent copies.
+Short version: this isn't one application, so MVC doesn't fit — it's three subsystems with their own idioms (a WordPress app with its own hook/theme conventions, Docker-Compose infra, and the actual thesis contribution: the Lua detection pipeline). For that pipeline, the chosen pattern is a **numbered middleware chain built from pure decision cores + thin I/O adapters** (§3.2). `lua_pattern_utils.lua` is one concrete code-level "fuse" executed this session, consolidating `url_decode`/`escape_pattern`, which had drifted into 3 independent copies. A second, later fuse: `session_handler.lua`'s own copy of the static-asset check (a third, never-reconciled duplicate of the same `router_rules.lua`/`threat_rules.lua` check) was replaced with a direct call to `router_rules.is_static_asset()`.
 
 Two other real duplication/overlap findings, not (yet) fixed at the code level:
 - Two near-identical `header_filter_by_lua_block`s in `nginx.conf` (`[HEADER_FILTER]` server-level and `[LOCATION / HEADER]` location-level) do almost the same thing.
@@ -357,7 +361,7 @@ Two other real duplication/overlap findings, not (yet) fixed at the code level:
 - Honeytokens
 - Botnet slowdown (tarpit delays)
 - AbuseIPDB, sophistication scoring, prompt injection filter, blind pentest evaluation (this session)
-- Pure/adapter Lua refactor + 143 unit tests (this session)
+- Pure/adapter Lua refactor + 224 unit tests (this session, across two passes — see §7)
 - Production hardening: XML-RPC, hotlink protection, version obfuscation, backup automation, container containment, `scripts/hardening_audit.sh` (this session — see §9.3)
 
 ### Still open
@@ -463,6 +467,7 @@ Verified live end-to-end after all four fixes: `docker compose exec backup_servi
 - **Blind pentest evaluation**: see §5.2.
 - **Local deployment stood up** (the `arch` VM referenced in older docs/`~/.ssh/config` is stale/gone) — required regenerating SSL certs on the host (the containerized `init_setup` cert-gen hung/split unpredictably, not fully diagnosed), importing the SQL dump into all four MySQL instances, fixing `siteurl`/`home` in `wp_options` (dumped as `http://openstack.local`), and adding `FS_METHOD=direct` to `wp-config.php` (a real, pre-existing bug — WordPress was attempting FTP-based filesystem access with no FTP configured).
 - **Lua pure/adapter refactor + `lua_pattern_utils.lua` fuse**: see §3.2 and §7.
+- **All remaining `architecture.canvas` refactor candidates completed**: `session_rules.lua`, `admin_rules.lua`, `honeytoken_rules.lua`, `abuseipdb_rules.lua` — 4 new pure modules, 81 new unit tests (224 total, up from 143). `pool_router.lua` re-assessed and confirmed to need no split (100% Redis I/O, no pure core exists). Found and fixed a third undiscovered duplicate of the static-asset query-string-stripping check (`session_handler.lua`'s own copy, the one that was never reconciled when the other two were). Verified live end-to-end (admin access, login POST, admin-ajax, all session/threat paths) with zero Lua errors; `scripts/hardening_audit.sh` and `scripts/redis_key_audit.sh` both still fully green. See §7 / `architecture.canvas`.
 - **`architecture.canvas` restored and brought current**, then **dead code and stale duplicates it flagged were actually removed**: `elk_logger.lua` (confirmed dead code — never `require`d anywhere, its own header comment said so) and `admin_handler.lua.backup`/`admin_handler.lua.bak` (byte-identical to each other, both a stale pre-fix snapshot of the real file) deleted outright. Verified live: clean `reverse_proxy` restart, homepage `200`, no Lua errors, `scripts/hardening_audit.sh` all green. The canvas itself updated accordingly (40 → 38 nodes, both removed nodes' edges pruned) — see §7.
 
 ---
