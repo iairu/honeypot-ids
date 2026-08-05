@@ -338,7 +338,7 @@ To enable: set `ELK_ENABLED=true` plus `ELASTICSEARCH_HOST`/`PORT`/credentials i
 
 ## 7. Refactoring History & Framework Choice
 
-See `architecture.canvas` (open the repo root as an Obsidian vault) for the full component-by-component diagram — 40 nodes, responsibility/refactoring-needs/overlap-to-fuse notes on every one, color-coded by status. It was lost for a stretch of this project's history (never committed to git, removed during an uncommitted cleanup pass) and has since been restored and brought up to date with everything described in this file, including this session's fixes. §3.2 and this section summarize the same information in prose below.
+See `architecture.canvas` (open the repo root as an Obsidian vault) for the full component-by-component diagram — 38 nodes, responsibility/refactoring-needs/overlap-to-fuse notes on every one, color-coded by status. It was lost for a stretch of this project's history (never committed to git, removed during an uncommitted cleanup pass) and has since been restored and brought up to date with everything described in this file, including this session's fixes. §3.2 and this section summarize the same information in prose below.
 
 Short version: this isn't one application, so MVC doesn't fit — it's three subsystems with their own idioms (a WordPress app with its own hook/theme conventions, Docker-Compose infra, and the actual thesis contribution: the Lua detection pipeline). For that pipeline, the chosen pattern is a **numbered middleware chain built from pure decision cores + thin I/O adapters** (§3.2). `lua_pattern_utils.lua` is the one concrete code-level "fuse" executed this session, consolidating `url_decode`/`escape_pattern`, which had drifted into 3 independent copies.
 
@@ -463,13 +463,14 @@ Verified live end-to-end after all four fixes: `docker compose exec backup_servi
 - **Blind pentest evaluation**: see §5.2.
 - **Local deployment stood up** (the `arch` VM referenced in older docs/`~/.ssh/config` is stale/gone) — required regenerating SSL certs on the host (the containerized `init_setup` cert-gen hung/split unpredictably, not fully diagnosed), importing the SQL dump into all four MySQL instances, fixing `siteurl`/`home` in `wp_options` (dumped as `http://openstack.local`), and adding `FS_METHOD=direct` to `wp-config.php` (a real, pre-existing bug — WordPress was attempting FTP-based filesystem access with no FTP configured).
 - **Lua pure/adapter refactor + `lua_pattern_utils.lua` fuse**: see §3.2 and §7.
+- **`architecture.canvas` restored and brought current**, then **dead code and stale duplicates it flagged were actually removed**: `elk_logger.lua` (confirmed dead code — never `require`d anywhere, its own header comment said so) and `admin_handler.lua.backup`/`admin_handler.lua.bak` (byte-identical to each other, both a stale pre-fix snapshot of the real file) deleted outright. Verified live: clean `reverse_proxy` restart, homepage `200`, no Lua errors, `scripts/hardening_audit.sh` all green. The canvas itself updated accordingly (40 → 38 nodes, both removed nodes' edges pruned) — see §7.
 
 ---
 
 ## 11. Related documentation still living in their own files
 
 - `openstack-work/testing/BLIND_PENTEST_PROTOCOL.md`, `openstack-work/testing/blind_pentest_report_run1.md` — blind pentest protocol + results
-- `architecture.canvas` (Obsidian Canvas, full system diagram — 40 nodes, 28 edges, responsibility/refactoring/overlap notes per node, color-coded by status) — restored and brought current this session after being lost for a stretch of this project's history; open the repo root as an Obsidian vault to browse it
+- `architecture.canvas` (Obsidian Canvas, full system diagram — 38 nodes, 28 edges, responsibility/refactoring/overlap notes per node, color-coded by status) — restored and brought current this session after being lost for a stretch of this project's history; open the repo root as an Obsidian vault to browse it
 - `openstack-work/elk-siem-testing.md` and `master-thesis-rewrite-plan/` were both referenced from earlier versions of this file but **no longer exist in the repository** — neither was ever committed to git, and both were lost during a later, uncommitted cleanup pass.
 - `openstack-siem-work/elk_dockerized/README.md` — the SIEM sub-project's own setup doc
 
