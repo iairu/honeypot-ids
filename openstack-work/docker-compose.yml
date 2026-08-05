@@ -812,7 +812,6 @@ services:
     command: |
       sh -c "
         apk add --no-cache mysql-client > /dev/null 2>&1
-        chmod +x /backup.sh
         echo 'Backup service started. First backup in 5 minutes...'
         sleep 300
         while true; do
@@ -825,6 +824,19 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # DAC_OVERRIDE: ./backups/ is a host bind mount owned by the host user
+    # (not root), and this container otherwise runs as root (the alpine
+    # base image's default) with every other capability dropped. Without
+    # DAC_OVERRIDE, root inside the container can no longer bypass a
+    # directory's Unix permission bits -- confirmed live: backup.sh's very
+    # first `mkdir "${DB_BACKUP_DIR}"` failed with "Permission denied" every
+    # single run, so backup_service had been running for hours without ever
+    # producing one actual backup file, silently. This is the one
+    # capability that specifically restores "root can write into a
+    # directory it doesn't own", which is exactly what's needed here and
+    # nothing more.
+    cap_add:
+      - DAC_OVERRIDE
     mem_limit: 256m
     cpus: "0.25"
     pids_limit: 50

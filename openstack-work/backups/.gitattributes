@@ -1,0 +1,2 @@
+db/*.sql.gz filter=lfs diff=lfs merge=lfs -text
+wp/*.tar.gz filter=lfs diff=lfs merge=lfs -text

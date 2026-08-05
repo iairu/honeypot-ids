@@ -28,7 +28,15 @@
 #   - Backup files are owned by the container's UID (root inside, but the host
 #     bind-mount directory should have appropriate host-side permissions).
 
-set -eu
+# pipefail is required so that `mysqldump ... | gzip -9 > file` reports
+# mysqldump's exit status, not gzip's. Without it, a failed/empty mysqldump
+# still produces a "successful" empty gzip file, and the
+# `if mysqldump | gzip; then success; else failure; fi` check below
+# silently logs a fake success -- confirmed live: mysqldump was failing on
+# a TLS certificate error on every single run (see --skip-ssl below), and
+# the resulting empty 4KB .sql.gz (zero actual SQL content) was logged as
+# "OK db_dump" regardless, because gzip itself never fails on empty input.
+set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # Configuration – overridable via environment variables injected by Docker Compose.
@@ -93,7 +101,11 @@ info "Step 1/3: Dumping MySQL database '${MYSQL_DATABASE}' from host '${MYSQL_HO
 
 # Write password to a temporary option file to avoid shell history / /proc
 # exposure.  The file is removed in the EXIT trap below.
-MYSQL_OPT_FILE="$(mktemp /tmp/mysql-backup-XXXXXX.cnf)"
+# BusyBox's mktemp (this runs on alpine) requires the template to end in
+# XXXXXX with no suffix after it -- unlike GNU mktemp, ".cnf" after the X's
+# fails with "Invalid argument". No functional need for the extension:
+# mysqldump's --defaults-extra-file doesn't care what the path looks like.
+MYSQL_OPT_FILE="$(mktemp /tmp/mysql-backup-XXXXXX)"
 trap 'rm -f "${MYSQL_OPT_FILE}"' EXIT
 
 cat > "${MYSQL_OPT_FILE}" << MYSQLCONF
@@ -102,10 +114,19 @@ password=${MYSQL_PASSWORD}
 MYSQLCONF
 chmod 600 "${MYSQL_OPT_FILE}"
 
+# --skip-ssl: MySQL 8+ enables TLS by default and auto-generates a
+# self-signed server cert; mysqldump then refuses it as untrusted ("TLS/SSL
+# error: Certificate verification failure"), which -- combined with the
+# missing pipefail above -- silently produced an empty 4KB .sql.gz on every
+# run instead of a real dump. This is a private container-to-container
+# connection on production_network, not a path exposed to the internet, so
+# skipping TLS here is a deliberate, scoped tradeoff, not "disable all
+# security".
 if mysqldump \
         --defaults-extra-file="${MYSQL_OPT_FILE}" \
         --host="${MYSQL_HOST}" \
         --user="${MYSQL_USER}" \
+        --skip-ssl \
         --single-transaction \
         --routines \
         --triggers \
