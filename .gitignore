@@ -17,3 +17,5 @@ _minted
 *.crt
 *.key
 *.srl
+*.sql.gz
+*.tar.gz
