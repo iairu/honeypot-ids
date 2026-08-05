@@ -122,11 +122,21 @@ chmod 600 "${MYSQL_OPT_FILE}"
 # connection on production_network, not a path exposed to the internet, so
 # skipping TLS here is a deliberate, scoped tradeoff, not "disable all
 # security".
+#
+# --no-tablespaces: mysqldump otherwise emits a benign but noisy
+# "Access denied; you need (at least one of) the PROCESS privilege(s)"
+# error, because the backup DB user (production_user, an application-scoped
+# account, not root/SUPER) lacks the global PROCESS privilege that InnoDB
+# tablespace metadata dumping needs. All actual table data still dumps
+# fine either way -- tablespace metadata isn't needed to restore this
+# database -- but leaving it on meant every "successful" backup run also
+# logged what reads like an access-denied failure.
 if mysqldump \
         --defaults-extra-file="${MYSQL_OPT_FILE}" \
         --host="${MYSQL_HOST}" \
         --user="${MYSQL_USER}" \
         --skip-ssl \
+        --no-tablespaces \
         --single-transaction \
         --routines \
         --triggers \
