@@ -176,7 +176,16 @@ local function init_worker()
                     local session = cjson.decode(session_data)
                     if session.last_activity and (current_time - session.last_activity) > _G.config.session.max_idle_time then
                         sessions_dict:delete(key)
-                        red:del("session:" .. key)
+                        -- `key` here is already the full "session:<id>" dict
+                        -- key (that's how session_handler.lua stores it) --
+                        -- prepending "session:" again produced
+                        -- "session:session:<id>", which never matched the
+                        -- real Redis key, so this red:del() was always a
+                        -- silent no-op. Harmless in practice (the Redis
+                        -- record has its own matching TTL via setex and
+                        -- expires on its own), but not what this was meant
+                        -- to do.
+                        red:del(key)
                         cleaned = cleaned + 1
                     end
                 end
@@ -226,21 +235,41 @@ local function init_worker()
                         red:lpush("suricata_alerts", cjson.encode(alert_data))
                         red:ltrim("suricata_alerts", 0, 1000) -- Keep only last 1000 alerts
                         
-                        -- Update threat intelligence
+                        -- Update threat intelligence.
+                        -- red:get() returns the ngx.null userdata sentinel for
+                        -- a missing key, not Lua nil -- "if current_intel then"
+                        -- doesn't catch that (ngx.null is truthy), so
+                        -- cjson.decode() would crash with "string expected,
+                        -- got userdata" on a fresh/flushed Redis (same bug
+                        -- already fixed this session in admin_handler.lua,
+                        -- upload_handler.lua, and vulnerability_handler.lua).
                         local current_intel = red:get("threat_ips")
                         local threat_ips = {}
-                        if current_intel then
+                        if current_intel and current_intel ~= ngx.null then
                             threat_ips = cjson.decode(current_intel)
                         end
-                        
+
                         threat_ips[src_ip] = {
                             score = math.min((threat_ips[src_ip] and threat_ips[src_ip].score or 0) + 20, 100),
                             reason = "snort_alert_" .. classification,
                             updated = ngx.time(),
                             alert_count = (threat_ips[src_ip] and threat_ips[src_ip].alert_count or 0) + 1
                         }
-                        
-                        red:set("threat_ips", cjson.encode(threat_ips))
+
+                        local encoded_threat_ips = cjson.encode(threat_ips)
+                        red:set("threat_ips", encoded_threat_ips)
+
+                        -- Mirror into the shared-memory cache threat_analyzer.lua
+                        -- actually reads on the hot path (it never touches Redis
+                        -- directly, for latency) -- without this, a Suricata
+                        -- alert would update Redis's durable threat_ips record
+                        -- but have zero effect on live routing/scoring until
+                        -- something else happened to refresh the shared dict.
+                        local threat_intel_shared = ngx.shared.threat_intel
+                        if threat_intel_shared then
+                            threat_intel_shared:set("threat_ips", encoded_threat_ips)
+                        end
+
                         alerts_processed = alerts_processed + 1
                             
                         ngx.log(ngx.WARN, "Suricata alert processed: ", src_ip, " -> ", classification)

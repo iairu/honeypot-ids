@@ -110,6 +110,7 @@ openstack-work/
 ├── docker-compose.yml            # ~14 services, see §3
 ├── suricata_config/, suricata_rules/, suricata_logs/
 ├── vector/                       # local log shipper config (Vector, mTLS out to SIEM)
+├── scripts/redis_key_audit.sh    # live Redis keyspace vs. §3.5's documented schema — see §3.5
 ├── ssl_certificates/             # gitignored, regenerate on fresh clone
 └── .env / .env.example
 
@@ -184,7 +185,56 @@ Networks: `production_network`, `honeypot_network`, `monitoring_network`, `sessi
 
 ### 3.5 Session, Redis & IP-based state
 
-Redis (`session_store`) backs: session records (`session:*`), rate-limit counters (`ip:*`, plus a separate `attempt_key` namespace in `admin_handler.lua`), sticky pool assignments, and the shared `threat_ips` reputation map. Worker-local `ngx.shared` dicts cache session data for 5 minutes to cut Redis round-trips. The key-naming schema is currently only discoverable by grepping across ~6 Lua files — no single reference doc exists for it (candidate for a future addition here).
+There are **two separate key-value stores** in play, and a recurring source of confusion (`ip:*` and `attempt_key`, previously miscategorized as Redis in an earlier version of this section, are actually neither) is that a name alone doesn't tell you which one a given key lives in:
+
+- **Redis (`session_store` container)** — durable, shared across all `reverse_proxy` worker processes and survives a container restart.
+- **`ngx.shared` dicts** — four separate in-process memory regions (`sessions`, `threat_intel`, `rate_limit`, `honeypot_routes`; sized in `nginx.conf`'s `lua_shared_dict` directives), shared across worker processes *within one nginx container* but **not** durable — lost on reload/restart, and not shared with any other `reverse_proxy` replica if one is ever added.
+
+This schema was reconstructed by reading all ~10 Lua files that touch either store (there is no other source of truth for it) — verify against the code directly if a key's exact behavior matters, since this table can drift the same way the code itself did.
+
+**Redis keys** (`session_store`, `SELECT 0` unless noted):
+
+| Key / pattern | Type | TTL | Written by | Read by |
+|---|---|---|---|---|
+| `session:<session_id>` | string (JSON) | `config.session.max_idle_time` (`SETEX`) | `session_handler.lua` | `session_handler.lua` |
+| `active_sessions` | set | none | `session_handler.lua` (`SADD` on create) | **nothing** — write-only, never read by any Lua code |
+| `compromised_sessions` | set | 24h, reset on every `SADD` (whole-set TTL, not per-member) | `session_handler.lua` | **nothing** — write-only |
+| `threat_ips` | string (single JSON blob, `{ip: {score, reason, updated, ...}}`) | **none — unbounded growth**, never trimmed or expired | `init_worker.lua` (Suricata alert parser), `admin_handler.lua`, `vulnerability_handler.lua` (×2), `upload_handler.lua` | same four files (each does a read-modify-write cycle) |
+| `honeytoken:<token_id>` | string (JSON) | 2592000s (30d) | `honeytoken_handler.lua` | `honeytoken_handler.lua` |
+| `honeypot_pool_ip:<ip>` | string (pool number) | 86400s (24h), refreshed on every hit | `pool_router.lua` | `pool_router.lua` — sticky pool assignment |
+| `honeypot_pool:counter` | string (int, `INCR`) | none | `pool_router.lua` | `pool_router.lua` — round-robin pool assignment |
+| `admin_access_logs` | list | none, capped to 1000 via `LTRIM` | `admin_handler.lua` | `admin_handler.lua` (`LRANGE`, last 100, for the admin log view) |
+| `vulnerability_events` | list | none, capped to 1000 via `LTRIM` | `vulnerability_handler.lua` | **nothing** — write-only forensic trail |
+| `vulnerability_scans` | list | none, capped to 1000 via `LTRIM` | `vulnerability_handler.lua` | **nothing** — write-only forensic trail |
+| `cve:<cve_id>` | list | 30d, capped to 100 via `LTRIM` | `vulnerability_handler.lua` | **nothing** — write-only forensic trail |
+| `vuln_by_ip:<ip>` | list | 7d, capped to 100; a `cleanup_old_vulnerability_data()` job backfills the TTL on any key missing one | `vulnerability_handler.lua` | same cleanup job (`KEYS vuln_by_ip:*` scan) |
+| `vuln_stats` | hash (`HINCRBY` counters: `total_attempts`, `unique_ips`, one field per CVE) | none | `vulnerability_handler.lua` | `vulnerability_handler.lua` (`get_vulnerability_stats()`, `HGETALL`) |
+| `suspicious_uploads` | list | none, capped to 1000 via `LTRIM` | `upload_handler.lua` | `upload_handler.lua` (`LRANGE`, for the upload security report) |
+| `suricata_alerts` | list | none, capped to ~1000 via `LTRIM` | `init_worker.lua` (Suricata `fast.log` tailer) | **nothing** — write-only forensic trail |
+| `suricata_log_position` | string (byte offset int) | none | `init_worker.lua` | `init_worker.lua` — bookmark for tailing `fast.log` across timer runs |
+
+**`ngx.shared` dict keys** (in-process, per-`reverse_proxy`-container, lost on reload):
+
+| Dict | Key pattern | TTL | Purpose |
+|---|---|---|---|
+| `sessions` | `session:<session_id>` (same prefix as the Redis key — deliberate, makes the two easy to cross-reference) | 300s (5 min) | Fast local mirror of the Redis session record, to skip a Redis round-trip on every request |
+| `threat_intel` | `threat_ips` (same key name as the Redis key it mirrors — a single JSON blob, not a real hash) | none | The copy `threat_analyzer.lua` actually reads on the hot request path — it **never queries Redis directly**, for latency |
+| `threat_intel` | `health:<backend_name>` | 300s (5 min, set in `health_check.lua`) | Backend health-check status (`health_check.lua` reuses the `threat_intel` dict rather than a dedicated one — worth knowing if you're hunting for health data and only think to check `rate_limit`) |
+| `threat_intel` | `abuseipdb_checked:<ip>`, `abuseipdb_reported:<ip>` | 3600s / 86400s respectively | AbuseIPDB on-demand-check and report-back de-duplication, so the same IP isn't queried/reported more than once per window |
+| `threat_intel` | `abuseipdb_quota_date`, `abuseipdb_quota_count` | none (date-keyed, self-resetting daily) | Daily AbuseIPDB API call budget tracking |
+| `threat_intel` | `malicious_agents` | none | Known-malicious User-Agent reputation list |
+| `rate_limit` | `ip:<ip>` | rolling 60s window | Per-IP request-rate counter, read by `threat_analyzer.lua`'s `update_rate_limit()` |
+| `rate_limit` | `admin_attempts:<ip>` (this is the `attempt_key` local variable in `admin_handler.lua` — not a separate Redis namespace) | 1800s (30 min) | Admin-login brute-force attempt counter |
+| `honeypot_routes` | `pool_ip:<ip>` (**note**: different prefix string than Redis's `honeypot_pool_ip:<ip>` for the same data — `pool_ip:` vs `honeypot_pool_ip:`, easy to typo one into the other while grepping) | 300s (5 min) | Fast local mirror of the sticky pool assignment |
+
+**Findings from building this table** (real, previously undocumented, found by tracing every read/write rather than assuming symmetry):
+- **Fixed this session**: `init_worker.lua`'s Suricata-alert handler, and two call sites each in `vulnerability_handler.lua` and `upload_handler.lua`, updated Redis's `threat_ips` but never mirrored the write into the `threat_intel` shared dict — meaning Suricata detections, vulnerability-scan detections, and suspicious-upload detections were all being durably recorded but had **zero effect on live request routing/scoring**, since `threat_analyzer.lua` only ever reads the shared-dict copy. Only `admin_handler.lua` and `abuseipdb_client.lua` were keeping both copies in sync. All four now mirror the write, matching the existing pattern.
+- **Fixed this session**: `init_worker.lua`'s Suricata handler read `threat_ips` without checking Redis's `ngx.null` sentinel (the same `red:get()`-returns-truthy-userdata-not-nil bug already fixed in four other places this session) — could crash on a fresh/flushed Redis.
+- **Fixed this session**: `init_worker.lua`'s session-cleanup timer iterated `ngx.shared.sessions`' own keys (already `"session:<id>"`) and then called `red:del("session:" .. key)`, double-prefixing to `"session:session:<id>"` — a silent no-op that never actually deleted the Redis-side record. Harmless in practice (the Redis key has its own matching TTL and expires on its own), but not what the code was trying to do.
+- **Not fixed, just documented**: `active_sessions`, `compromised_sessions`, `vulnerability_events`, `vulnerability_scans`, `cve:*`, and `suricata_alerts` are all write-only — populated on every relevant event, never read by any code path. They function as raw forensic trails inspectable via `redis-cli`/the audit script below, not as live application state. This may be intentional (data for the "ELK Dashboards" gap noted in §10's "Still open" list to eventually visualize) rather than a bug — flagged here since it wasn't obvious without reading every file.
+- **Not fixed, just documented**: `threat_ips` (both the Redis blob and its shared-dict mirror) grows forever — no per-entry expiry, no cap. For a real long-running deployment this is worth revisiting (e.g. drop entries not updated in N days), but wasn't in scope for this pass.
+
+**Live verification**: `openstack-work/scripts/redis_key_audit.sh` connects to the running `session_store` container and prints every key currently present, grouped by the prefixes documented above (with type, TTL, and count per group), plus a "keys present but not in this table" section so the table and the live system can be diffed against each other going forward instead of silently drifting apart again.
 
 ### 3.6 Suricata IDS
 

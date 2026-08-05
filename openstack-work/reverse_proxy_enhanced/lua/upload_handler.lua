@@ -180,8 +180,19 @@ function _M.update_ip_threat_for_upload(ip, upload_threat_score)
     threats[ip].updated = ngx.time()
     threats[ip].upload_attempts = (threats[ip].upload_attempts or 0) + 1
     
-    red:set('threat_ips', cjson.encode(threats))
+    local encoded_threats = cjson.encode(threats)
+    red:set('threat_ips', encoded_threats)
     _G.redis_pool.close_connection(red)
+
+    -- Mirror into the shared-memory cache threat_analyzer.lua actually reads
+    -- on the hot path (it never touches Redis directly, for latency) --
+    -- without this, a suspicious-upload detection would update Redis's
+    -- durable threat_ips record but have zero effect on live routing/scoring
+    -- until something else happened to refresh the shared dict.
+    local threat_intel_shared = ngx.shared.threat_intel
+    if threat_intel_shared then
+        threat_intel_shared:set("threat_ips", encoded_threats)
+    end
 end
 
 -- Generate upload security report
