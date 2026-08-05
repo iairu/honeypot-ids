@@ -639,8 +639,38 @@ services:
       - SYS_NICE
     cap_drop:
       - ALL
-    command: |
-      sh -c "
+    # entrypoint override: the jasonish/suricata image's own
+    # /docker-entrypoint.sh does `exec $@` (UNQUOTED) to pass through a
+    # custom command. Since `command:` below is a single multi-line shell
+    # script string, Compose passes it to that entrypoint as ONE argument --
+    # but the unquoted `$@` in the image's entrypoint re-splits it on
+    # whitespace/newlines, shredding the script into dozens of separate
+    # arguments. `sh -c` then only sees the first fragment ("echo") as its
+    # actual script; everything else silently becomes discarded positional
+    # parameters. Net effect: the container ran essentially `sh -c echo`,
+    # producing no real output and exiting in well under a second --
+    # confirmed live: `docker compose ps -a` showed suricata_ids exiting
+    # with code 0 immediately after every start, with completely empty logs
+    # even for a trivial `echo` test command, and the same script worked
+    # correctly the moment the image's entrypoint was bypassed. This is a
+    # bug in the upstream image, not this project's script. Fixed by
+    # overriding the entrypoint so our command reaches `sh -c` directly,
+    # without going through the image's broken passthrough logic at all.
+    #
+    # `command` MUST be a YAML list with exactly one element (the script, as
+    # a single block-scalar string) rather than a bare multi-line scalar.
+    # A bare scalar is parsed by Compose in "shell form" and gets
+    # shell-word-split into a *separate* array element per token before
+    # being appended after the exec-form `entrypoint` -- so `/bin/sh -c`
+    # ended up receiving "echo" as its `-c` script and every other word as a
+    # discarded positional parameter, reproducing the exact same
+    # word-splitting corruption this override was meant to fix, just one
+    # layer up (in Compose's own command parsing instead of the image
+    # entrypoint's). Wrapping it as a one-item list forces Compose to treat
+    # the whole block as a single opaque string.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
         echo 'Starting Suricata IDS...'
 
         # Ensure log directory exists and is writable
@@ -652,22 +682,31 @@ services:
         if [ -f /var/lib/suricata/rules/local.rules ]; then
           echo '  Custom rules found at /var/lib/suricata/rules/local.rules'
         else
-          echo '  Warning: local.rules not found – Suricata will use built-in rules only'
+          echo '  Warning: local.rules not found - Suricata will use built-in rules only'
         fi
 
-        # Start Suricata in AF_PACKET mode on eth0 interface.
-        # AF_PACKET is the correct capture method for Docker bridge networks.
-        # Run as daemon (-D) and keep container alive
-        suricata -c /etc/suricata/suricata.yaml \
-                 --af-packet eth0 \
-                 -l /var/log/suricata -D
-
-        # Keep container running
-        tail -f /dev/null
-
-        # Keep container running
-        tail -f /dev/null
-      "
+        # Start Suricata in AF_PACKET mode, in the FOREGROUND (no -D/daemonize)
+        # so the suricata process itself is the container's main process --
+        # this also removes the need for a separate `tail -f /dev/null`
+        # keep-alive trick, whose behavior with BusyBox's tail implementation
+        # on /dev/null was never actually verified to block indefinitely on
+        # this image's base OS.
+        #
+        # `--af-packet` is used bare (no interface value) rather than
+        # `--af-packet eth0`. Suricata's real CLI syntax is
+        # `--af-packet[=<dev>]` -- an *equals sign* is required to attach an
+        # interface value; a space-separated `eth0` is instead parsed as a
+        # separate positional argument, which suricata treats as an ad-hoc
+        # BPF filter expression to compile. "eth0" is not a valid BPF filter,
+        # so that produced `failed to compile BPF "eth0": can't parse filter
+        # expression: syntax error` -- confirmed live, and confirmed via
+        # `suricata --help` that the space-separated form was never valid.
+        # Since suricata_config/suricata.yaml's own `af-packet:` section
+        # already fully specifies `interface: eth0` (plus thread count,
+        # packet size, bpf-filter, etc.), bare `--af-packet` is both the fix
+        # and the more maintainable form -- the interface only needs to be
+        # named in one place.
+        exec suricata -c /etc/suricata/suricata.yaml --af-packet -l /var/log/suricata
     healthcheck:
       test: ["CMD", "test", "-f", "/var/log/suricata/fast.log"]
       interval: 30s
