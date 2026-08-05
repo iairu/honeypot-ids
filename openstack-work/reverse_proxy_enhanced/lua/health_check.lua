@@ -7,10 +7,24 @@ local cjson = require "cjson"
 local _M = {}
 
 -- Health check configuration
-local HEALTH_CHECK_INTERVAL = 10 -- seconds
-local HEALTH_CHECK_TIMEOUT = 2000 -- milliseconds
+--
+-- HEALTH_CHECK_TIMEOUT was previously declared here but never actually
+-- consumed -- check_backend() below hardcoded its own literal 2000ms
+-- instead. That mismatch is exactly the kind of thing that silently defeats
+-- an attempt to tune this module later (change the constant, nothing
+-- happens). Fixed: check_backend() now reads this constant, and its value
+-- was raised from 2000ms to 5000ms after a real false-positive was traced
+-- to it -- a legitimate, heavy page load (30+ concurrent asset requests)
+-- pushed backend response times past 5s under transient PHP-FPM/DB
+-- contention, and the 2s health-check timeout tripped on exactly that
+-- contention, marking a perfectly healthy backend UNHEALTHY. See
+-- check-me.log in the repo root for the original incident.
+local HEALTH_CHECK_INTERVAL = 10 -- seconds. See init_worker.lua's use of this.
+local HEALTH_CHECK_TIMEOUT = 5000 -- milliseconds
 local UNHEALTHY_THRESHOLD = 3
 local HEALTHY_THRESHOLD = 2
+
+_M.HEALTH_CHECK_INTERVAL = HEALTH_CHECK_INTERVAL
 
 -- Shared dictionary for health status
 local health_status = ngx.shared.threat_intel -- Reuse existing dict
@@ -18,7 +32,7 @@ local health_status = ngx.shared.threat_intel -- Reuse existing dict
 -- Check if a backend is healthy
 function _M.check_backend(backend_name, backend_url)
     local httpc = http.new()
-    httpc:set_timeouts(2000, 2000, 2000) -- 2s for all operations
+    httpc:set_timeouts(HEALTH_CHECK_TIMEOUT, HEALTH_CHECK_TIMEOUT, HEALTH_CHECK_TIMEOUT)
     
     -- Use root path instead of /nginx-health since WordPress doesn't have that endpoint
     local health_endpoint = backend_url .. "/"

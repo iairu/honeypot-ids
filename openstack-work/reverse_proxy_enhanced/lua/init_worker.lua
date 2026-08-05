@@ -99,33 +99,57 @@ local function init_worker()
         ngx.log(ngx.ERR, "Failed to schedule connection pre-warming: ", err)
     end
     
-    -- Schedule periodic health checks for production and all honeypot pool backends.
-    -- The health status written here is read by pool_router.lua to decide whether
-    -- to fall back to a different pool when the assigned one is unhealthy.
-    if health_check then
-        -- Number of honeypot pool instances (keep in sync with pool_router.lua).
-        local POOL_COUNT_HC = 3
-        local ok, err = ngx.timer.every(10, function()
-            pcall(function()
-                -- Production instance – uses root path (WordPress returns 200-399).
-                health_check.perform_health_check("production_backend", "http://production_eshop")
-
-                -- Each honeypot pool instance checked independently so that a
-                -- single unhealthy pool does not affect the health status of others.
-                for i = 1, POOL_COUNT_HC do
-                    health_check.perform_health_check(
-                        "honeypot_backend_" .. i,
-                        "http://honeypot_eshop_" .. i)
-                end
-            end)
-        end)
-        if not ok then
-            ngx.log(ngx.ERR, "Failed to schedule health checks: ", err)
-        end
-    end
-    
     -- Set up periodic tasks only in worker 0 to avoid duplication
     if ngx.worker.id() == 0 then
+        -- Schedule periodic health checks for production and all honeypot pool
+        -- backends. The health status written here (to the shared
+        -- ngx.shared.threat_intel dict, visible to every worker) is read by
+        -- pool_router.lua's is_pool_healthy()/find_healthy_pool() to decide
+        -- whether to fall back to a different honeypot pool when the assigned
+        -- one is unhealthy -- production has no equivalent fallback target
+        -- (there is only one production instance), so its health status is
+        -- monitoring/logging-only; nginx's own upstream max_fails/fail_timeout
+        -- (nginx.conf) independently provides production failover.
+        --
+        -- This registration used to sit OUTSIDE this worker-0 guard, so every
+        -- nginx worker process ran its own independent copy of this timer --
+        -- with N workers, each backend got checked ~N times every interval
+        -- instead of once, and because all workers' timers fire at roughly
+        -- the same relative offset (they all start at ~the same time), their
+        -- checks landed in the same narrow instant. That let a single moment
+        -- of real, transient backend contention trip "3 consecutive
+        -- failures" across *different workers'* simultaneous checks almost
+        -- instantly, rather than requiring genuine sustained unavailability
+        -- across ~3 real intervals as the threshold is meant to represent --
+        -- confirmed as the root cause of a real false-positive UNHEALTHY
+        -- event in check-me.log (repo root), which fired while a legitimate
+        -- user's page load was in progress. Moving this inside the worker-0
+        -- guard (matching the AbuseIPDB/session-cleanup/Suricata-log-parser
+        -- tasks below, which were already correctly scoped this way) fixes
+        -- both the redundant load and the false-positive race.
+        if health_check then
+            -- Number of honeypot pool instances (keep in sync with pool_router.lua).
+            local POOL_COUNT_HC = 3
+            local interval = health_check.HEALTH_CHECK_INTERVAL or 10
+            local ok, err = ngx.timer.every(interval, function()
+                pcall(function()
+                    -- Production instance – uses root path (WordPress returns 200-399).
+                    health_check.perform_health_check("production_backend", "http://production_eshop")
+
+                    -- Each honeypot pool instance checked independently so that a
+                    -- single unhealthy pool does not affect the health status of others.
+                    for i = 1, POOL_COUNT_HC do
+                        health_check.perform_health_check(
+                            "honeypot_backend_" .. i,
+                            "http://honeypot_eshop_" .. i)
+                    end
+                end)
+            end)
+            if not ok then
+                ngx.log(ngx.ERR, "Failed to schedule health checks: ", err)
+            end
+        end
+
         -- AbuseIPDB bulk blacklist feed. Populates threat_intel.threat_ips
         -- with high-confidence IPs from the free-tier /blacklist endpoint.
         local abuseipdb_ok, abuseipdb_client = pcall(require, "abuseipdb_client")
