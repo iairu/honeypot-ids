@@ -17,8 +17,8 @@
 --   chat-turn delimiter or a system-prompt override. threat_analyzer.lua
 --   therefore wires detect() in as an additional content-inspection stage,
 --   so this module has a genuine, exercised code path today rather than
---   sitting dead until the LLM feature exists (see PROMPT_TODO.md's
---   no-dead-code requirement).
+--   sitting dead until the LLM feature exists (see the repo root README.md's
+--   no-dead-code convention, §7/§9).
 --
 -- THREAT MODEL (OWASP Top 10 for LLM Applications, LLM01: Prompt Injection):
 --   If attacker-controlled request data is ever interpolated into an LLM
