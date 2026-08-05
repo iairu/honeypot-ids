@@ -126,50 +126,12 @@ local function init_worker()
     
     -- Set up periodic tasks only in worker 0 to avoid duplication
     if ngx.worker.id() == 0 then
-        -- -- Start threat intelligence updater
-        -- local function update_threat_intel()
-        --     local red, err = _G.redis_pool.get_connection()
-        --     if not red then
-        --         ngx.log(ngx.ERR, "Failed to connect to Redis for threat intel update: ", err)
-        --         return
-        --     end
-        --     
-        --     -- Update IP reputation data
-        --     if not http then
-        --         ngx.log(ngx.DEBUG, "Skipping threat intel update - lua-resty-http not available")
-        --         _G.redis_pool.close_connection(red)
-        --         return
-        --     end
-        --     
-        --     local httpc = http.new()
-        --     local res, err = httpc:request_uri("https://raw.githubusercontent.com/stamparm/ipsum/master/ipsum.txt", {
-        --         method = "GET",
-        --         ssl_verify = false,
-        --         timeout = 5000
-        --     })
-        --     
-        --     if res and res.status == 200 then
-        --         local threat_ips = {}
-        --         for line in res.body:gmatch("[^\r\n]+") do
-        --             if not line:match("^#") and line:match("%d+%.%d+%.%d+%.%d+") then
-        --                 local ip = line:match("(%d+%.%d+%.%d+%.%d+)")
-        --                 if ip then
-        --                     threat_ips[ip] = {
-        --                         score = 80,
-        --                         reason = "ipsum_feed",
-        --                         updated = ngx.time()
-        --                     }
-        --                 end
-        --             end
-        --         end
-        --         
-        --         -- Store in Redis
-        --         red:set("threat_ips", cjson.encode(threat_ips))
-        --         ngx.log(ngx.INFO, "Updated threat intelligence with ", #threat_ips, " IPs")
-        --     end
-        --     
-        --     _G.redis_pool.close_connection(red)
-        -- end
+        -- AbuseIPDB bulk blacklist feed. Populates threat_intel.threat_ips
+        -- with high-confidence IPs from the free-tier /blacklist endpoint.
+        local abuseipdb_ok, abuseipdb_client = pcall(require, "abuseipdb_client")
+        if not abuseipdb_ok then
+            ngx.log(ngx.WARN, "abuseipdb_client module not available, AbuseIPDB integration disabled")
+        end
         
         -- Start session cleanup task
         local function cleanup_expired_sessions()
@@ -297,13 +259,29 @@ local function init_worker()
         end
         
         -- Schedule periodic tasks
-        local ok, err = ngx.timer.every(300, function() -- Every 5 minutes
-            pcall(update_threat_intel)
-        end)
-        if not ok then
-            ngx.log(ngx.ERR, "Failed to create threat intel timer: ", err)
+
+        -- AbuseIPDB bulk blacklist feed: one delayed run shortly after startup
+        -- (so it doesn't compete with connection pre-warming), then every 6h.
+        -- The free tier is not meant to be polled more often than that.
+        if abuseipdb_ok and abuseipdb_client.is_enabled() then
+            local ok, err = ngx.timer.at(15, function(premature)
+                if premature then return end
+                pcall(abuseipdb_client.fetch_blacklist)
+            end)
+            if not ok then
+                ngx.log(ngx.ERR, "Failed to schedule initial AbuseIPDB blacklist fetch: ", err)
+            end
+
+            local ok, err = ngx.timer.every(21600, function() -- Every 6 hours
+                pcall(abuseipdb_client.fetch_blacklist)
+            end)
+            if not ok then
+                ngx.log(ngx.ERR, "Failed to create AbuseIPDB blacklist timer: ", err)
+            end
+        else
+            ngx.log(ngx.INFO, "[ABUSEIPDB] Integration disabled (no API key configured)")
         end
-        
+
         local ok, err = ngx.timer.every(_G.config.session.cleanup_interval, function()
             pcall(cleanup_expired_sessions)
         end)

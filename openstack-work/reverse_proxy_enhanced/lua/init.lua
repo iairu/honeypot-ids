@@ -272,6 +272,29 @@ _G.config = {
     --                  Patterns use Lua magic-character escaping (%- for literal
     --                  hyphen, %[ %] for brackets, etc.).
     -- -----------------------------------------------------------------------
+    -- -----------------------------------------------------------------------
+    -- abuseipdb: AbuseIPDB threat-intelligence integration parameters.
+    --
+    --   api_key             – Read from ABUSEIPDB_API_KEY env var.  When nil or
+    --                         the placeholder value, abuseipdb_client disables
+    --                         itself (bulk feed, on-demand checks, report-back
+    --                         all become no-ops) so the system runs fine
+    --                         without a key configured.
+    --   confidence_minimum  – AbuseIPDB confidence score (0-100) threshold used
+    --                         when pulling the bulk /blacklist feed.  Only IPs
+    --                         at or above this confidence are imported into
+    --                         threat_intel.
+    --   daily_check_limit   – Free-tier daily cap on on-demand /check calls.
+    --                         abuseipdb_client tracks a counter in the
+    --                         threat_intel shared dict keyed by UTC date and
+    --                         refuses further checks once the cap is reached.
+    -- -----------------------------------------------------------------------
+    abuseipdb = {
+        api_key = os.getenv("ABUSEIPDB_API_KEY"),
+        confidence_minimum = tonumber(os.getenv("ABUSEIPDB_CONFIDENCE_MINIMUM")) or 90,
+        daily_check_limit = tonumber(os.getenv("ABUSEIPDB_DAILY_CHECK_LIMIT")) or 1000
+    },
+
     vulnerability = {
         plugins = {
             "woocommerce-payments",           -- CVE-2023-28121

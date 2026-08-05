@@ -586,12 +586,25 @@ function _M.check_ip_reputation(ip)
     local threat_intel = ngx.shared.threat_intel
     local threat_ips_json = threat_intel:get("threat_ips")
     
+    local known_ip = false
     if threat_ips_json then
         local threat_ips = cjson.decode(threat_ips_json)
         if threat_ips[ip] then
+            known_ip = true
             result.score = threat_ips[ip].score or 50
             result.reason = threat_ips[ip].reason or "known_threat"
             ngx.log(ngx.ERR, "[THREAT ANALYZER] 🚨 Known threat IP detected: ", ip, " | Reason: ", result.reason)
+        end
+    end
+
+    -- No local reputation data yet for this IP: kick off an async AbuseIPDB
+    -- on-demand check (abuseipdb_client.check_ip_async) so future requests
+    -- from this IP benefit from the lookup. Fire-and-forget: never blocks
+    -- the current request and is a no-op if the integration is disabled.
+    if not known_ip then
+        local ok, abuseipdb_client = pcall(require, "abuseipdb_client")
+        if ok then
+            abuseipdb_client.check_ip_async(ip)
         end
     end
     

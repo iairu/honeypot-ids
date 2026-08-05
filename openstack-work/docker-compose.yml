@@ -826,6 +826,9 @@ services:
       - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-}
       - ELASTICSEARCH_SSL_VERIFY=${ELASTICSEARCH_SSL_VERIFY:-certificate}
       - ENVIRONMENT=${ENVIRONMENT:-development}
+      - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
+      - ABUSEIPDB_CONFIDENCE_MINIMUM=${ABUSEIPDB_CONFIDENCE_MINIMUM:-90}
+      - ABUSEIPDB_DAILY_CHECK_LIMIT=${ABUSEIPDB_DAILY_CHECK_LIMIT:-1000}
       # - SESSION_MANAGER_URL=http://session_manager:3001
     # healthcheck:
     #   test: ["CMD", "curl", "-f", "http://localhost/nginx-health"]

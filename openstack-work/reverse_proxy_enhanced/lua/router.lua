@@ -89,6 +89,16 @@ local function assign_honeypot_pool(routing_decision, extra_session_data, remote
     -- Keep the assignment alive in Redis while the attacker is still active.
     pool_router.refresh_assignment_ttl(remote_ip)
 
+    -- Report to AbuseIPDB, but only for deterministic, high-confidence
+    -- reasons (CVE match, vulnerable-plugin access, brute-force, confirmed
+    -- automation, suspicious upload). abuseipdb_client.is_reportable_reason()
+    -- filters out soft heuristic reasons (e.g. accumulated score) to keep
+    -- report quality high. Fire-and-forget; never blocks routing.
+    local abuseipdb_ok, abuseipdb_client = pcall(require, "abuseipdb_client")
+    if abuseipdb_ok then
+        abuseipdb_client.report_ip_async(remote_ip, sd.honeypot_reason, sd)
+    end
+
     ngx.log(ngx.WARN,
         "[POOL] IP ", remote_ip,
         " assigned to honeypot pool ", pool_num,
