@@ -1,0 +1,279 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-02-05T17:11:13+00:00\n"
+"PO-Revision-Date: 2025-06-10 19:18+0200\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: sk\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 3.6\n"
+"X-Domain: wpify-core\n"
+
+#: src/Abstracts/AbstractModule.php:269 src/Abstracts/AbstractPlugin.php:206
+#: src/Admin/DashboardPage.php:333
+msgid "Settings"
+msgstr "Nastavenia"
+
+#: src/Abstracts/AbstractPlugin.php:210
+msgid "Get more plugins and support"
+msgstr "Viac pluginov a podpora"
+
+#: src/Abstracts/AbstractPlugin.php:235 src/Admin/DashboardPage.php:276
+#: src/Admin/DashboardPage.php:302 src/Admin/MenuBar.php:136
+#: src/Admin/SupportPage.php:164
+msgid "Documentation"
+msgstr "Dokumentácia"
+
+#. translators: 1: Plugin name, 2: Settings URL.
+#: src/Abstracts/AbstractPlugin.php:258
+msgid ""
+"Your %1$s plugin licence is not activated yet. Please <a "
+"href=\"%2$s\">activate the domain</a> by connecting it with your WPify "
+"account!"
+msgstr ""
+"Vaša licencia pre plugin %1$s ešte nie je aktivovaná. Prosím, <a "
+"href=\"%2$s\">aktivujte doménu</a> prepojením s vaším WPify účtom!"
+
+#: src/Admin/DashboardPage.php:32
+msgid "WPify Plugins"
+msgstr "WPify Pluginy"
+
+#: src/Admin/DashboardPage.php:33
+msgid "WPify"
+msgstr "WPify"
+
+#: src/Admin/DashboardPage.php:43
+msgid "WPify Plugins Dashboard"
+msgstr "Hlavný panel WPify pluginov"
+
+#: src/Admin/DashboardPage.php:44 src/Admin/MenuBar.php:51
+msgid "Dashboard"
+msgstr "Hlavný panel"
+
+#: src/Admin/DashboardPage.php:148
+msgid "Installed plugins"
+msgstr "Nainštalované pluginy"
+
+#: src/Admin/DashboardPage.php:154
+msgid "Our other plugins"
+msgstr "Naše ďalšie pluginy"
+
+#: src/Admin/DashboardPage.php:239
+msgid "Please, activate the license."
+msgstr "Prosím, aktivujte licenciu."
+
+#. translators: %s: Available version number.
+#: src/Admin/DashboardPage.php:249
+msgid "New version %s available."
+msgstr "Nová verzia %s k dispozícii."
+
+#: src/Admin/DashboardPage.php:320
+msgid "Deactivate"
+msgstr "Deaktivovať"
+
+#: src/Admin/DashboardPage.php:345
+msgid "Activate"
+msgstr "Aktivovať"
+
+#: src/Admin/DashboardPage.php:357
+msgid "Get plugin"
+msgstr "Získať plugin"
+
+#: src/Admin/DashboardPage.php:401
+msgid "WPify News"
+msgstr "Novinky WPify"
+
+#: src/Admin/MenuBar.php:144 src/Admin/SupportPage.php:34
+msgid "Support"
+msgstr "Podpora"
+
+#: src/Admin/SupportPage.php:33
+msgid "WPify Plugins Support"
+msgstr "Podpora WPify pluginov"
+
+#: src/Admin/SupportPage.php:62
+msgid "How do the pricing plans work?"
+msgstr "Ako fungujú cenové plány?"
+
+#: src/Admin/SupportPage.php:63
+msgid ""
+"When you purchase the plugin, you receive support and updates for one year. "
+"After this period, the license will automatically renew."
+msgstr ""
+"Keď si zakúpite plugin, získate podporu a aktualizácie na jeden rok. Po "
+"uplynutí tejto doby sa licencia automaticky obnoví."
+
+#: src/Admin/SupportPage.php:66
+msgid "Will the plugin work if I do not renew my license?"
+msgstr "Bude plugin fungovať, ak neobnovím svoju licenciu?"
+
+#: src/Admin/SupportPage.php:67
+msgid ""
+"Yes, the plugin will continue to work, but you will no longer have access to "
+"updates and support."
+msgstr ""
+"Áno, plugin bude naďalej fungovať, ale už nebudete mať prístup k "
+"aktualizáciám a podpore."
+
+#: src/Admin/SupportPage.php:70
+msgid "I need a feature that the plugin does not currently support."
+msgstr "Potrebujem funkciu, ktorú plugin zatiaľ nepodporuje."
+
+#: src/Admin/SupportPage.php:71
+msgid "Let us know, and we will consider adding the requested functionality."
+msgstr "Dajte nám vedieť a zvážime pridanie požadovanej funkcie."
+
+#: src/Admin/SupportPage.php:80
+msgid "Support page"
+msgstr "Stránka podpory"
+
+#: src/Admin/SupportPage.php:90
+msgid "Your support request has been sent. We will get back to you shortly."
+msgstr "Vaša žiadosť o podporu bola odoslaná. Čoskoro sa vám ozveme."
+
+#: src/Admin/SupportPage.php:91
+msgid "Your support request could not be sent. Please try again."
+msgstr "Vašu žiadosť o podporu sa nepodarilo odoslať. Skúste to prosím znova."
+
+#: src/Admin/SupportPage.php:102
+msgid "Quick debugging checklist"
+msgstr "Rýchly kontrolný zoznam pre ladenie"
+
+#: src/Admin/SupportPage.php:105
+msgid "Check order notes"
+msgstr "Skontrolujte poznámky k objednávke"
+
+#: src/Admin/SupportPage.php:106
+msgid ""
+"In the WooCommerce order detail, you’ll find notes that plugins "
+"automatically add. Look for messages about errors or failed operations."
+msgstr "V detaile objednávky WooCommerce nájdete poznámky, ktoré pluginy automaticky pridávajú. Hľadajte správy o chybách alebo neúspešných operáciách."
+
+#: src/Admin/SupportPage.php:109
+msgid "Review logs"
+msgstr "Skontrolujte logy"
+
+#: src/Admin/SupportPage.php:110
+msgid ""
+"Most plugins log communication in WPify → WPify Logs. Select the relevant "
+"plugin and date, look for records marked as ERROR."
+msgstr "Väčšina pluginov zaznamenáva komunikáciu v WPify → WPify Logs. Vyberte príslušný plugin a dátum, hľadajte záznamy označené ERROR."
+
+#: src/Admin/SupportPage.php:115
+msgid "Open WPify Logs"
+msgstr "Otvoriť WPify Logs"
+
+#: src/Admin/SupportPage.php:122
+#, fuzzy
+msgid "Check plugin documentation"
+msgstr "Dokumentácia"
+
+#: src/Admin/SupportPage.php:123
+msgid ""
+"Each plugin has its own troubleshooting section with descriptions of common "
+"errors and their solutions."
+msgstr "Každý plugin má vlastnú sekciu na riešenie problémov s popisom bežných chýb a ich riešení."
+
+#: src/Admin/SupportPage.php:139
+msgid "Contact support"
+msgstr "Kontaktujte podporu"
+
+#: src/Admin/SupportPage.php:140
+msgid ""
+"If the problem persists, email us at support@wpify.io with a description of "
+"the problem, steps to reproduce, and relevant log content."
+msgstr "Ak problém pretrváva, napíšte nám na support@wpify.io popis problému, kroky na reprodukciu a relevantný obsah logu."
+
+#: src/Admin/SupportPage.php:145
+msgid "Full debugging guide"
+msgstr "Úplný sprievodca ladením"
+
+#: src/Admin/SupportPage.php:152
+msgid "Frequently Asked Questions"
+msgstr "Často kladené otázky"
+
+#: src/Admin/SupportPage.php:161
+msgid "Do you have any other questions?"
+msgstr "Máte ešte nejaké otázky?"
+
+#: src/Admin/SupportPage.php:162
+msgid ""
+"Check out the plugin documentation to see if your question is already "
+"answered."
+msgstr ""
+"Pozrite si dokumentáciu pluginu, či už neobsahuje odpoveď na vašu otázku."
+
+#: src/Admin/SupportPage.php:171
+msgid "Send a support request"
+msgstr "Odoslať žiadosť o podporu"
+
+#: src/Admin/SupportPage.php:177
+#, fuzzy
+msgid "Plugin"
+msgstr "WPify Pluginy"
+
+#: src/Admin/SupportPage.php:179 src/Admin/SupportPage.php:326
+msgid "General"
+msgstr "Všeobecné"
+
+#: src/Admin/SupportPage.php:186
+msgid "Subject (optional)"
+msgstr "Predmet (voliteľné)"
+
+#: src/Admin/SupportPage.php:187
+msgid "Short summary of the issue"
+msgstr "Stručné zhrnutie problému"
+
+#: src/Admin/SupportPage.php:190
+msgid "Contact email"
+msgstr "Kontaktný e-mail"
+
+#: src/Admin/SupportPage.php:194
+msgid "Message"
+msgstr "Správa"
+
+#: src/Admin/SupportPage.php:199
+msgid "Attach log (optional)"
+msgstr "Priložiť log (voliteľné)"
+
+#: src/Admin/SupportPage.php:212
+msgid "Hold Ctrl (Windows) or Cmd (Mac) to select multiple logs."
+msgstr "Pre výber viacerých logov podržte Ctrl (Windows) alebo Cmd (Mac)."
+
+#: src/Admin/SupportPage.php:216
+msgid "Attach files (optional)"
+msgstr "Priložiť súbory (voliteľné)"
+
+#: src/Admin/SupportPage.php:218
+msgid "Screenshots or documents that help explain the issue."
+msgstr "Snímky obrazovky alebo dokumenty, ktoré pomôžu problém vysvetliť."
+
+#: src/Admin/SupportPage.php:221
+msgid "Send request"
+msgstr "Odoslať žiadosť"
+
+#: src/Admin/SupportPage.php:224
+msgid ""
+"Basic diagnostics (site, environment, active WPify plugins) are included "
+"automatically."
+msgstr "Základná diagnostika (web, prostredie, aktívne WPify pluginy) je priložená automaticky."
+
+#: src/Admin/SupportPage.php:308
+msgid "You do not have permission to submit support requests."
+msgstr "Nemáte oprávnenie odosielať žiadosti o podporu."
+
+#~ msgid "WPify Woo"
+#~ msgstr "WPify Woo"
+
+#~ msgid "If you haven’t found the answer, email us at:"
+#~ msgstr "Ak ste nenašli odpoveď, napíšte nám na e-mail:"
+
+#~ msgid "Your license has been activated."
+#~ msgstr "Vaša licencia bola aktivovaná."
+
+#~ msgid "Your license has been deactivated."
+#~ msgstr "Vaša licencia bola deaktivovaná."

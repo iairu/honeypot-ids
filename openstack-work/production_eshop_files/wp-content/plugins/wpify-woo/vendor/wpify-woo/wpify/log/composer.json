@@ -1,0 +1,20 @@
+{
+    "name": "wpify\/log",
+    "description": "WPify Log",
+    "type": "library",
+    "license": "GPL-2.0-or-later",
+    "autoload": {
+        "psr-4": {
+            "WpifyWooDeps\\Wpify\\Log\\": "src\/"
+        }
+    },
+    "authors": [
+        {
+            "name": "WPify",
+            "email": "info@wpify.io"
+        }
+    ],
+    "require": {
+        "psr\/log": "^1.1 || ^2.0 || ^3.0"
+    }
+}

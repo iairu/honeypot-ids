@@ -1,0 +1,49 @@
+{
+    "name": "rikudou\/euqrpayment",
+    "type": "library",
+    "description": "QR payment library for European Union according to EPC standard version 2",
+    "homepage": "https:\/\/github.com\/RikudouSage\/QrPaymentEU",
+    "keywords": [
+        "qr",
+        "payment"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Dominik Chr\u00e1steck\u00fd",
+            "email": "dominik@chrastecky.cz"
+        }
+    ],
+    "require": {
+        "php": "^7.3|^8.0",
+        "ext-mbstring": "*",
+        "rikudou\/qr-payment-interface": "^1.0",
+        "rikudou\/qr-payment-qr-code-provider": "^1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "WpifyWooDeps\\rikudou\\EuQrPayment\\": "src\/"
+        }
+    },
+    "suggest": {
+        "endroid\/qr-code": "For generating QR code image"
+    },
+    "require-dev": {
+        "phpoffice\/phpspreadsheet": "^1.5",
+        "phpunit\/phpunit": "^9.5",
+        "endroid\/qr-code": "^3.2",
+        "friendsofphp\/php-cs-fixer": "^2.13",
+        "phpstan\/phpstan": "^0.12.40",
+        "php-coveralls\/php-coveralls": "^2.1"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "WpifyWooDeps\\rikudou\\EuQrPayment\\Tests\\": "tests\/"
+        }
+    },
+    "scripts": {
+        "fixer": "php-cs-fixer fix src --verbose",
+        "phpstan": "phpstan analyse --level=7 src",
+        "phpunit": "phpunit"
+    }
+}

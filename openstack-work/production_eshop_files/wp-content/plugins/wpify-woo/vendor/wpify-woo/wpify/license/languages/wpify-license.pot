@@ -1,0 +1,72 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: \n"
+"Report-Msgid-Bugs-To: \n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2025-12-04T12:46:13+00:00\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"X-Generator: WP-CLI 2.5.0\n"
+"X-Domain: wpify-license\n"
+
+#: src/License.php:246
+msgid "License not found"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:35
+#: build/settings.js:1
+msgid "Status:"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:37
+#: build/settings.js:1
+msgid "Not valid"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:37
+#: build/settings.js:1
+msgid "Active"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:38
+#: build/settings.js:1
+msgid "Not active"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:42
+#: build/settings.js:1
+msgid "Domain is connected with your subscription in WPify account."
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:43
+#: build/settings.js:1
+msgid "Please activate the domain by connecting it with your WPify account!"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:54
+#: build/settings.js:1
+msgid "The license is not valid, please go to your account and review your subscription ."
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:57
+#: build/settings.js:1
+msgid "Key:"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:60
+#: build/settings.js:1
+msgid "Renewal:"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:66
+#: build/settings.js:1
+msgid "Deactivate domain"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:68
+#: build/settings.js:1
+msgid "Activate domain"
+msgstr ""

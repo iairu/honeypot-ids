@@ -280,6 +280,25 @@ add_filter( 'rest_endpoints', function ( array $endpoints ): array {
     foreach ( [ '/wp/v2/users', '/wp/v2/users/(?P<id>[\d]+)' ] as $endpoint ) {
         if ( isset( $endpoints[ $endpoint ] ) ) {
             foreach ( $endpoints[ $endpoint ] as $index => $handler ) {
+                // Not every entry under a route is a handler definition --
+                // WP_REST_Server::get_routes() also stores a 'schema'
+                // entry per route (a callable, not an array of
+                // methods/callback/permission_callback), and in some
+                // dispatch contexts (confirmed via WP-CLI + WooCommerce's
+                // WC_CLI_Runner, which calls get_routes() before the
+                // normal rest_api_init route-registration order settles)
+                // that entry -- or others -- can show up as something
+                // other than the expected array shape. Blindly assuming
+                // every entry is an array and writing
+                // $endpoints[$endpoint][$index]['permission_callback']
+                // into it fataled with "Cannot access offset of type
+                // string on string" whenever $handler wasn't an array.
+                // Skipping non-array entries is safe: only real
+                // method/callback/permission_callback handler arrays need
+                // (or can use) a permission_callback at all.
+                if ( ! is_array( $handler ) ) {
+                    continue;
+                }
                 // Wrap the existing permission callback to require authentication.
                 if ( isset( $handler['permission_callback'] ) ) {
                     $original = $handler['permission_callback'];

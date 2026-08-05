@@ -1,0 +1,23 @@
+{
+    "name": "wpify\/license",
+    "type": "library",
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "vasikgreif",
+            "email": "info@vaclavgreif.cz"
+        }
+    ],
+    "require": {
+        "wpify\/asset": "^1.2",
+        "woocommerce\/action-scheduler": "^3.3"
+    },
+    "require-dev": {
+        "symfony\/var-dumper": "^5.2"
+    },
+    "autoload": {
+        "psr-4": {
+            "WpifyWooDeps\\Wpify\\License\\": "src\/"
+        }
+    }
+}

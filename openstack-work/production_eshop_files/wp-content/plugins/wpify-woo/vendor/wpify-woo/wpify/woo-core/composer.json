@@ -1,0 +1,27 @@
+{
+    "name": "wpify\/woo-core",
+    "type": "library",
+    "license": "GPL-2.0-or-later",
+    "minimum-stability": "dev",
+    "authors": [
+        {
+            "name": "vasikgreif",
+            "email": "info@vaclavgreif.cz"
+        }
+    ],
+    "config": {
+        "platform": {
+            "php": "8.1"
+        }
+    },
+    "require": {
+        "php": ">=8.1",
+        "wpify\/custom-fields": "^4",
+        "wpify\/license": "^2"
+    },
+    "autoload": {
+        "psr-4": {
+            "WpifyWooDeps\\Wpify\\WooCore\\": "src\/"
+        }
+    }
+}

@@ -1,0 +1,37 @@
+<?php
+
+namespace WpifyWooDeps\rikudou\EuQrPayment\Iban;
+
+use WpifyWooDeps\rikudou\EuQrPayment\Helper\ToStringIban;
+use WpifyWooDeps\rikudou\EuQrPayment\Iban\Validator\GenericIbanValidator;
+use WpifyWooDeps\rikudou\EuQrPayment\Iban\Validator\ValidatorInterface;
+class IBAN implements IbanInterface
+{
+    use ToStringIban;
+    /**
+     * @var string
+     */
+    private $iban;
+    public function __construct(string $iban)
+    {
+        $this->iban = $iban;
+    }
+    /**
+     * Returns the resulting IBAN.
+     *
+     * @return string
+     */
+    public function asString(): string
+    {
+        return $this->iban;
+    }
+    /**
+     * Returns the validator that checks whether the IBAN is valid.
+     *
+     * @return ValidatorInterface|null
+     */
+    public function getValidator(): ?ValidatorInterface
+    {
+        return new GenericIbanValidator($this);
+    }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "wpify-woo",
+  "version": "1.0.0",
+  "main": "assets/plugin.jsx",
+  "scripts": {
+    "start": "wp-scripts start",
+    "build": "wp-scripts build",
+    "translates-pot": "wp i18n make-pot . --include='src' --skip-audit",
+    "translates-json": "wp i18n make-json languages --no-purge"
+  },
+  "author": "WPify <info@wpify.io>",
+  "license": "ISC",
+  "browserslist": [
+    "defaults",
+    "cover 97%"
+  ],
+  "devDependencies": {
+    "@wordpress/scripts": "^27.9.0"
+  },
+  "dependencies": {
+    "classnames": "^2.5.1"
+  }
+}

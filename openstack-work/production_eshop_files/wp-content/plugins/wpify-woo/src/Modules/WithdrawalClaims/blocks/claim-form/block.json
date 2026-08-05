@@ -1,0 +1,18 @@
+{
+	"$schema": "https://schemas.wp.org/trunk/block.json",
+	"apiVersion": 3,
+	"name": "wpify-woo/claim-form",
+	"version": "1.0.0",
+	"title": "Claim form",
+	"category": "woocommerce",
+	"description": "Form for customers to file a claim (reklamace).",
+	"icon": "warning",
+	"keywords": [ "claim", "reklamace", "warranty", "wpify" ],
+	"textdomain": "wpify-woo",
+	"supports": {
+		"html": false,
+		"align": true,
+		"className": true
+	},
+	"editorScript": "wpify-woo-withdrawal-claims-blocks"
+}

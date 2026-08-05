@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schemas.wp.org/trunk/block.json",
+  "apiVersion": 3,
+  "name": "wpify-woo/withdrawal-form",
+  "version": "1.0.0",
+  "title": "Withdrawal form",
+  "category": "woocommerce",
+  "description": "Form for customers to withdraw from a contract (Directive 2023/2673).",
+  "icon": "undo",
+  "keywords": [
+    "withdrawal",
+    "odstoupení",
+    "return",
+    "wpify"
+  ],
+  "textdomain": "wpify-woo",
+  "supports": {
+    "html": false,
+    "align": true,
+    "className": true
+  },
+  "editorScript": "wpify-woo-withdrawal-claims-blocks"
+}

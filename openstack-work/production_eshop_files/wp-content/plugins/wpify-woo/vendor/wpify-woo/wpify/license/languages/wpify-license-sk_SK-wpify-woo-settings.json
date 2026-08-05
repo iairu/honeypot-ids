@@ -1,0 +1,48 @@
+{
+    "translation-revision-date": "2025-12-04 13:52+0100",
+    "generator": "WP-CLI\/2.5.0",
+    "source": "build\/settings.js",
+    "domain": "messages",
+    "locale_data": {
+        "messages": {
+            "": {
+                "domain": "messages",
+                "lang": "sk_SK",
+                "plural-forms": "nplurals=2; plural=(n != 1);"
+            },
+            "Status:": [
+                "Stav:"
+            ],
+            "Not valid": [
+                "Neplatn\u00fd"
+            ],
+            "Active": [
+                "Akt\u00edvny"
+            ],
+            "Not active": [
+                "Neakt\u00edvny"
+            ],
+            "Domain is connected with your subscription in WPify account.": [
+                "Dom\u00e9na je prepojen\u00e1 s va\u0161\u00edm predplatn\u00fdm v \u00fa\u010dte WPify."
+            ],
+            "Please activate the domain by connecting it with your WPify account!": [
+                "Aktivujte dom\u00e9nu pripojen\u00edm k v\u00e1\u0161mu \u00fa\u010dtu WPify!"
+            ],
+            "The license is not valid, please go to your account and review your subscription .": [
+                "Licencia nie je platn\u00e1, prejdite do svojho \u00fa\u010dtu a skontrolujte svoje predplatn\u00e9."
+            ],
+            "Key:": [
+                "K\u013e\u00fa\u010d:"
+            ],
+            "Renewal:": [
+                "Obnovenie:"
+            ],
+            "Deactivate domain": [
+                "Deaktivova\u0165 dom\u00e9nu"
+            ],
+            "Activate domain": [
+                "Aktivova\u0165 dom\u00e9nu"
+            ]
+        }
+    }
+}

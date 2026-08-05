@@ -1,0 +1,80 @@
+<?php
+
+declare (strict_types=1);
+namespace WpifyWooDeps\h4kuna\Ares;
+
+use WpifyWooDeps\GuzzleHttp;
+use WpifyWooDeps\h4kuna\Ares\Adis\StatusBusinessSubjects\StatusBusinessSubjectsTransformer;
+use WpifyWooDeps\h4kuna\Ares\Exception\LogicException;
+use WpifyWooDeps\h4kuna\Ares\Http\HttpFactory;
+use WpifyWooDeps\h4kuna\Ares\Http\TransportProvider;
+use WpifyWooDeps\h4kuna\Ares\Vies\Client;
+use WpifyWooDeps\h4kuna\Ares\Vies\ContentProvider;
+use WpifyWooDeps\Psr\Http\Client\ClientInterface;
+use WpifyWooDeps\Psr\Http\Message\RequestFactoryInterface;
+use WpifyWooDeps\Psr\Http\Message\StreamFactoryInterface;
+/**
+ * @phpstan-type multiFactory RequestFactoryInterface&StreamFactoryInterface
+ */
+class AresFactory
+{
+    /**
+     * @var multiFactory|null
+     */
+    private null|RequestFactoryInterface|StreamFactoryInterface $multiFactory = null;
+    public function __construct(private ?ClientInterface $client = null, private ?StreamFactoryInterface $streamFactory = null, private ?RequestFactoryInterface $requestFactory = null)
+    {
+    }
+    public function create(): Ares
+    {
+        $streamFactory = $this->getStreamFactory();
+        $transportProvider = $this->createTransportProvider($streamFactory);
+        $adisContentProvider = $this->createAdisContentProvider($transportProvider);
+        $aresClient = new Ares\Client($transportProvider);
+        $dataBoxClient = new DataBox\Client($transportProvider);
+        $dataBoxContentProvider = new DataBox\ContentProvider($dataBoxClient, $streamFactory);
+        $aresContentProvider = new Ares\Core\ContentProvider(new Ares\Core\JsonToDataTransformer(), $aresClient, $adisContentProvider);
+        $viesContentProvider = new ContentProvider(new Client($transportProvider));
+        return new Ares($aresContentProvider, $dataBoxContentProvider, $adisContentProvider, $viesContentProvider);
+    }
+    public function getRequestFactory(): RequestFactoryInterface
+    {
+        return $this->requestFactory ??= $this->getMultiFactory();
+    }
+    public function getClient(): ClientInterface
+    {
+        if ($this->client !== null) {
+            return $this->client;
+        }
+        self::checkGuzzle();
+        return $this->client = new GuzzleHttp\Client();
+    }
+    public function getStreamFactory(): StreamFactoryInterface
+    {
+        return $this->streamFactory ??= $this->getMultiFactory();
+    }
+    protected function createAdisContentProvider(TransportProvider $transportProvider): Adis\ContentProvider
+    {
+        return new Adis\ContentProvider(new Adis\Client($transportProvider), new StatusBusinessSubjectsTransformer());
+    }
+    public function createTransportProvider(StreamFactoryInterface $streamFactory): TransportProvider
+    {
+        $client = $this->getClient();
+        $requestFactory = $this->getRequestFactory();
+        return new TransportProvider($requestFactory, $client, $streamFactory);
+    }
+    /**
+     * @return multiFactory
+     */
+    protected function getMultiFactory(): RequestFactoryInterface|StreamFactoryInterface
+    {
+        self::checkGuzzle();
+        return $this->multiFactory ??= class_exists(GuzzleHttp\Psr7\HttpFactory::class) ? new GuzzleHttp\Psr7\HttpFactory() : new HttpFactory();
+    }
+    private static function checkGuzzle(): void
+    {
+        if (!class_exists(GuzzleHttp\Client::class)) {
+            throw new LogicException('Guzzle not found, let implement own solution or install guzzle by: composer require guzzlehttp/guzzle');
+        }
+    }
+}

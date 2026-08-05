@@ -1,0 +1,3029 @@
+# Copyright (C) 2026 WPify s.r.o.
+# This file is distributed under the GPLv2 or later.
+msgid ""
+msgstr ""
+"Project-Id-Version: WPify Woo WPORG_VERSION\n"
+"Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/wpify-woo\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2026-07-30T18:31:19+02:00\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"X-Generator: WP-CLI 2.11.0\n"
+"X-Domain: wpify-woo\n"
+
+#. Plugin Name of the plugin
+#: wpify-woo.php
+msgid "WPify Woo"
+msgstr ""
+
+#. Description of the plugin
+#: wpify-woo.php
+msgid "Custom functionality for WooCommerce"
+msgstr ""
+
+#. Author of the plugin
+#: wpify-woo.php
+msgid "WPify s.r.o."
+msgstr ""
+
+#. Author URI of the plugin
+#: wpify-woo.php
+msgid "https://www.wpify.io/"
+msgstr ""
+
+#: src/Admin.php:29
+msgid "Invalid nonce."
+msgstr ""
+
+#: src/Admin.php:33
+msgid "Only user with administrator role can export logs."
+msgstr ""
+
+#: src/Admin/Settings.php:40
+msgid "Wpify Woo"
+msgstr ""
+
+#: src/Admin/Settings.php:59
+msgid "Modules"
+msgstr ""
+
+#: src/Admin/Settings.php:68
+msgid "Enabled modules"
+msgstr ""
+
+#: src/Admin/Settings.php:70
+msgid "Select the modules you want to enable"
+msgstr ""
+
+#: src/Admin/Settings.php:134
+#: src/Managers/ModulesManager.php:232
+msgid "Settings"
+msgstr ""
+
+#: src/Admin/Settings.php:260
+msgid "Increase sales + 10% discount on your first purchase!"
+msgstr ""
+
+#: src/Admin/Settings.php:261
+msgid "Do you want a faster e-shop, more customers and higher conversions? Sign up for our newsletter and get:"
+msgstr ""
+
+#: src/Admin/Settings.php:263
+msgid "Tips to speed up your e-shop and improve performance"
+msgstr ""
+
+#: src/Admin/Settings.php:264
+msgid "Strategies for more orders and higher profits"
+msgstr ""
+
+#: src/Admin/Settings.php:265
+msgid "10% discount on your first purchase of premium plugins"
+msgstr ""
+
+#: src/Admin/Settings.php:267
+msgid "Sign up now and get exclusive advice + discount code in your email."
+msgstr ""
+
+#: src/Admin/Settings.php:279
+msgid "I want a better e-shop + discount"
+msgstr ""
+
+#: src/Admin/Settings.php:295
+msgid "Incorrect email."
+msgstr ""
+
+#: src/Admin/Settings.php:321
+msgid "The email address has been successfully added."
+msgstr ""
+
+#: src/Admin/Settings.php:324
+msgid "The email address is already on the subscription list."
+msgstr ""
+
+#: src/Admin/Settings.php:327
+msgid "Error while sending."
+msgstr ""
+
+#: src/Api/FeedApi.php:73
+#: src/Api/FeedApi.php:96
+#: src/Modules/IcDic/Api/IcDicApi.php:79
+#: src/Modules/IcDic/Api/IcDicApi.php:118
+msgid "Too many requests. Please try again later."
+msgstr ""
+
+#: src/Api/FeedApi.php:79
+#: src/Api/FeedApi.php:102
+#: src/CLI.php:60
+msgid "Module not found"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:146
+#: src/Modules/AsyncEmails/AsyncEmailsModule.php:42
+msgid "Async emails"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:150
+#: src/Modules/IcDic/IcDicModule.php:152
+msgid "Checkout IČ and DIČ"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:154
+msgid "Heureka ověřeno zákazníky"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:158
+msgid "Heureka měření konverzí"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:162
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:139
+msgid "XML Feed Heureka"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:166
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:130
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:535
+msgid "Free shipping notice"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:170
+#: src/Modules/Vocative/VocativeModule.php:89
+msgid "Emails Vocative"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:174
+#: src/Modules/QRPayment/QRPaymentModule.php:93
+#: src/Modules/QRPayment/QRPaymentModule.php:754
+msgid "QR Payment"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:178
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:49
+msgid "Sklik retargeting"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:182
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:44
+msgid "Zbozi.cz/Sklik Conversions Limited"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:186
+#: src/Modules/Template/TemplateModule.php:180
+msgid "Template"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:190
+#: src/Modules/EmailAttachments/EmailAttachmentsModule.php:74
+#: src/Modules/EmailAttachments/EmailAttachmentsModule.php:75
+#: src/Modules/EmailAttachments/EmailAttachmentsModule.php:195
+msgid "Email attachments"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:194
+#: src/Modules/Prices/PricesModule.php:55
+msgid "Prices"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:198
+#: src/Modules/PricesLog/PricesLogModule.php:135
+msgid "Prices log"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:202
+#: src/Modules/Comments/CommentsModule.php:117
+msgid "Comments"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:206
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:58
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:275
+msgid "Delivery dates"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:210
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:54
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2692
+msgid "Withdrawal & Claim"
+msgstr ""
+
+#: src/Managers/ModulesManager.php:222
+msgid "Documentation"
+msgstr ""
+
+#: src/Modules/AsyncEmails/AsyncEmailsModule.php:93
+msgid "Email args not found"
+msgstr ""
+
+#: src/Modules/AsyncEmails/AsyncEmailsModule.php:121
+msgid "Asynchronous sending of WooCommerce emails"
+msgstr ""
+
+#: src/Modules/AsyncEmails/AsyncEmailsModule.php:122
+msgid "When an order is placed, emails are sent immediately, slowing down processing of the checkout. With the \"Async emails\" module enabled, the emails are added to a queue and sent asynchronously using Action Scheduler. This can speed up the checkout by a few seconds."
+msgstr ""
+
+#: src/Modules/AsyncEmails/AsyncEmailsModule.php:131
+msgid "WP Cron is disabled in wp-config!"
+msgstr ""
+
+#: src/Modules/AsyncEmails/AsyncEmailsModule.php:132
+msgid "WP Cron is disabled in wp-config.php. Please make sure that you have the cron job setup externally."
+msgstr ""
+
+#: src/Modules/Comments/CommentsModule.php:61
+msgid "WPify Woo Details"
+msgstr ""
+
+#: src/Modules/Comments/CommentsModule.php:70
+msgid "Comment type"
+msgstr ""
+
+#: src/Modules/Comments/CommentsModule.php:96
+msgid "Comment types"
+msgstr ""
+
+#: src/Modules/Comments/CommentsModule.php:100
+msgid "Label"
+msgstr ""
+
+#: src/Modules/Comments/CommentsModule.php:101
+msgid "text"
+msgstr ""
+
+#: src/Modules/DeliveryDates/Api/DeliveryDatesApi.php:100
+msgid "Invalid product ID."
+msgstr ""
+
+#: src/Modules/DeliveryDates/Api/DeliveryDatesApi.php:105
+#: src/Modules/DeliveryDates/Api/DeliveryDatesApi.php:109
+msgid "Product not found."
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:98
+msgid "Add delivery days"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:104
+msgid "Group title"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:109
+msgid "Bridging time to next day"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:110
+msgid "If this time is exceeded, the next day will count for delivery."
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:115
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:252
+msgid "In stock delivery days"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:116
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:122
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:128
+msgid "Enter a number indicating the number of days, a range in <code>1-2</code> format, or any text. Leave blank to not show."
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:121
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:258
+msgid "Out of stock delivery days"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:127
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:264
+msgid "On backorder delivery days"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:133
+msgid "Skip weekends"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:138
+msgid "Delivery date message"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:139
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:147
+msgid "Use <code>{date}</code> code to render calculated date in messsage."
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:140
+msgid "Delivered on {date}"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:146
+msgid "Delivery date more info"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:151
+msgid "Display shipping methods"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:154
+msgid "Select the shipping methods that appear in more information."
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:168
+msgid "Delivery date format"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:174
+msgid "Today and tomorrow as text"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:179
+msgid "Title of delivery date block"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:184
+msgid "Label of country selector"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:189
+msgid "More info link label"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:190
+msgid "more info"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:195
+msgid "Payment methods message"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:196
+msgid "Insert payment methods message. Leave empty to not show."
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:202
+msgid "Payment methods more info"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:207
+msgid "Display locations"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:223
+msgid "Render delivery details asynchronously (cache-friendly)"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:224
+msgid "When enabled, delivery details are fetched via REST API after page load."
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:253
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:259
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:265
+msgid "Override the default value from the settings."
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:358
+#: src/WooCommerceIntegration.php:268
+msgid "Other regions"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:433
+msgid "Today"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:435
+msgid "Tomorrow"
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:621
+msgid "Country / region:"
+msgstr ""
+
+#. translators: %s: number of products migrated
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:1024
+msgid "Wpify Woo delivery date data migration is success for %s products."
+msgstr ""
+
+#: src/Modules/DeliveryDates/DeliveryDatesModule.php:1026
+msgid "Wpify Woo delivery date data migration failed."
+msgstr ""
+
+#: src/Modules/EmailAttachments/EmailAttachmentsModule.php:57
+#: src/Modules/EmailAttachments/EmailAttachmentsModule.php:108
+msgid "Attachments"
+msgstr ""
+
+#: src/Modules/EmailAttachments/EmailAttachmentsModule.php:79
+msgid "Attach to emails"
+msgstr ""
+
+#: src/Modules/EmailAttachments/EmailAttachmentsModule.php:93
+#: src/Modules/QRPayment/QRPaymentModule.php:278
+msgid "Enabled countries"
+msgstr ""
+
+#: src/Modules/EmailAttachments/EmailAttachmentsModule.php:94
+msgid "Select the countries for which the attachment should be added. Leave empty for all."
+msgstr ""
+
+#: src/Modules/EmailAttachments/EmailAttachmentsModule.php:113
+msgid "Custom fields"
+msgstr ""
+
+#: src/Modules/EmailAttachments/EmailAttachmentsModule.php:118
+msgid "Custom field"
+msgstr ""
+
+#: src/Modules/EmailAttachments/EmailAttachmentsModule.php:119
+msgid "Enter order custom field, where the path the file is stored."
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:93
+msgid "Rendered free shipping notice HTML for the current cart."
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:131
+msgid "Use this module to display the remaining amount to get free shipping in your store. You can pick from one of the available positions, or use shortcode [wpify_woo_free_shipping_notice] to display the notice anywhere on your site."
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:137
+msgid "Free shipping cart subtotal"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:138
+msgid "Enter the the cart subtotal price to get free shipping"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:144
+msgid "Load amount from Free shipping settings"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:145
+msgid "Check to load amount from WooCommerce free shipping settings."
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:150
+msgid "Which cart amount to count on"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:151
+msgid "Select from which shopping cart value you calculate free shipping."
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:154
+msgid "From Cart subtotal in VAT"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:158
+msgid "From Cart subtotal ex VAT"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:162
+msgid "From Cart Subtotal after discount in VAT"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:166
+msgid "From Cart Subtotal after discount ex VAT"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:170
+msgid "From Cart total"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:179
+msgid "Free shipping message"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:180
+msgid "Enter the message that should be displayed. The {price} will be replaced with the price to get free shippping"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:181
+msgid "Buy for {price} more to get free shipping"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:187
+msgid "Free shipping confirmation message"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:188
+msgid "Enter the message that should be displayed when the user has free shipping."
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:189
+msgid "Great, you have the shipping free!"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:195
+msgid "Minimum cart amount to display"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:196
+msgid "Enter the minimum cart subtotal to display the message"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:202
+msgid "Always show"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:203
+msgid "If not checked, the notification bar will only be displayed if some item in cart needs shipping. Check to always show the notification, even if the cart is empty. "
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:209
+msgid "Set free shipping if any shipping method is free"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:210
+msgid "Check if you wish to display Free shipping confirmation message if any of the shipping methods is free."
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:214
+msgid "Exclude shipping from check"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:216
+msgid "If you are showing free shipping if there is any free shipping, this sets the methods to be excluded from this check."
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:236
+msgid "Positions"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:237
+msgid "Check the positions where you would like to get the message displayed"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:240
+msgid "Above cart"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:244
+msgid "Bellow cart"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:248
+msgid "Top of the checkout"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:252
+msgid "Bottom of the checkout"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:261
+msgid "Background color"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:262
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:268
+msgid "Select the background color"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:267
+msgid "Text color"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:273
+msgid "Show icon"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:274
+msgid "Check to display the icon"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:279
+msgid "Icon color"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:280
+msgid "Select the icon color"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:286
+msgid "Progressbar color"
+msgstr ""
+
+#: src/Modules/FreeShippingNotice/FreeShippingNoticeModule.php:287
+msgid "Select the progressbar color"
+msgstr ""
+
+#: src/Modules/HeurekaMereniKonverzi/HeurekaMereniKonverziModule.php:52
+msgid "Heureka Měření konverzí"
+msgstr ""
+
+#: src/Modules/HeurekaMereniKonverzi/HeurekaMereniKonverziModule.php:84
+msgid "Public key for conversions"
+msgstr ""
+
+#: src/Modules/HeurekaMereniKonverzi/HeurekaMereniKonverziModule.php:85
+msgid "Enter the public key for the conversion measurement code."
+msgstr ""
+
+#: src/Modules/HeurekaMereniKonverzi/HeurekaMereniKonverziModule.php:100
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:87
+msgid "Country"
+msgstr ""
+
+#: src/Modules/HeurekaMereniKonverzi/HeurekaMereniKonverziModule.php:101
+msgid "Select country for tracking"
+msgstr ""
+
+#. translators: %s: Yes or No answer
+#: src/Modules/HeurekaOverenoZakazniky/BlockSupport.php:99
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:614
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:624
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:688
+msgid "Heureka: Agree with the satisfaction questionnaire: %s"
+msgstr ""
+
+#. translators: %s: Yes or No answer
+#: src/Modules/HeurekaOverenoZakazniky/BlockSupport.php:99
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:614
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:624
+#: src/Modules/IcDic/IcDicModule.php:1623
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1422
+msgid "No"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:88
+msgid "Select country"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:91
+msgid "Heureka CZ"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:95
+msgid "Heureka SK"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:103
+msgid "Api Key"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:104
+msgid "Enter the API Key"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:109
+msgid "Enable Opt-Out"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:110
+msgid "Check if you want to enable opt out on the checkout"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:115
+msgid "Enable Opt-Out Text"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:116
+msgid "Enter the Opt-out text"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:117
+msgid "I don't want to receive survey from Heureka ověřeno zákazníky"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:122
+msgid "Use Opt-In instead of Opt-Out"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:123
+msgid "Switch the logic to require explicit customer consent (opt-in)"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:128
+msgid "Enable Certification Widget"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:129
+msgid "Enable certification widget."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:134
+msgid "Certification widget code"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:135
+msgid "Copy the code from your Heureka account."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:140
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:141
+msgid "Send asynchronously"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:142
+msgid "By default the order is sent to Heureka synchronously, which is required by Heureka. Under some circumstances this can cause issues - toggle on if you want to schedule the event and send it asynchronously."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:150
+msgid "Heureka reviews import"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:151
+msgid "Enable importing reviews from Heureka feed and use shortcode [wpify_woo_heureka_reviews count=\"6\"] to display the latest reviews."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:156
+msgid "Enable reviews import"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:157
+msgid "If enabled, the plugin will import reviews periodically via Action Scheduler."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:162
+msgid "Reviews feed URL"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:163
+msgid "Enter your Heureka reviews XML feed URL."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:169
+msgid "Shop certificate ID"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:170
+msgid "Your Heureka shop certificate ID (used for the widget)."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:176
+msgid "Heureka Shop ID (numeric)"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:177
+msgid "Numeric shop ID used in the widget showWidget call. If empty, the certificate ID will be used."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:183
+msgid "Heureka Shop Name"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:184
+msgid "Shop name used in the widget showWidget call. If empty, the site name will be used."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:191
+msgid "Click to import reviews from the configured feed now."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:192
+msgid "Import reviews now"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:193
+msgid "Import reviews"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:232
+msgid "Import failed."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:233
+msgid "Heureka Reviews import failed:"
+msgstr ""
+
+#. translators: %1$d: number of new reviews imported, %2$d: number of updated reviews
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:241
+msgid "Heureka Reviews imported: %1$d new, %2$d updated."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:279
+msgid "Reviews feed URL is not set."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:294
+msgid "Failed to fetch the reviews feed."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:302
+msgid "Failed to parse reviews XML feed."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:407
+msgid "Ověřeno zákazníky Heureka"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:446
+msgid "Show all reviews"
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:633
+msgid "Heureka: Send disabled by custom filter."
+msgstr ""
+
+#. translators: %s: Yes or No answer
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:688
+msgid "Yes. The order has been sent."
+msgstr ""
+
+#: src/Modules/HeurekaOverenoZakazniky/HeurekaOverenoZakaznikyModule.php:754
+msgid "Heureka Ověřeno Zákázníky"
+msgstr ""
+
+#: src/Modules/IcDic/Api/IcDicApi.php:85
+#: src/Modules/IcDic/Api/IcDicApi.php:104
+msgid "The entered Identification Number has not been found in ARES, please enter valid Identification number."
+msgstr ""
+
+#: src/Modules/IcDic/Api/IcDicApi.php:106
+msgid "Invalid response from ARES."
+msgstr ""
+
+#: src/Modules/IcDic/Api/IcDicApi.php:124
+msgid "The entered number did not pass the VIES validation. Check if it is correct."
+msgstr ""
+
+#: src/Modules/IcDic/Api/IcDicApi.php:127
+msgid "Zero VAT could not be applied."
+msgstr ""
+
+#: src/Modules/IcDic/BlockSupport.php:77
+#: src/Modules/IcDic/IcDicModule.php:811
+msgid "I'm shopping for a company"
+msgstr ""
+
+#: src/Modules/IcDic/BlockSupport.php:86
+#: src/Modules/IcDic/IcDicModule.php:882
+#: src/Modules/IcDic/IcDicModule.php:930
+#: src/Modules/IcDic/IcDicModule.php:962
+#: src/Modules/IcDic/IcDicModule.php:1057
+#: src/Modules/IcDic/IcDicModule.php:1205
+msgid "Identification no."
+msgstr ""
+
+#: src/Modules/IcDic/BlockSupport.php:99
+msgid "Company"
+msgstr ""
+
+#: src/Modules/IcDic/BlockSupport.php:109
+#: src/Modules/IcDic/IcDicModule.php:889
+#: src/Modules/IcDic/IcDicModule.php:937
+#: src/Modules/IcDic/IcDicModule.php:967
+#: src/Modules/IcDic/IcDicModule.php:1063
+msgid "VAT no."
+msgstr ""
+
+#: src/Modules/IcDic/BlockSupport.php:121
+msgid "In VAT no."
+msgstr ""
+
+#: src/Modules/IcDic/BlockSupport.php:234
+#: src/Modules/IcDic/IcDicModule.php:1109
+msgid "Please enter valid IC"
+msgstr ""
+
+#: src/Modules/IcDic/BlockSupport.php:239
+#: src/Modules/IcDic/IcDicModule.php:1116
+msgid "The entered Company Number has not been found in ARES, please enter valid company number."
+msgstr ""
+
+#: src/Modules/IcDic/BlockSupport.php:417
+#: src/Modules/IcDic/IcDicModule.php:1139
+msgid "The entered IN VAT Number has not been found in VIES, please enter valid IN VAT number."
+msgstr ""
+
+#: src/Modules/IcDic/BlockSupport.php:418
+#: src/Modules/IcDic/IcDicModule.php:1140
+msgid "The entered VAT Number has not been found in VIES, please enter valid VAT number."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:193
+#: src/Modules/IcDic/IcDicModule.php:216
+#: src/Modules/WithdrawalClaims/templates/request-form.php:134
+msgid "optional"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:195
+#: src/Modules/IcDic/IcDicModule.php:218
+msgid "Checking in"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:219
+#: src/Modules/IcDic/IcDicModule.php:332
+msgid "Autofill from Ares"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:220
+msgid "Search in Ares"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:242
+msgid "Move company field"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:243
+msgid "Check if you want to move the company field to the extra VAT fields or under the checkbox \"I'm shopping for a company\" if enabled."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:244
+#: src/Modules/IcDic/IcDicModule.php:251
+#: src/Modules/IcDic/IcDicModule.php:258
+#: src/Modules/IcDic/IcDicModule.php:265
+#: src/Modules/IcDic/IcDicModule.php:272
+#: src/Modules/IcDic/IcDicModule.php:279
+#: src/Modules/IcDic/IcDicModule.php:286
+#: src/Modules/IcDic/IcDicModule.php:292
+#: src/Modules/IcDic/IcDicModule.php:325
+#: src/Modules/IcDic/IcDicModule.php:345
+msgid "Valid for classic checkout only. Does not affect block checkout."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:249
+msgid "Move VAT fields"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:250
+msgid "Check if you want to move the VAT fields to the top of the checkout form to the \"Company\" field"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:256
+msgid "Show \"I'm shopping for a company\" checkbox"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:257
+msgid "Check if want to show the checkbox \"I'm shopping for a company\" - the extra fields will show only if the checkbox is checked."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:263
+msgid "Half width VAT fields"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:264
+msgid "Check if you want to display VAT fields in half width side by side in the checkout."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:270
+msgid "Placeholder as number"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:271
+msgid "Check if you want the placeholder of VAT fields to be an example of how to fill the field."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:277
+msgid "Validate number format"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:278
+msgid "Check if you want to check if the numbers entered are in a valid format when sending order. Checks for States CZ, SK, PL, HU, DE"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:284
+msgid "Required \"Company\" field for companies"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:285
+msgid "Check if you want to set \"Company\" field as required if the checkbox \"I'm shopping for a company\" is checked."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:291
+msgid "Required identification number field for companies"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:292
+msgid "Choose when the identification number field to be required."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:295
+msgid "If the \"I'm shopping for a company\" is checked"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:299
+msgid "If the company field is filled"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:307
+msgid "Validate entered identification number from ARES"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:308
+msgid "Check if want to validate the entered identification number with ARES."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:311
+msgid "After entering identification number on the checkout form"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:315
+msgid "After submitting the order"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:323
+msgid "Autofill from ARES"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:324
+msgid "Enable if you want to display \"Fill automatically from ARES\" at the top of checkout form."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:330
+msgid "Autofill from ARES text"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:331
+msgid "Enter the text that will appear on top of the checkout."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:337
+msgid "ARES submit button text"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:338
+msgid "Enter the text for the button sending the request to ARES."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:339
+#: src/Modules/IcDic/IcDicModule.php:1567
+msgid "Search in ARES"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:344
+msgid "Autofill ARES position"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:345
+msgid "Select the position for the autofill."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:349
+msgid "Before customer details"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:353
+msgid "After \"I'm shopping for a company\" checkbox"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:357
+msgid "After \"IC\" field"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:365
+msgid "Validate VAT number in VIES"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:366
+msgid "Check if want to validate the entered VAT with VIES (IN VAT for SK)."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:371
+msgid "Send an order even if it fails validation in VIES"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:372
+msgid "Check if you want to validate the Tax Identification Number immediately after entering and allow the order to be sent even if the validation in VIES fails. If the Tax ID falls under the set countries for zero VAT, then zero VAT will not be applied."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:378
+msgid "Zero tax for VAT numbers in (DEPRECATED)"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:379
+msgid "DEPRECATED: Use \"Enable EU Reverse Charge\" and \"Enable Third Country Export\" settings below instead. This setting is kept only for backward compatibility."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:394
+msgid "VAT Exemption Settings"
+msgstr ""
+
+#. translators: %s: link to WooCommerce tax settings
+#: src/Modules/IcDic/IcDicModule.php:397
+msgid "VAT exemption uses the WooCommerce setting \"Calculate tax based on\" (%s). If set to \"Customer billing address\", billing country is used for VAT determination (typical for services). Otherwise, shipping country is used (typical for goods)."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:398
+msgid "WooCommerce → Settings → Tax"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:404
+msgid "Enable EU Reverse Charge"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:405
+msgid "Enable reverse charge mechanism for B2B sales within EU"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:406
+msgid "When enabled, orders with valid EU VAT ID (verified via VIES) shipped to another EU country will be exempt from VAT. The invoice should include \"Reverse charge\" notice."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:411
+msgid "Enable Third Country Export (VAT exempt)"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:412
+msgid "Enable VAT exemption for exports to non-EU countries"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:413
+msgid "When enabled, orders shipped to countries outside the EU will be exempt from VAT. This applies to both B2B and B2C customers. Note: You need customs documentation to prove the export."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:883
+msgid "Your company's identification number"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:890
+msgid "Your company's VAT number"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:896
+#: src/Modules/IcDic/IcDicModule.php:944
+#: src/Modules/IcDic/IcDicModule.php:972
+#: src/Modules/IcDic/IcDicModule.php:1069
+msgid "IN VAT no."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:897
+msgid "Your company's VAT Identification number"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1149
+msgid "The entered Company Number is not in the required format (8 or more digits without spaces)."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1154
+msgid "The entered VAT Number is not in the required format (10 digits without spaces)."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1157
+msgid "The entered IN VAT Number is not in the required format (prefix SK + 10 digits without spaces)."
+msgstr ""
+
+#. translators: %s: country code prefix
+#: src/Modules/IcDic/IcDicModule.php:1166
+msgid "The entered VAT Number is not in the required format (prefix %s + 8–10 digits without spaces)."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1175
+msgid "The entered VAT Number must be same as IN VAT without SK."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1180
+msgctxt "checkout-validation"
+msgid "is a required field when purchasing for a company."
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1189
+msgid "Company name"
+msgstr ""
+
+#. translators: %s: field label
+#: src/Modules/IcDic/IcDicModule.php:1191
+#: src/Modules/IcDic/IcDicModule.php:1207
+msgctxt "checkout-validation"
+msgid "Billing %s"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1565
+msgid "Identification number"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1615
+msgid "EU Reverse Charge"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1616
+msgid "Third Country Export"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1617
+msgid "VAT Exempt (Legacy)"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1618
+msgid "Standard (with VAT)"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1623
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1422
+msgid "Yes"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1627
+msgid "VAT Exemption Status"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1629
+msgid "VAT Exempt:"
+msgstr ""
+
+#: src/Modules/IcDic/IcDicModule.php:1635
+msgid "Reason:"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:81
+msgid "Add notice"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:87
+msgid "Price notice"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:92
+msgid "When notice display"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:95
+#: src/Modules/Prices/PricesModule.php:200
+msgid "Always"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:99
+#: src/Modules/Prices/PricesModule.php:204
+msgid "If product is in sale"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:103
+#: src/Modules/Prices/PricesModule.php:208
+msgid "If product is not in sale"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:107
+#: src/Modules/Prices/PricesModule.php:212
+msgid "If product is on backorder"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:116
+msgid "Price notice display location"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:119
+msgid "Before price html"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:123
+msgid "After price html"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:127
+msgid "After del element in price html"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:140
+msgid "Add price"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:146
+msgid "Price label"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:156
+msgid "Price type"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:157
+msgid "Choose price type. For the lowest price for the last 30 days from the Price Log module - module must be active."
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:160
+#: src/Modules/Prices/PricesModule.php:575
+msgid "Custom price"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:164
+msgid "Lowest price in 30 days"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:168
+#: src/Modules/Prices/PricesModule.php:556
+msgid "Price by unit"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:177
+msgid "Price more info"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:182
+msgid "Regular price label"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:187
+msgid "Badge label"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:192
+msgid "Custom badge css class"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:197
+msgid "When price display"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:228
+msgid "Custom prices display location"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:231
+msgid "Before price outside price html"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:235
+msgid "After price outside price html"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:239
+msgid "Before price inside price html"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:243
+msgid "After price inside price html"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:252
+msgid "Custom location hook"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:253
+msgid "Insert hook of location where you want show custom prices block."
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:339
+#: src/Modules/Prices/PricesModule.php:496
+msgid "?"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:560
+msgid "Package unit"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:565
+msgid "Number of units"
+msgstr ""
+
+#: src/Modules/Prices/PricesModule.php:585
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:144
+msgid "General"
+msgstr ""
+
+#: src/Modules/Prices/woocommerce/single-product/sale-flash.php:19
+msgid "Sale!"
+msgstr ""
+
+#: src/Modules/PricesLog/PricesLogModule.php:43
+msgid "Prices Log"
+msgstr ""
+
+#: src/Modules/PricesLog/PricesLogModule.php:66
+msgid "Recording product price history"
+msgstr ""
+
+#: src/Modules/PricesLog/PricesLogModule.php:67
+msgid "Product prices are logged whenever they change. The lowest price recorded in the last 30 days is displayed below the product price field."
+msgstr ""
+
+#: src/Modules/PricesLog/PricesLogModule.php:259
+msgid "incl. tax"
+msgstr ""
+
+#: src/Modules/PricesLog/PricesLogModule.php:260
+msgid "excl. tax"
+msgstr ""
+
+#: src/Modules/PricesLog/PricesLogModule.php:265
+msgid "The lowest price for the last 30 days"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:124
+msgid "Enabled payment methods"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:126
+msgid "Add payment method"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:132
+msgid "Payment method"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:146
+msgid "Show in emails"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:160
+msgid "Accounts"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:162
+msgid "Add account"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:168
+msgid "Account data source"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:183
+msgid "IBAN"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:194
+msgid "Account number (CZ only)"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:205
+msgid "Bank Code (CZ only)"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:216
+msgid "BIC (SWIFT)"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:227
+msgid "Recipient name"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:228
+msgid "Full name of the account owner or company business name."
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:233
+msgid "QR Type"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:238
+msgid "Auto detect by order"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:262
+msgid "Enabled currencies"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:293
+msgid "Info label"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:301
+msgid "Message to recipient"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:302
+msgid "Enter the message to recipient if you want it. You can use codes <code>{order}</code> to insert the order number and <code>{shop_name}</code> to insert the name of the shop. So the message might look like, for example, \"QR payment order {order} from {shop_name}\"."
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:308
+msgid "Title before"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:309
+#: src/Modules/QRPayment/QRPaymentModule.php:315
+msgid "You can use codes <code>{order}</code> to insert the order number and <code>{total}</code> to insert the value of order."
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:314
+msgid "Title after"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:320
+msgid "QR position on thank you page"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:321
+msgid "Select where the QR code should be placed on the thank you page."
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:325
+msgid "Dont show"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:329
+msgid "Before page content"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:333
+msgid "Before Order details"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:337
+msgid "After page content"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:344
+msgid "QR position in emails"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:345
+msgid "Select where the QR code should be placed in the emails."
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:349
+msgid "Before order table"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:353
+msgid "After order table"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:357
+msgid "In order meta"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:365
+msgid "Compatibility mode"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:366
+msgid "The SK version requires XZ utils (https://tukaani.org/xz/). If your serevr does not support this, you can enable the compatibility mode, in which the QR code will be generated using the external API QR-Platba.cz and QRGenerator.sk. This is not recommended for performance reasons, as an unnecessary API call is done on thankyou page."
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:367
+msgid "Only for CZ and SK QR standards."
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:372
+msgid "Save as image"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:373
+msgid "Some email clients have a problem with displaying images in base64. If you enable this, the QR code will be saved as a file and then linked to."
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:382
+msgid "Insert into WCPDF invoice"
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:383
+msgid "Insert QR payment into PDF Invoices from PDF Invoices & Packing Slips for WooCommerce plugin."
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:726
+msgid "The creation of the file for the QR code failed."
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:890
+msgid "QR payment: Unsupported currency for QR standard."
+msgstr ""
+
+#: src/Modules/QRPayment/QRPaymentModule.php:984
+msgid "Manual"
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:62
+msgid "Identifier retargeting"
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:63
+msgid "Enter your unique identifier for the <code>rtgId</code> that can be found in Sklik interface"
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:67
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:87
+msgid "Marketing cookie"
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:68
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:88
+msgid "You need consent from the visitor for marketing cookies. If you don`t enter the name and value of the marketing cookie the Seznam will process the data as if consent had been given."
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:73
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:93
+msgid "Marketing cookie name"
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:74
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:94
+msgid "Enter the name of the cookie that represents the agreed marketing cookies. For example, in the case of using the \"Complianz\" plugin, this is <code>cmplz_marketing</code>."
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:79
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:99
+msgid "Marketing cookie value"
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:80
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:100
+msgid "Enter the value of the cookie that represents the agreed marketing cookies. For example, in the case of using the \"Complianz\" plugin, this is <code>allow</code>."
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:84
+msgid "Advanced data"
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:85
+msgid "Advanced data are optional parameters that help to better target advertising."
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:90
+msgid "Add E-shop offer identifier"
+msgstr ""
+
+#. translators: %1$s: URL to Sklik Help about itemId parameter
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:92
+msgid "Check if <code>itemId</code> should be added to the code. More information about this parameter can be found in <a href=\"%1$s\" target=\"_blank\">Sklik Help</a>."
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:97
+msgid "Custom E-shop offer identifier"
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:98
+msgid "Enter the key of the custom field of product you want to use for the <code>itemId</code> parameter. The product ID is used by default."
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:106
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:115
+msgid "Use category identifier from Wpify Woo Feed"
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:107
+msgid "Check if you want use category identifier from Wpify Woo Feeds plugin."
+msgstr ""
+
+#. translators: %s: URL to Wpify Woo Feeds plugin
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:111
+msgid "If you want add automatically category identifier from feed settings. Install and use <a href=\"%s\" target=\"_blank\">Wpify Woo Feeds</a> plugin."
+msgstr ""
+
+#. translators: %s: URL to Wpify Woo Feeds plugin
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:111
+msgid "https://wpify.io/product/wpify-woo-feeds/"
+msgstr ""
+
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:123
+msgid "Custom category identifier"
+msgstr ""
+
+#. translators: %1$s: URL to Sklik Help about category parameter
+#: src/Modules/SklikRetargeting/SklikRetargetingModule.php:125
+msgid "Enter the meta data key of category you use to fill in the category for the Zbozi.cz XML feed. More information about <code>category</code> parameter can be found in <a href=\"%1$s\" target=\"_blank\">Sklik Help</a>."
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:54
+msgid "Order button text"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:59
+msgid "Change order button HTML"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:60
+msgid "Turn on if you want to insert html entities into the button text. The text will be inserted directly into the button's HTML code. Warning: unprofessional intervention may affect the checkout page display."
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:66
+msgid "Custom notes"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:70
+msgid "Content"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:75
+msgid "Position"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:79
+msgid "Checkout - Before place order button"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:83
+msgid "Checkout - After place order button"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:87
+msgid "Checkout - Before checkout form"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:91
+msgid "Checkout - Before checkout billing form"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:95
+msgid "Checkout - After checkout billing form"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:99
+msgid "Checkout - Before checkout shipping form"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:103
+msgid "Checkout - After checkout shipping form"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:107
+msgid "Checkout - Before order review"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:111
+msgid "Checkout - Before payment"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:115
+msgid "Cart - Before cart"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:119
+msgid "Cart - After cart contents"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:123
+msgid "Cart - Before cart totals"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:127
+msgid "Cart - Before shipping"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:131
+msgid "Cart - Before proceed to checkout"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:135
+msgid "Cart - After cart"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:143
+msgid "Custom position"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:144
+msgid "Insert the hook where the content is to be placed if you do not use the predefined positions."
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:148
+msgid "Woocommerce notice style"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:149
+msgid "Select woocommerce notification style or leave blank."
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:153
+msgid "Woocommerce message"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:157
+msgid "Woocommerce info"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:161
+msgid "Woocommerce error"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:169
+msgid "Custom class"
+msgstr ""
+
+#: src/Modules/Template/TemplateModule.php:170
+msgid "Insert a custom class selector if you want to apply custom styles to the message."
+msgstr ""
+
+#: src/Modules/Vocative/VocativeModule.php:53
+msgid "Vocative in Woo Emails"
+msgstr ""
+
+#: src/Modules/Vocative/VocativeModule.php:54
+msgid "Automatically changes the salutation in Woo emails to vocative."
+msgstr ""
+
+#: src/Modules/Vocative/VocativeModule.php:59
+msgid "Replace first name"
+msgstr ""
+
+#: src/Modules/Vocative/VocativeModule.php:60
+msgid "By default, WooCommerce uses first name only in the emails. You can set here to replace the \"Hi {first_name}\" text. Use {first_name}, {last_name} and {full_name} tags, ie set \"Hi {full_name}\" as the value."
+msgstr ""
+
+#: src/Modules/Vocative/VocativeModule.php:66
+msgid "Allowed languages"
+msgstr ""
+
+#: src/Modules/Vocative/VocativeModule.php:67
+msgid "Select languages where you want to use the vocative in emails. If you don`t select any language, the vocative will be used in all languages."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:35
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2351
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2583
+msgid "Date"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:36
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-html.php:38
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-plain.php:24
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2351
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2478
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2584
+msgid "Type"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:37
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-html.php:47
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-plain.php:32
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2482
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2484
+msgid "Order"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:38
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-html.php:53
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-plain.php:33
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-html.php:50
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-plain.php:27
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2486
+#: src/WooCommerceIntegration.php:159
+msgid "Customer"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:39
+msgid "Period status (at submission)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:40
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2508
+msgid "Note"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:41
+msgid "Actions"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:148
+msgid "Expired"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:149
+msgid "In period"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:156
+msgid "ended"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:177
+msgid "Detail"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:185
+msgid "No requests submitted yet."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:203
+msgid "Filter by type"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:205
+msgid "All types"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:206
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModel.php:80
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:144
+msgid "Withdrawal"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:207
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModel.php:81
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:145
+msgid "Claim"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:211
+msgid "Filter by period status"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:213
+msgid "All period statuses"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:214
+msgid "In period (at submission)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:215
+msgid "Expired (at submission)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Admin/RequestsListTable.php:218
+msgid "Filter"
+msgstr ""
+
+#. translators: %d: line item id
+#. translators: %d: order line item number
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:258
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2526
+msgid "Item no longer in order (line #%d)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:270
+msgid "Enable/Disable"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:272
+msgid "Enable this email notification"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:276
+msgid "Subject"
+msgstr ""
+
+#. translators: %s: default email subject
+#. translators: %s: default email heading
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:280
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:289
+msgid "Default: %s"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:285
+msgid "Email heading"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:294
+msgid "Email type"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:296
+msgid "Choose which format of email to send."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:303
+msgid "Intro content"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:304
+msgid "Text shown at the top of the email, above the request details table. For admin emails you can use placeholders {type} and {customer_name}."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:306
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:315
+msgid "N/A"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:312
+msgid "Additional content"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:313
+msgid "Text shown below the mandatory request details. Use it for next-steps instructions (e.g. \"Reply to this email with photos of the defect\")."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:327
+msgid "Recipient(s)"
+msgstr ""
+
+#. translators: %s: default admin email address
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:330
+msgid "Comma-separated emails. Defaults to %s."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:345
+msgid "You will be contacted by our team regarding the next steps. If you need to provide additional information (for example photos of a defect for a claim), please reply directly to this email."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:348
+msgid "A new request was submitted. Review the details above and process accordingly."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:353
+msgid "We have received your request. This email confirms its receipt as required by Directive (EU) 2023/2673 — please keep it as a record."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AbstractRequestEmail.php:356
+msgid "A new {type} request was submitted by {customer_name}."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AdminClaimEmail.php:15
+msgid "Claim — admin notification"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AdminClaimEmail.php:16
+msgid "Notifies the shop admin about a new claim (reklamace) request."
+msgstr ""
+
+#. translators: 1: site title, 2: order number placeholder
+#: src/Modules/WithdrawalClaims/Emails/AdminClaimEmail.php:33
+msgid "[%1$s] New claim request — order %2$s"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AdminClaimEmail.php:37
+msgid "New claim request"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AdminWithdrawalEmail.php:15
+msgid "Withdrawal — admin notification"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AdminWithdrawalEmail.php:16
+msgid "Notifies the shop admin about a new withdrawal request."
+msgstr ""
+
+#. translators: 1: site title, 2: order number placeholder
+#: src/Modules/WithdrawalClaims/Emails/AdminWithdrawalEmail.php:33
+msgid "[%1$s] New withdrawal request — order %2$s"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/AdminWithdrawalEmail.php:37
+msgid "New withdrawal request"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/CustomerClaimEmail.php:15
+msgid "Claim — confirmation to customer"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/CustomerClaimEmail.php:16
+msgid "Confirms receipt of a claim (reklamace) request to the customer."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/CustomerClaimEmail.php:32
+msgid "Claim received — order {order_number}"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/CustomerClaimEmail.php:36
+msgid "Your claim has been received"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/CustomerWithdrawalEmail.php:15
+msgid "Withdrawal — confirmation to customer"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/CustomerWithdrawalEmail.php:16
+msgid "Confirms receipt of a withdrawal request to the customer (durable medium per Directive 2023/2673)."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/CustomerWithdrawalEmail.php:32
+msgid "Withdrawal received — order {order_number}"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/Emails/CustomerWithdrawalEmail.php:36
+msgid "Your withdrawal has been received"
+msgstr ""
+
+#. translators: %d: request id
+#. translators: %d: request ID
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-html.php:35
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-plain.php:26
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2472
+msgid "Request #%d"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-html.php:43
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-plain.php:31
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-html.php:42
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-plain.php:25
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2479
+msgid "Submitted at"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-html.php:57
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-plain.php:34
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2092
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2488
+msgid "Scope"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-html.php:61
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-plain.php:35
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2487
+msgid "Period end (at submission)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-html.php:66
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-plain.php:38
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-html.php:55
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-plain.php:30
+msgid "Reason / description"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-html.php:81
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-plain.php:47
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-html.php:70
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-plain.php:39
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2112
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2351
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2520
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2585
+msgid "Items"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-html.php:87
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-html.php:76
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2117
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2521
+msgid "Item"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-html.php:88
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-html.php:77
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2118
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2521
+msgid "Quantity"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-html.php:107
+msgid "View request in admin →"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/emails/admin-request-plain.php:54
+msgid "View request in admin:"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-html.php:32
+msgid "Request details"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-html.php:46
+#: src/Modules/WithdrawalClaims/templates/emails/customer-request-plain.php:26
+#: src/Modules/WithdrawalClaims/templates/request-form.php:111
+msgid "Order number"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:20
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:203
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2232
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2309
+msgid "Withdraw from contract"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:21
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:277
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2310
+msgid "File a claim"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:23
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:211
+msgid "Confirm withdrawal"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:24
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:285
+msgid "Submit claim"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:28
+msgid "required"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:35
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1965
+msgid "Your request has been submitted. A confirmation email has been sent to you."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:71
+msgid "Leave this field empty"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:89
+msgid "Name"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:98
+msgid "Email used for the order"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:105
+msgid "Must match the email used on the order."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:130
+msgid "Defect description"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:133
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2489
+msgid "Reason"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:180
+msgid "Check order"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/templates/request-form.php:186
+msgid "After validating your order number and email, the eligible items will be shown here."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModel.php:95
+msgid "Whole order"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModel.php:96
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2107
+msgid "Specific items"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModel.php:110
+msgid "Submitted"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:146
+msgid "Security"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:165
+msgid "Withdrawal from contract"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:166
+msgid "Implements the mandatory \"Withdraw from contract\" button per EU Directive 2023/2673 (effective 19 June 2026). Assign a page below to enable withdrawal functions."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:173
+msgid "Withdrawal page"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:174
+msgid "Page where the withdrawal form is rendered (via shortcode or block). Empty = withdrawal functions are disabled — no buttons, no emails, no link injection."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:182
+msgid "Withdrawal period (days)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:183
+msgid "How many days the customer has to withdraw. Statutory minimum is 14 in CZ/SK. Higher values are allowed (consumer-friendly)."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:190
+msgid "Order statuses that start the period"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:191
+msgid "When the order first reaches any of these statuses, both the withdrawal countdown (above) and the warranty countdown (Claim tab) start. Default \"Completed\" works for most shops. If you have a custom status like \"Delivered\", select that instead — if multiple are selected, the earliest transition wins. For orders created before this module was active, the plugin falls back to the order's completion / payment / creation date in that order."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:201
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:275
+msgid "Button text"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:202
+msgid "Text on the button that opens the form (My Account, transactional emails)."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:209
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:283
+msgid "Confirm button text"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:210
+msgid "Text on the final confirmation submit inside the form."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:217
+msgid "Inject withdrawal link into these WC emails"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:218
+msgid "Selected WooCommerce emails will get a section with a link to the withdrawal form. Link is rendered only if the period is still running and the page above is assigned."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:230
+msgid "Heading shown above the withdrawal link in emails"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:231
+msgid "Headline rendered as <code>h2</code>above the \"Withdraw from contract\" button in the WC emails selected above."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:232
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2233
+msgid "Need to withdraw from this contract?"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:238
+msgid "Description shown above the withdrawal link in emails"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:239
+msgid "Short paragraph rendered between the heading and the button."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:240
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2234
+msgid "Use the link below to start the withdrawal process online."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:250
+msgid "Claim (warranty) request"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:251
+msgid "Optional. Adds a \"File a claim\" form for warranty issues. Assign a page below to enable claim functions."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:258
+msgid "Claim page"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:259
+msgid "Page where the claim form is rendered. Empty = claim functions are disabled."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:267
+msgid "Warranty period (months)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:268
+msgid "How many months the warranty lasts. Statutory minimum is 24 in CZ/SK."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:276
+msgid "Text on the button that opens the form (My Account)."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:284
+msgid "Text on the final submit button inside the form."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:295
+msgid "Spam & abuse protection"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:296
+msgid "Two independent layers. Layer A limits successful submissions per order. Layer B limits attempts per IP (counts even failed ones — protects against brute force)."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:302
+msgid "Max requests per order (Layer A)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:303
+msgid "Maximum number of stored requests on the same order, regardless of type."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:310
+msgid "Min seconds between requests (Layer A)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:311
+msgid "Minimum gap between two stored requests on the same order. Prevents accidental double-submits."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:318
+msgid "Max attempts per IP per hour (Layer B)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:319
+msgid "Maximum submission attempts per IP per hour, including validation failures. Use to throttle brute-force attempts."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:326
+msgid "Duplicate content window (hours)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:327
+msgid "Block submission if an identical request (same items + reason) was submitted on the same order within this many hours. Set to 0 to disable."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:584
+msgid "Excluded by seller (no withdrawal)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:585
+msgid "Excluded by seller (no warranty)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:597
+msgid "Item already refunded"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:609
+msgid "Withdrawal period expired"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:610
+msgid "Warranty period expired"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:781
+msgid "This order is not eligible for a withdrawal or claim request."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:795
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:808
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:834
+msgid "Order not found."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:798
+msgid "You do not own this order."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:829
+msgid "Please provide order number and email."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:837
+msgid "The email does not match the order."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:938
+msgid "You have reached the maximum number of requests for this order."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:946
+msgid "Please wait a bit before submitting another request."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:974
+msgid "You have already submitted an identical request for this order. We are processing it."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1069
+msgid "withdrawal"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1070
+msgid "claim"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1076
+msgid "Visible to admins only:"
+msgstr ""
+
+#. translators: %s: type (withdrawal or claim)
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1079
+msgid "%s functions are disabled — assign a page in module settings for this form to render on the front end."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1083
+msgid "Open settings"
+msgstr ""
+
+#. translators: %s: field label
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1317
+msgid "%s is required."
+msgstr ""
+
+#. translators: %s: field label
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1329
+msgid "%s must be a valid email address."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1471
+msgid "This form is not active."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1478
+msgid "Invalid request — security check failed. Please reload the page and try again."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1500
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1856
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1931
+msgid "Too many attempts. Please try again later."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1665
+msgid "No eligible items selected."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1671
+msgid "Please describe the defect."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1743
+msgid "Could not save your request. Please try again later."
+msgstr ""
+
+#. translators: 1: type, 2: request id
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1755
+msgid "WPify Woo: %1$s request submitted (#%2$d)."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1828
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1909
+msgid "Invalid form type."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1831
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1912
+msgid "This form is not available."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1836
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1916
+msgid "Security check failed. Please reload the page."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1846
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1851
+msgid "Please reload the page and try again."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1878
+msgid "This order has no items eligible for withdrawal (the period may have expired or items are excluded)."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1879
+msgid "This order has no items eligible for a claim (the warranty may have expired or items are excluded)."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1922
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:1927
+msgid "Submitted."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2006
+msgid "Network error. Please try again."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2007
+msgid "Working…"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2008
+msgid "Something went wrong. Please try again."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2037
+msgid "No eligible items in this order."
+msgstr ""
+
+#. translators: %s: date
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2050
+msgid "Withdrawal period ends on %s."
+msgstr ""
+
+#. translators: %s: date
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2061
+msgid "Warranty valid until %s."
+msgstr ""
+
+#. translators: %d: number of items
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2075
+msgid "%d item is not eligible and will not be included."
+msgid_plural "%d items are not eligible and will not be included."
+msgstr[0] ""
+msgstr[1] ""
+
+#. translators: %d: number of eligible items
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2099
+msgid "Whole order (all %d eligible item)"
+msgid_plural "Whole order (all %d eligible items)"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2159
+msgid "1 (full)"
+msgstr ""
+
+#. translators: %d: number of units still available for return after refunds
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2162
+msgid "of %d available"
+msgstr ""
+
+#. translators: %d: ordered quantity
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2165
+msgid "of %d ordered"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2350
+msgid "Submitted requests"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2418
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2419
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2441
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2626
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2631
+msgid "Withdrawals & Claims"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2428
+msgid "You do not have permission to access this page."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2447
+msgid "Search requests"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2457
+msgid "Request not found"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2473
+msgid "Back to list"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2480
+msgid "Status"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2511
+msgid "Internal note (e.g. processed, awaiting refund, exchange…). Not visible to the customer."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2513
+msgid "Save note"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2536
+msgid "Item names/prices are read live from the order. Full historical change log is in the WC order notes."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2554
+msgid "Withdrawal & Claim Requests"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2574
+msgid "No requests submitted."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2602
+msgid "View"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2607
+msgid "Full order change history is in WC order notes below."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2708
+msgid "Excluded from withdrawal"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2709
+msgid "Customer cannot withdraw from contract for this product (custom-made, hygiene, perishable…)."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2713
+msgid "Excluded from warranty/claim"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2714
+msgid "Customer cannot file a claim for this product."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2719
+msgid "Withdrawal period override (days)"
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2720
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2728
+msgid "Leave empty to use the global setting."
+msgstr ""
+
+#: src/Modules/WithdrawalClaims/WithdrawalClaimsModule.php:2727
+msgid "Warranty months override"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:60
+msgid "Heureka XML"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:73
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:93
+msgid "Heureka Product name"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:77
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:100
+msgid "Heureka Product"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:81
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:107
+msgid "Heureka Category"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:145
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:198
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:206
+msgid "Delivery methods"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:146
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:260
+msgid "Map categories"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:159
+msgid "Delivery time"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:160
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:168
+msgid "Enter 0 for instock, 1-3 for 3 days, 4-7 for one week, 8-14 for two weeks, 15-30 for one month, 31 and more for month and more."
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:167
+msgid "Delivery time for out of stock items"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:175
+msgid "Exclude out of stock items"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:176
+msgid "Check to exclude out of stock items."
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:182
+msgid "ITEM_ID custom field"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:183
+msgid "Product ID is used as default value for ITEM_ID. Enter custom field key if you want to use custom field value instead."
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:189
+msgid "EAN custom field"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:190
+msgid "SKU is used as default value for EAN. Enter custom field key if you want to use custom field value instead."
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:199
+msgid "Select the delivery methods and prices"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:209
+msgid "Add method"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:216
+msgid "Delivery method"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:217
+msgid "Select delivery method"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:229
+msgid "Price"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:230
+msgid "Enter price for delivery."
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:235
+msgid "Price COD"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:236
+msgid "Enter price for delivery with COD."
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:241
+msgid "Only for product type"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:242
+msgid "Select the product types to which this shipping option should be restricted."
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:245
+msgid "Only virtual"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:249
+msgid "Only non-virtual"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:261
+msgid "Map WooCommerce categories to Heureka categories"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:269
+msgid "Select languages to show in the select bellow. Please make sure to save settings to show all the selected languages."
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:270
+msgid "Categories languages"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:289
+msgid "Click to update the Heureka categories."
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:290
+msgid "Update Heureka categories"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:291
+msgid "Update categories"
+msgstr ""
+
+#. translators: %s: category name
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:313
+msgid "Heureka category for %s"
+msgstr ""
+
+#. translators: %1$s: feed URL, %2$s: REST API endpoint for cron job
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:333
+msgid "Click to regenerate feed. Make sure to save the settings before generating the feed.<br/>The feed will be available at <a href=\"%1$s\" target=\"_blank\"><code style=\"-webkit-user-select: all;user-select: all;\">%1$s</code></a>.<br/>You can also setup cron job to <code style=\"-webkit-user-select: all;user-select: all;\">%2$s</code> to regenerate the feed automatically."
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:337
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:338
+msgid "Generate feed"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:348
+msgid "Error saving files"
+msgstr ""
+
+#. translators: %s: parent directory path
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:367
+msgid "Nelze vytvořit složku – nadřazená složka není zapisovatelná: %s"
+msgstr ""
+
+#. translators: %s: directory path
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:374
+msgid "Nepodařilo se vytvořit složku: %s"
+msgstr ""
+
+#. translators: %s: directory path
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:381
+msgid "Složka existuje, ale není zapisovatelná: %s"
+msgstr ""
+
+#. translators: %s: file path
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:389
+msgid "Soubor existuje, ale není zapisovatelný: %s"
+msgstr ""
+
+#. translators: %s: parent directory path
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:399
+msgid "Nelze vytvořit temp složku – nadřazená složka není zapisovatelná: %s"
+msgstr ""
+
+#. translators: %s: temporary directory path
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:406
+msgid "Nepodařilo se vytvořit temp složku: %s"
+msgstr ""
+
+#. translators: %s: temporary directory path
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:413
+msgid "Složka temp existuje, ale není zapisovatelná: %s"
+msgstr ""
+
+#. translators: %s: temporary file path
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:421
+msgid "Soubor temp existuje, ale není zapisovatelný: %s"
+msgstr ""
+
+#: src/Modules/XmlFeedHeureka/XmlFeedHeurekaModule.php:566
+msgid "Downloading of the categories XML failed, please contact your hosting provider."
+msgstr ""
+
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:68
+msgid "Shop ID"
+msgstr ""
+
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:69
+msgid "Enter Shop ID for Zbozi.cz"
+msgstr ""
+
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:74
+msgid "Private Key"
+msgstr ""
+
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:75
+msgid "Enter private key for Zbozi.cz"
+msgstr ""
+
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:80
+msgid "Sklik ID"
+msgstr ""
+
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:81
+msgid "Enter Sklik ID if you want to enable conversions for Sklik.cz"
+msgstr ""
+
+#. translators: %s: URL to premium extension
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:106
+msgid "This module sends only limited conversion measurements using frontend code. For a more detailed standard measurement with also backend sending data for Zboží.cz, please install the premium extension <a href=\"%s\" target=\"_blank\">WPify Woo Zbozi.cz Conversion tracking </a>. This premium extension also allows you to send a customer satisfaction survey."
+msgstr ""
+
+#. translators: %s: URL to premium extension
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:106
+msgid "https://wpify.io/product/wpify-woo-zbozi-cz-conversion-tracking/"
+msgstr ""
+
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:212
+msgid "Duplicate conversion code may be generated for Zbozi.cz/Sklik"
+msgstr ""
+
+#: src/Modules/ZboziConversions/ZboziConversionsModule.php:213
+msgid "The <b>Zbozi.cz/Sklik Conversions Limited</b> module is active at the same time as the premium extension <b>Zbozi.cz/Sklik Conversions</b>. If you have both modules active and there will be duplicate generation of the queue conversion code once for limited and once for standard conversion measurement and measurement errors may occur. Please deactivate one of these modules."
+msgstr ""
+
+#. translators: 1: Plugin name, 2: Minimal required PHP version, 3: current PHP version.
+#: wpify-woo.php:99
+msgid "Opps! %1$s requires a minimum PHP version of %2$s. Your current version is: %3$s. Please contact your host to upgrade."
+msgstr ""
+
+#. translators: 1: Plugin name
+#: wpify-woo.php:117
+msgid "Opps! %1$s is corrupted it seems, please re-install the plugin."
+msgstr ""
+
+#. translators: 1: Plugin name
+#: wpify-woo.php:134
+msgid "Plugin %s requires WooCommerce. Please install and activate it first."
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:66
+#: assets/admin/components/LicenseControl.js:94
+#: build/settings.js:1
+msgid "Activated"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:79
+#: build/settings.js:1
+msgid "Deactivated"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:93
+#: build/settings.js:1
+msgid "Status:"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:95
+#: build/settings.js:1
+msgid "Not active"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:118
+#: build/settings.js:1
+msgid "Deactivate license"
+msgstr ""
+
+#: assets/admin/components/LicenseControl.js:119
+#: build/settings.js:1
+msgid "Activate license"
+msgstr ""
+
+#: build/withdrawal-claims-blocks.js:1
+#: src/Modules/WithdrawalClaims/assets/withdrawal-claims-blocks.js:44
+msgid "Withdrawal form (rendered on the front end)."
+msgstr ""
+
+#: build/withdrawal-claims-blocks.js:1
+#: src/Modules/WithdrawalClaims/assets/withdrawal-claims-blocks.js:54
+msgid "Claim form (rendered on the front end)."
+msgstr ""
+
+#: build/Modules/WithdrawalClaims/blocks/claim-form/block.json
+#: src/Modules/WithdrawalClaims/blocks/claim-form/block.json
+msgctxt "block title"
+msgid "Claim form"
+msgstr ""
+
+#: build/Modules/WithdrawalClaims/blocks/claim-form/block.json
+#: src/Modules/WithdrawalClaims/blocks/claim-form/block.json
+msgctxt "block description"
+msgid "Form for customers to file a claim (reklamace)."
+msgstr ""
+
+#: build/Modules/WithdrawalClaims/blocks/claim-form/block.json
+#: src/Modules/WithdrawalClaims/blocks/claim-form/block.json
+msgctxt "block keyword"
+msgid "claim"
+msgstr ""
+
+#: build/Modules/WithdrawalClaims/blocks/claim-form/block.json
+#: src/Modules/WithdrawalClaims/blocks/claim-form/block.json
+msgctxt "block keyword"
+msgid "reklamace"
+msgstr ""
+
+#: build/Modules/WithdrawalClaims/blocks/claim-form/block.json
+#: src/Modules/WithdrawalClaims/blocks/claim-form/block.json
+msgctxt "block keyword"
+msgid "warranty"
+msgstr ""
+
+#: build/Modules/WithdrawalClaims/blocks/claim-form/block.json
+#: build/Modules/WithdrawalClaims/blocks/withdrawal-form/block.json
+#: src/Modules/WithdrawalClaims/blocks/claim-form/block.json
+#: src/Modules/WithdrawalClaims/blocks/withdrawal-form/block.json
+msgctxt "block keyword"
+msgid "wpify"
+msgstr ""
+
+#: build/Modules/WithdrawalClaims/blocks/withdrawal-form/block.json
+#: src/Modules/WithdrawalClaims/blocks/withdrawal-form/block.json
+msgctxt "block title"
+msgid "Withdrawal form"
+msgstr ""
+
+#: build/Modules/WithdrawalClaims/blocks/withdrawal-form/block.json
+#: src/Modules/WithdrawalClaims/blocks/withdrawal-form/block.json
+msgctxt "block description"
+msgid "Form for customers to withdraw from a contract (Directive 2023/2673)."
+msgstr ""
+
+#: build/Modules/WithdrawalClaims/blocks/withdrawal-form/block.json
+#: src/Modules/WithdrawalClaims/blocks/withdrawal-form/block.json
+msgctxt "block keyword"
+msgid "withdrawal"
+msgstr ""
+
+#: build/Modules/WithdrawalClaims/blocks/withdrawal-form/block.json
+#: src/Modules/WithdrawalClaims/blocks/withdrawal-form/block.json
+msgctxt "block keyword"
+msgid "odstoupení"
+msgstr ""
+
+#: build/Modules/WithdrawalClaims/blocks/withdrawal-form/block.json
+#: src/Modules/WithdrawalClaims/blocks/withdrawal-form/block.json
+msgctxt "block keyword"
+msgid "return"
+msgstr ""

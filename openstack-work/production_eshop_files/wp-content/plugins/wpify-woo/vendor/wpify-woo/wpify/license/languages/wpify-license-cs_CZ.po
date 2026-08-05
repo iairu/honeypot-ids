@@ -1,0 +1,65 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-12-04T12:46:13+00:00\n"
+"PO-Revision-Date: 2025-12-04 13:49+0100\n"
+"Last-Translator: \n"
+"Language-Team: \n"
+"Language: cs\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 3.8\n"
+"X-Poedit-Basepath: .\n"
+
+#: src/License.php:246
+msgid "License not found"
+msgstr "Licence nebyla nalezena"
+
+#: assets/admin/components/LicenseControl.js:35 build/settings.js:1
+msgid "Status:"
+msgstr "Stav:"
+
+#: assets/admin/components/LicenseControl.js:37 build/settings.js:1
+msgid "Not valid"
+msgstr "Neplatná"
+
+#: assets/admin/components/LicenseControl.js:37 build/settings.js:1
+msgid "Active"
+msgstr "Aktivní"
+
+#: assets/admin/components/LicenseControl.js:38 build/settings.js:1
+msgid "Not active"
+msgstr "Neaktivní"
+
+#: assets/admin/components/LicenseControl.js:42 build/settings.js:1
+msgid "Domain is connected with your subscription in WPify account."
+msgstr "Doména je propojena s vaším předplatným v účtu WPify."
+
+#: assets/admin/components/LicenseControl.js:43 build/settings.js:1
+msgid "Please activate the domain by connecting it with your WPify account!"
+msgstr "Aktivujte doménu jejím propojením s vaším účtem WPify!"
+
+#: assets/admin/components/LicenseControl.js:54 build/settings.js:1
+msgid ""
+"The license is not valid, please go to your account and review your "
+"subscription ."
+msgstr ""
+"Licence není platná, přejděte do svého účtu a zkontrolujte své předplatné."
+
+#: assets/admin/components/LicenseControl.js:57 build/settings.js:1
+msgid "Key:"
+msgstr "Klíč:"
+
+#: assets/admin/components/LicenseControl.js:60 build/settings.js:1
+msgid "Renewal:"
+msgstr "Obnovení:"
+
+#: assets/admin/components/LicenseControl.js:66 build/settings.js:1
+msgid "Deactivate domain"
+msgstr "Deaktivovat doménu"
+
+#: assets/admin/components/LicenseControl.js:68 build/settings.js:1
+msgid "Activate domain"
+msgstr "Aktivovat doménu"

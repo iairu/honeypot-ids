@@ -1,0 +1,48 @@
+{
+    "translation-revision-date": "2025-12-04 13:49+0100",
+    "generator": "WP-CLI\/2.5.0",
+    "source": "build\/settings.js",
+    "domain": "messages",
+    "locale_data": {
+        "messages": {
+            "": {
+                "domain": "messages",
+                "lang": "cs",
+                "plural-forms": "nplurals=2; plural=(n != 1);"
+            },
+            "Status:": [
+                "Stav:"
+            ],
+            "Not valid": [
+                "Neplatn\u00e1"
+            ],
+            "Active": [
+                "Aktivn\u00ed"
+            ],
+            "Not active": [
+                "Neaktivn\u00ed"
+            ],
+            "Domain is connected with your subscription in WPify account.": [
+                "Dom\u00e9na je propojena s va\u0161\u00edm p\u0159edplatn\u00fdm v \u00fa\u010dtu WPify."
+            ],
+            "Please activate the domain by connecting it with your WPify account!": [
+                "Aktivujte dom\u00e9nu jej\u00edm propojen\u00edm s va\u0161\u00edm \u00fa\u010dtem WPify!"
+            ],
+            "The license is not valid, please go to your account and review your subscription .": [
+                "Licence nen\u00ed platn\u00e1, p\u0159ejd\u011bte do sv\u00e9ho \u00fa\u010dtu a zkontrolujte sv\u00e9 p\u0159edplatn\u00e9."
+            ],
+            "Key:": [
+                "Kl\u00ed\u010d:"
+            ],
+            "Renewal:": [
+                "Obnoven\u00ed:"
+            ],
+            "Deactivate domain": [
+                "Deaktivovat dom\u00e9nu"
+            ],
+            "Activate domain": [
+                "Aktivovat dom\u00e9nu"
+            ]
+        }
+    }
+}

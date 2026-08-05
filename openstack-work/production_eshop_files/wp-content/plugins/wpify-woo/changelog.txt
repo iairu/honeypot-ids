@@ -1,0 +1,1116 @@
+== Changelog ==
+
+= Unreleased =
+* Security — fixed a privilege escalation vulnerability and hardened the plugin's public REST API endpoints. Updating is strongly recommended.
+* Compatibility with WordPress 7.0.
+= 5.4.16 =
+* Fix VAT fields (IČO/DIČ) — login and registration on the My Account page now work on the first attempt.
+* Fix Withdrawal & Claim — public form now finds the order even when the order number is entered with an extra space or stray character.
+
+= 5.4.15 =
+* Fix CRN/VAT — display VIES warnings on classic checkout, debounce VAT checks while typing, and do not treat VIES service outages as invalid VAT numbers.
+
+= 5.4.14 =
+* Add QR Payment — developer filter for Slovak QR payment generator options.
+
+= 5.4.13 =
+* Fix Withdrawal & Claim — form now correctly resolves the order by its visible number when a custom order-numbering plugin is used.
+
+= 5.4.12 =
+* Fix Async emails — checkout error on WooCommerce 10.9 and newer.
+* Fix Vocative — greeting in WooCommerce emails is now correctly inflected again.
+* Fix Prices log — lowest price now respects WooCommerce VAT display settings and shows the "incl./excl. tax" suffix.
+* Fix Withdrawal & Claim — late status changes on years-old orders no longer reopen the withdrawal window.
+
+= 5.4.11 =
+* Add Free shipping notice — developer filter for custom notice HTML.
+
+= 5.4.10 =
+* Fix Withdrawal & Claim submission for logged-in users.
+* Fix Withdrawal & Claim form not submitting with required custom fields.
+
+= 5.4.9 =
+* Fix incorrect times shown in Withdrawal & Claim records.
+* Add support for custom fields in Withdrawal & Claim form (e.g. IBAN).
+* Add editable heading and description for the withdrawal link block in WooCommerce emails.
+* Add editable intro text for Withdrawal & Claim notification emails.
+= 5.4.8 =
+* Add second VAT recalculation on classic checkout.
+* Fix PHP warning when running CLI scripts.
+
+= 5.4.7 =
+* Fix translations of plugin fields in WooCommerce emails on multilingual stores (WPML).
+
+= 5.4.6 =
+* Fix Withdrawal & Claim — already refunded units are no longer offered for return or claim.
+* Fix Withdrawal & Claim — admin recipient address now appears in the WooCommerce email settings list.
+
+= 5.4.5 =
+* Fix Vocative module applying to WooCommerce emails.
+* Fix Withdrawal & Claim — variable product variants now respect the parent product's exclusion and period-override settings.
+* Fix Withdrawal & Claim — request type, status and scope are now translatable in emails and the admin overview.
+
+= 5.4.4 =
+* Fix missing data builder
+
+= 5.4.3 =
+* Add Sklik retargeting sends the selected variation ID matching the Zboží.cz feed.
+* Add Withdrawal & Claim — apply security setting defaults on existing installations.
+* Add Withdrawal & Claim — support custom order numbers from Sequential Order Numbers and similar plugins.
+* Add Withdrawal & Claim — block identical resubmits and tighten request cooldown defaults.
+* Fix admin newsletter notice not staying hidden after dismissal.
+* Fix Withdrawal & Claim – emails language on multilingual sites.
+* Fix Withdrawal & Claim — "Order not found" error for logged-in users on the public form.
+* Fix Withdrawal & Claim — claim form unsubmittable in the order verification step.
+
+= 5.4.2 =
+* Update wpify/custom-fields to 4.8.0.
+
+= 5.4.1 =
+* Add filter for providing custom QR payment image data before default QR code generation.
+
+= 5.4.0 =
+* Add new module Withdrawal & Claim — compliant "Withdraw from contract" button (EU Directive 2023/2673) + optional warranty claim form, AJAX flow, guest access, per-product overrides, native WC emails, admin overview, HPOS compatible.
+* Fix input sanitization in admin settings.
+* Fix nonce handling in Heureka reviews import and categories update buttons.
+* Fix Heureka XML feed not applying custom Heureka fields on product variations.
+* Strip whitespace from account number, bank code, IBAN and BIC in QR payment module.
+* Move bundled scoped dependencies from deps to vendor.
+* Add direct file access protection to PHP files.
+
+= 5.3.4 =
+* Add Store API updates for the free shipping notice in WooCommerce cart and checkout blocks.
+
+= 5.3.3 =
+* Add more data to Delivery Dates API response.
+
+= 5.3.2 =
+* Refactor delivery dates module — shared logic for rendering and API access.
+
+= 5.3.1 =
+* Fix cookie consent detection in Zbozi.cz/Sklik Conversions Limited and Sklik Retargeting modules
+* Fix PHP warnings in QR payment module
+* Fix block checkout not pre-filling company data (IC, DIC, company name) for customers with legacy meta key format
+* Fix Auto-enable block checkout "I'm shopping for a company" toggle when customer has existing company data
+* Add support for grouped, external and bundle product types in Heureka XML feed
+
+= 5.3.0 =
+* Add locale-aware documentation links with new docs site content
+* Add async rendering option for Delivery Dates (REST-based, cache-friendly)
+* Improve IČ/DIČ VAT exemption logic (EU reverse charge, third-country export, better VIES/ARES handling, admin info, block checkout recalculation)
+* Fix Heureka reviews widget slug resolution
+* Fix Heureka XML feed product name fallback
+* Fix QR payment currency filtering for auto accounts only
+* Hide the "show label on frontend" setting in Prices module
+* Fix security hardening (CSRF, XSS, direct file access protection)
+* Update deps and core
+
+= 5.2.2 =
+* Fix QR payment source option warning
+
+= 5.2.1 =
+* Add search filtering for async select fields in module settings
+* Add dynamic country filtering based on QR type selection
+* Fix duplicate QR codes displayed in emails
+* Improve QR payment module settings UX
+
+= 5.2.0 =
+* Add Auto detection for QR payment standard
+* Add validation for QR payments and QR generators
+* Add option to load bank account data from BACS payment method
+* Add support inserting QR payment codes into WCPDF invoies
+* Update dependencies
+
+= 5.1.10 =
+* Add HU QR payment standard
+* Add EU (EPC) QR payment standard
+
+= 5.1.9 =
+* Add filter `wpify_woo_heureka_disable_send` to disable send Heureka ověřeno zákazníky
+* Fix Heureka ověřeno zákazníky item id to correct product id
+
+= 5.1.8 =
+* Handle product not found in prices log
+
+= 5.1.7 =
+* Fixed a bug that deleted the VAT number when invalid check was performed on block checkout
+* Fix SK VAT numbers normalizations on block checkout
+
+= 5.1.6 =
+* Add `wpify_woo_heureka_overeno_data` filter to edit sending data for Heureka ověřeno zákazníky
+* Change order id in Heureka ověřeno zákazníky from DB id to order number
+* Add settings to restrict the display of custom prices
+* Add `wpify_woo_prices_should_display_price` filter whether to display the custom price
+
+= 5.1.5 =
+* Add recipient name for SK QR payment (pay by square)
+* Add normalization VAT number on block checkout
+* Fix validation VAT number for is_vat_exempt meta-value
+
+= 5.1.4 =
+* Add Heureka ověřeno zákazníky review options and import
+* Add Heureka ověřeno zákazníky display reviews shortcode [wpify_woo_heureka_reviews count="6"]
+
+= 5.1.3 =
+* Fix Subscription form
+
+= 5.1.2 =
+* Improved - leave empty ean field in XML if is ean custom field set
+
+= 5.1.1 =
+* Fix calculate VAT exempt if shipping address is the same as billing in IČ DIČ module
+* Fix loading an IČ DIČ script on my account page.
+* Hide duplicit IČ DIČ fields in my account page
+
+= 5.1.0 =
+* Add block checkout support for Heureka ověřeno zákazníky
+* Add an option to exclude shipping from the Free shipping notice condition
+* Add support add html into Free shipping notice texts
+* Add an option to allow only selected languages for vocative in emails
+* Update dependencies
+
+= 5.0.18 =
+* Fix display Delivery dates shortcode if product is not known
+
+= 5.0.17 =
+* Add VIES error logging
+* Fix display styling IČ DIČ fields on block checkout
+
+= 5.0.16 =
+* Fix sanitization company field in IČ DIČ module on block checkout
+
+= 5.0.15 =
+* Fix display company billing details in order admin
+
+= 5.0.14 =
+* Fix VAT exempt calculation bug in block checkout
+* Fix VAT exempt timing issue in block checkout
+* Optimize performance by reducing excessive validation calls during checkout
+* Add logging for VAT exempt
+* Improve VAT exempt logic to handle different validation states properly
+
+= 5.0.13 =
+* Add global unique id support for EAN in XML feed
+* Fix load textdomain
+* update plugin dashboard
+* Update dependencies
+
+= 5.0.12 =
+* Add function to check if feed directories and files are writable.
+* Add errors to Heureka feed generation
+* Update dependencies
+
+= 5.0.11 =
+* fix load dashboard data
+
+= 5.0.10 =
+* Add shipping and fees as additional items in Heureka conversion code
+* Fix add product items in Heureka conversion code
+
+= 5.0.9 =
+* Add WC_order object into `wpify_woo_qr_payment_details` filter
+* Update dependencies
+
+= 5.0.8 =
+* Update plugin dashboard and FAQ
+
+= 5.0.7 =
+* Fix missing settings error
+* Fix search Heureka categories
+
+= 5.0.6 =
+* Fix SQL error in Prices Log when creating a new product
+
+= 5.0.5 =
+* Fix Delivery date display by zones
+* Add option to Opt-In Heureka
+* Better shortcode [wpify_woo_render_qr_code] for display QR payment
+
+= 5.0.4 =
+* Fix Delivery date location select
+
+= 5.0.3 =
+* Delivery date - allow html in Delivery date message
+
+= 5.0.2 =
+* Add filter 'wpify_woo_heureka_overeno_item_id'
+
+= 5.0.1 =
+* Fix display IČ DIČ in addresses
+* Fix setting for Heureka certification widget code
+* Fix Heureka parent category name
+* Fix Custom price type warning
+
+= 5.0.0 =
+* Add new conversion code for Heureka Měření konverzí
+* Add validation of variable symbol to numbers only for QR payment
+* Add price by unit quantity in Price module
+* Add block checkout support for VAT fields in IČ DIČ module
+* New plugin core
+* New settings
+* Remove Packeta module
+
+= 4.1.13 =
+* Add shortcode [wpify_woo_lowest_price] to display the lowest price for last 30 days
+* Add option to display the lowest price in 30 days via the Pricess module
+* Add filter `wpify_woo_delivery_dates_days`
+* Fix html for custom prices in Price module
+
+= 4.1.12 =
+* Add Sklik/zbozi retargeting and conversion log data to console
+* Remove old Delivery dates notice
+* Update dependencies
+
+= 4.1.11 =
+* Add support for update notices
+* Edit info about deprecated Packeta shipping
+
+= 4.1.10 =
+* Fix VAT number validation in VIES for non-numeric numbers
+
+= 4.1.9 =
+* Adjust filter wpify_woo_skip_qr_payment to skip QR payment for specific order
+
+= 4.1.8 =
+* Disable autoload for Heureka categories option
+
+= 4.1.7 =
+* Add filter wpify_woo_skip_qr_payment to skip QR payment for specific order
+
+= 4.1.6 =
+* Fix error on Free shipping notice without any amount
+
+= 4.1.5 =
+* Add option to filter deliveries options for virtual products in Heureka XML feed
+* Update delivery methods in Heureka XML (thanks rex2630)
+
+= 4.1.4 =
+* Fix checkout blocking after zero VAT validation
+
+= 4.1.3 =
+* Fix Delivery date skip weekends
+
+= 4.1.2 =
+* Display free shipping notice wrapper always for updating fragments
+
+= 4.1.1 =F
+* Fix Delivery date skip weekends
+
+= 4.1.0 =
+* Edit conditions for the Reverse charge according to the country of shop and delivery.
+* Update Documentation links
+* Add info about deprecated Packeta shipping
+
+= 4.0.12 =
+* Fix warning "Undefined array key 0" in Delivery dates module
+
+= 4.0.11 =
+* Fix possible vulnerability
+
+= 4.0.10 =
+* Add delivery date placeholder into more info text
+* Fix QR payment API url parameters
+
+= 4.0.9 =
+* Add capability check to `maybe_send_to_packeta` method
+
+= 4.0.8 =
+* Fix display delivery dates without customer data
+
+= 4.0.7 =
+* Fix VIES validation for SK
+
+= 4.0.6 =
+* Add filter for adjusting the Ares details
+
+= 4.0.5 =
+* Add setting for custom Ares text
+
+= 4.0.4 =
+* Update dependencies
+
+= 4.0.3 =
+* Trigger JS event after Ares autofill to allow other plugins to react
+
+= 4.0.2 =
+* Fix display Ares button without "I'm shopping for a company" checkbox
+
+= 4.0.1 =
+* Fix IČ validation only for czech billing address
+* Fix Free shipping notice after cart update
+
+= 4.0.0 =
+* Require PHP 8
+* Require WordPress >= 6.2
+* Require WooCommerce >= 7.0
+* Add new Ares implementation
+
+= 3.9.19 =
+* Fix Free shipping notice if Free shipping min amount is 0
+* Add woocommerce_after_variations_form hook to Delivery dates
+
+= 3.9.18 =
+* Fix hiding company fields
+* Declare HPOS support
+
+= 3.9.17 =
+* VAT validation fix.
+
+= 3.9.16 =
+* Prices log fix.
+
+= 3.9.15 =
+* IČO and DIČ validation JavaScript refactoring.
+
+= 3.9.14 =
+* Fix render QR code shortcode
+
+= 3.9.13 =
+* Add option to select position of QR code in emails
+* Fix individual delivery date settings in products
+
+= 3.9.12 =
+* Fix DIČ validation
+
+= 3.9.11 =
+* Fix DIČ validation
+
+= 3.9.10 =
+* Add info label option for each QR code
+* Fix currency check for multiple accounts to generate QR codes
+
+= 3.9.9 =
+* Validate the DIČ / IČ DPH number after finish typing in the field.
+* Fix Price log warning when creating new product
+
+= 3.9.8 =
+* Update models
+
+= 3.9.7 =
+* Add automatic correction of the DIČ number format
+
+= 3.9.6 =
+* Add creating database table if not exists before saving price log
+
+= 3.9.5 =
+* Fix validation DIČ number format in checkout
+
+= 3.9.4 =
+* Add removal of unwanted characters in IČ DIČ numbers
+* Add spinner when validating IČ in ARES or DIČ in VIES
+* Add [wpify_woo_delivery_dates] shortcode for displaying Delivery dates
+* Fix trigger validation IČ DPH in VIES after changing country
+* Fix showing payment message in Delivery date
+* Fix get translated date format in Delivery date
+
+= 3.9.3 =
+* Add `wpify_woo_delivery_dates_payments_data` filter for payment message and more info text
+* Add option to validate IČ DIČ number format in checkout
+* Fix load customer IČ DIČ in admin
+* Fix Packeta admin notice as dismissible
+* Fix Free shipping notice if cart is empty
+
+= 3.9.2 =
+* Fix duplicate data upload to Heureka overeno zakazniky by saving meta to order
+
+= 3.9.1 =
+* Fix converting data in delivery date settings
+
+= 3.9.0 =
+* Add Price module
+* Change the data storage of the delivery date settings for products. Data needs to be converted.
+* Add option to add title for delivery dates block
+* Add option to add label for country selector in delivery dates
+* Edit hooks for the position of the delivery date
+
+= 3.8.5 =
+* Fix delivery dates on backorder stock status
+
+= 3.8.4 =
+* Add option hide delivery date adding "-" into field
+* Add option insert HTML into Order button text
+* Fix error display log on new product
+
+= 3.8.3 =
+* Add order note about agreeing to send the Heureka satisfaction questionnaire
+* Add Wpify Woo News
+* Fix WPML default language for Heureka category
+* Don't render delivery date line if message is empty
+
+= 3.8.2 =
+* Fix time by timezone in delivery date
+* Fix PHP 7.4 compatibility
+
+= 3.8.1 =
+* Fix display shipping methods if isn't set more info text in delivery date
+* Fix display delivery dates if isn't set default delivery country
+* Fix display delivery dates if isn't any methods set
+* Fix skip weekends after bridging time to next day in delivery date
+
+= 3.8.0 =
+* Add Prices log module
+* Add Comments module
+* Add Delivery dates module
+
+= 3.7.5 =
+* Change Enter company details button label to I'm shopping for a company
+
+= 3.7.4 =
+* Fix render QR core in emails
+
+= 3.7.3 =
+* Fix error with Free shipping notice rendering by shortcode
+* Fix error with QR core rendering in emails
+* Fix render QR core just for specific payment method in emails
+
+= 3.7.2 =
+* Fix get attachments from product meta
+
+= 3.7.1 =
+* Add option to sending to Heureka asynchronously
+* Better sending data to Heureka using wp_request
+
+= 3.7.0 =
+* Add Template module
+* Add Email attachments module
+* Add QR code alt text
+* Add option to load min amount from WooCommerce Free shipping settings for Notification to get free shipping.
+
+= 3.6.2 =
+* Fix checkout VAT exempt
+
+= 3.6.1 =
+* Fix VAT exempt in IČ DIČ module
+
+= 3.6.0 =
+* Add Sklik retargeting module
+* Add Zbozi.cz/Sklik Conversions Limited module
+* Add variables {order} and {total} into texts before and after QR code
+* Improve - Checking the checkbox Enter company details if the VAT number is filled in
+
+= 3.5.18 =
+* Fix load Packeta metabox if module is not active
+
+= 3.5.17 =
+* Fix QR amount in compatibility mode
+
+= 3.5.16 =
+* Fix product item ID in Heureka Mereni Konverzi
+
+= 3.5.15 =
+* Fix Qr codes in compatibility mode
+
+= 3.5.14 =
+* Fix loading settings in IC DIC module
+* Fix - Don't render QR code if is not set payment methods
+
+= 3.5.13 =
+* Fix loading settings
+* Fix set default values in settings
+
+= 3.5.12 =
+* Add support to set IBAN with spaces in QR payment module
+* Fix Fatal error on frontend and add logging errors in QR payment module
+
+= 3.5.11 =
+* Remove link to the cancelled plugin Email Builder from Vocative module
+
+= 3.5.10 =
+* Fix Error of set_is_vat_exempt()
+
+= 3.5.9 =
+* Fix vat exempt if VAT number is valid
+
+= 3.5.8 =
+* Add notice about removing Packeta module.
+
+= 3.5.7 =
+* Security fix.
+
+= 3.5.6 =
+* Fix displaying separate heading with empty Packeta address.
+
+= 3.5.5 =
+* Fix Heureka category selector
+* Fix IC DIC module collision with WooCommerce Stripe Gateway plugin.
+
+= 3.5.4 =
+* Revert fix loading Heureka categories in settings due to Allowed memory exhausted
+
+= 3.5.3 =
+* Add filter `wpify_woo_add_ic_dic_to_address` to option to disable data replacement in the address
+* Fix label field in Heureka Conversion settings
+
+= 3.5.2 =
+* Add option to replace placeholder for VAT fields with example of how to fill the field
+* Fix inserting QR code to email after save as image
+* Fix - Do not insert QR in plain text emails
+
+= 3.5.1 =
+* Fix loading Heureka categories in settings
+
+= 3.5.0 =
+* Update custom fields
+* Fix error with GuzzleHtttp
+* Fix duplicate display of VAT fields in order detail
+* Fix warning: Undefined array key “post_type” on PHP 8.0
+* Fix label for Search in ARES button after IC field
+
+= 3.4.5 =
+* Fix update free shipping notice on checkout page.
+
+= 3.4.4 =
+* Fix QR payment if note is empty
+* Fix display of Packeta address on thank you page
+* Fix duplicate display of Packeta address when delivery address is replaced
+
+= 3.4.3 =
+* Add CSS classes to QR elements
+* Add the ability to choose the position of the QR code on the thank you page.
+* Add the option to choose in which emails the QR code will be displayed.
+* Add option to limit QR code display by billing country.
+* Add option save the QR code as an image and link to it instead of base64.
+* Add the option to allow the order to be sent even if the VAT number does not pass the VIES validation, but does not apply zero VAT.
+* Remove of required DIČ field for SK due to conflict with non-profit organizations.
+* Fix error if zero tax countries is empty on PHP 8.1
+
+= 3.4.2 =
+* Add the ability to insert a note into the QR payment with the order number and store name.
+* Fix warning if bank code for QR is not set.
+
+= 3.4.1 =
+* Add hook for rendering QR code - `do_action('wpify_woo_render_qr_code', $order_id)`
+
+= 3.4.0 =
+* New feature - Generate payment QR code embedded in thank you page and email.
+* Fix VAT fields error if company field is hidden in WooCommerce.
+
+= 3.3.52 =
+* Add filter `wpify_woo_free_shipping_render_notice` for possible conditional free shipping notice rendering
+* Add filter `wpify_woo_heureka_add_optout` for possible conditional Heureka opt-out display
+* Add filter `wpify_woo_heureka_render_widget` for possible conditioning of Heureka widget rendering
+* Fix in validation of VAT fields
+
+= 3.3.51 =
+* Fix error on checkout if "Require entering identification number field" is not set.
+* Fix identification number marking as required only in selected cases.
+* Fix hide VAT fields if checkbox is unchecked on load checkout.
+* Add - If an identification number is required, a DIC number is also required for Slovak companies.
+* Add option to require an Company field when the "Enter company details" is checked.
+
+= 3.3.50 =
+* Fix show IČ DPH for SK when switch countries.
+* Add option to display Vat fields under the Company field at the top of the checkout form.
+* Add option to display narrowed VAT fields side by side in the checkout.
+* Add option to require an identification number when purchasing for a company.
+
+= 3.3.49 =
+* Fix dismiss the notice
+
+= 3.3.48 =
+* Removing sentry dependency
+* Add Packeta logo and icon
+* Move the logo display settings. Now the logo is selected in the shipping method settings for each shipping zone.
+* Update external shipping methods to the customer's address.
+
+= 3.3.47 =
+* Fix in Core - get VAT rate for Fakturoid
+
+= 3.3.46 =
+* Add class vat-extempt to order lines on backend
+
+= 3.3.45 =
+* Fix checking active WooCommerce plugin within multisite
+
+= 3.3.44 =
+* Add option to choose from which shopping cart amount is calculated for free shipping notice.
+
+= 3.3.43 =
+* Add editable in vat billing fields in user profile
+* Fix - Check box Company details is checked in checkout by default if the user has already pre-filled Identification no.
+* Fix - Automatic deletion of company data if the check box Company details in the checkout is unchecked.
+
+= 3.3.42 =
+* Free Shipping notice compatibility with Woo Currency Switcher
+
+= 3.3.41 =
+* Change when an order is sent to Heureka Ověřeno zákazníky
+
+= 3.3.40 =
+* Fix of the link to the detail of the Packeta branch in order admin. Link to open in a new window.
+* Fix hiding Packeta branch address when editing delivery address in order admin.
+
+= 3.3.39 =
+* Add editable in vat billing fields in order admin
+* The minimum supported PHP version is 7.4
+
+= 3.3.38 =
+* Fix PHP 7.3 compatibility
+
+= 3.3.37 =
+* Update Packeta SDK, add method for uploading a document
+
+= 3.3.36 =
+* Add non-generation of DELIVERY_PRICE_COD tag in Heureka XML feed if it is not filled in delivery method.
+
+= 3.3.35 =
+* Update allowed carriers for Heureka XML feed
+
+= 3.3.34 =
+* Add option round up the total amount sent to Packeta for COD payment method
+* Add documentation links
+
+= 3.3.33 =
+* Fix update the checkout after filling IN VAT no. field.
+
+= 3.3.32 =
+* Add house number to Packeta
+
+= 3.3.31 =
+* Add attributes support for Packeta
+
+= 3.3.30 =
+* Fix in core
+
+= 3.3.29 =
+* Fix vat rate calculation
+
+= 3.3.28 =
+* Fix license on some environments
+
+= 3.3.27 =
+* Add filter for number of generated XML products per one run
+
+= 3.3.26 =
+* Add better compatibility with Wpify Woo Core
+
+= 3.3.25 =
+* Add compatibility with Wpify Woo Core
+
+= 3.3.24 =
+* Fix address substitution for delivery to an address
+
+= 3.3.23 =
+* Fix Packeta form displaying
+
+= 3.3.22 =
+* Fix packeta metabox id
+
+= 3.3.21 =
+* Fix undefined notice
+
+= 3.3.20 =
+* Added Packeta information and actions to order list
++ Added option to adjust weight before sending shipment to Packeta
+
+= 3.3.19 =
+* Fix PHP8 PSR Log
+
+= 3.3.18 =
+* Temporarily Remove PHP8 compatibility
+
+= 3.3.17 =
+* Fix loading of settings assets
+
+= 3.3.16 =
+* Fix of the License option type
+
+= 3.3.15 =
+* Set Packeta price to float
+
+= 3.3.14 =
+* Upgrade WPify Custom Fields
+
+= 3.3.13 =
+* Fix the autofill of company details on checkout
+
+= 3.3.12 =
+* Upgrade WPify Custom Fields
+
+= 3.3.11 =
+* Add support for multi-domain WPML license setup
+
+= 3.3.10 =
+* Upgrade WPify Custom Fields to fix the problems with browser cache
+
+= 3.3.9 =
+* Add compatibility with sentry
+
+= 3.3.8 =
+* Fix order model
+
+= 3.3.7 =
+* Fix options two levels groups
+
+= 3.3.6 =
+* Remove Packeta widget v5 support
+* Add WP CLI
+
+= 3.3.5 =
+* Add wpify_woo_amount_for_free_shipping shortcode
+
+= 3.3.4 =
+* Fix setting of the colors in free shipping notice
+
+= 3.3.3 =
+* Fix support for Billing DIC SK
+
+= 3.3.2 =
+* Add automatic sending to Packeta on order status change
+
+= 3.3.1 =
+* Add premium modules
+
+= 3.3.0 =
+* Add default package value if order price is zero to Packeta
+* Fix the Zasilkovna label in order detail
+
+= 3.2.11 =
+* Exclude backorder products from Heureka XML feed.
+
+= 3.2.10 =
+* Fix compatibility
+
+= 3.2.9 =
+* Send orders to Heureka Overeno Zakazniky right away, not in cron
+
+= 3.2.8 =
+* Implement vocative exceptions
+
+= 3.2.7 =
+* Add "After IC" position for autofill button from Ares
+
+= 3.2.6 =
+* Show free shipping message if the cart amount is equal to free shipping amount
+
+= 3.2.5 =
+* Add error handling when printing Packeta labels
+
+= 3.2.4 =
+* Add download log link
+
+= 3.2.3 =
+* Fixed ARES validation at checkout for countries other than the Czech Republic
+
+= 3.2.2 =
+* Heureka XML - get description for variation from parent product when the variation description is empty
+
+= 3.2.1 =
+* DPH fields fix - labels not shown in certain situations
+
+= 3.2.0 =
+* Slovakia IN DPH field on checkout
+* Asynchronous loading of javascripts on backend
+
+= 3.1.7 =
+* Add possibility to delete Heureka category
+
+= 3.1.6 =
+* More XML Heureka categories fixes
+
+= 3.1.5 =
+* Fix of XML Heureka categories
+
+= 3.1.4 =
+* Update contributors list
+* Logo update
+
+= 3.1.3 =
+* Fix - loading of heureka categories - memory exhausted
+
+= 3.1.2 =
+* Fix - Save packeta branch info to session
+
+= 3.1.1 =
+* Fix lists
+
+= 3.1.0 =
+* Fix async list types in XML Feed Heureka
+* New custom fields implementation (https://gitlab.com/wpify/wpify-custom-fields/)
+
+= 3.0.6 =
+* Set backorder items as out of stock in Heureka XML
+
+= 3.0.5 =
+* Added support for SK Heureka tracking
+
+= 3.0.4 =
+* Heureka XML - Fix price including VAT
+
+= 3.0.3 =
+* Added ThePay and DPD addons
+
+= 3.0.2 =
+* Add encoding flag to XML feed
+
+= 3.0.1 =
+* Exclude variations from Heureka XML if set up
+
+= 3.0.0 =
+* Add SK delivery to Heureka XML
+* Bug Fixes
+
+= 2.9.9 =
+* Add CURL fallback for downloading Heureka XML
+
+= 2.9.8 =
+* Add setting to always show the cart notification bar
+
+= 2.9.7 =
+* Add support for Heureka categories for product variations
+
+= 2.9.6 =
+* Add DPD premium addon
+
+= 2.9.5 =
+* Fix build
+
+= 2.9.4 =
+* Change save options capability to `manage_woocommerce`
+
+= 2.9.3 =
+* Added support for last name and full name in the Vocative module
+* Switched to heureka/inflection library in the Vocative module
+
+= 2.9.2 =
+* Added Email builder addon
+
+= 2.9.1 =
+* Setting and filter for logo type
+
+= 2.9.0 =
+* Packeta widget v6 support
+
+= 2.8.10 =
+* Add support for Packeta API v6
+
+= 2.8.9 =
+* Add basic support for WPML and Heureka Categories
+
+= 2.8.8 =
+* Fix the update checker
+
+= 2.8.7 =
+* Add option to set free shipping notice if any of the shipping methods is free
+
+= 2.8.6 =
+* Add Comgate to plugins with compatibility check
+
+= 2.8.5 =
+* Add Packeta table style checkout compatibility
+
+= 2.8.4 =
+* Fix composer platform requirements
+
+= 2.8.3 =
+* Fix filter name
+
+= 2.8.2 =
+* Add Heureka SK categories
+* Add filter `wpify_woo_settings` for getting a setting
+
+= 2.8.1 =
+* Fix composer platform requirements
+
+= 2.8.0 =
+* The plugin dependencies are scoped so it doesn't collide with other plugins.
+* New plugin logo
+
+= 2.7.3 =
+* Improve select of the long options list in settings
+
+= 2.7.2 =
+* Add option to display Packeta logo
+
+= 2.7.1 =
+* Fix memory leak
+
+= 2.7.0 =
+* Add external carriers for Packeta
+* Minor bug fixes
+
+= 2.6.5 =
+* Support no shipping country on Packeta checkout
+
+= 2.6.4 =
+* Fix Heureka Feed category
+
+= 2.6.3 =
+* Bug fixes
+
+= 2.6.2 =
+* Catch SoapFault Exception in Vies
+
+= 2.6.1 =
+* Migrate licensing and addonds from wphelp.cz to wpify.io
+
+= 2.6.0 =
+* Add `wpify_woo_free_shipping_amount` filter
+
+= 2.5.9 =
+* Clear Packeta details if no branch selected on checkout
+
+= 2.5.8 =
+* Fix Heureka XML Cron generation
+
+= 2.5.7 =
+* Raise timeout for licence checking
+
+= 2.5.6 =
+* Add possibility to export logs from admin
+
+= 2.5.5 =
+* Add check for unique ID to the Packeta Feed
+
+= 2.5.4 =
+* Fix Packeta Feed chunk generation
+* Add logging to license revalidation
+
+= 2.5.3 =
+* Fix Packeta JS error on checkout on specific installations
+
+= 2.5.2 =
+* Fix Packeta Feed
+
+= 2.5.1 =
+* Add Comgate premium addon
+* Fix PHP notices and warnings
+
+= 2.5.0 =
+* Add temporary solution for custom fields for Heureka XML
+
+= 2.4.9 =
+* Add weight setting for Packeta
+* Send order weight to Packeta
+
+= 2.4.8 =
+* Fix Packeta fatal error on create order screen
+
+= 2.4.7 =
+* Added more premium add-ons details
+* Bug fixes
+
+= 2.4.6 =
+* Async Emails bug fixes
+
+= 2.4.5 =
+* Add details to Packeta log
+
+= 2.4.3 =
+* Move Phone validation to separate plugin because of PHP8 conflict
+
+= 2.4.2 =
+* Fix Packeta bulk generate
+* Fix Packeta filename
+
+= 2.4.1 =
+* Fix undefined notice on new post screen
+
+= 2.4.0 =
+* New feature - Phone validation
+* Fixes
+
+= 2.3.4 =
+* Fix Heureka XML ITEMGROUP_ID typo
+
+= 2.3.3 =
+* Add more Heureka XML Feed settings
+* Heureka XML Feed fixes
+
+= 2.3.2 =
+* Fix API callback PHP notice
+
+= 2.3.1 =
+* Move settings in Heureka feeds
+
+= 2.3.0 =
+* Added abstraction for XML feeds
+* Added Heureka XML Feed
+
+= 2.2.7 =
+* Add setting for minimum cart price to display the shipping notice
+
+= 2.2.6 =
+* Fix sender name and email when using Async emails
+
+= 2.2.5 =
+* Optimize saving of Packeta details
+
+= 2.2.4 =
+* Add Packeta pickup point link to emails and admin
+
+= 2.2.3 =
+* Fix Packeta widget language
+* Update readme
+
+= 2.2.2 =
+* Update WooCommerce compatibility to 5.0
+
+= 2.2.1 =
+* Fix move company IC / DIC checkbox
+
+= 2.2.0 =
+* CI fix, version bump
+
+= 1.2.21 =
+* Fix JS Build
+
+= 1.2.20 =
+* Fix JS Build
+
+= 1.2.19 =
+* Fix IC validation on checkout
+
+= 1.2.18 =
+Fix Packeta on SK shops
+
+= 1.2.17 =
+* Update Settings page
+
+= 1.2.16 =
+* Fix Packeta translations
+
+= 1.2.12 =
+* Added plugin icon
+
+= 1.2.11 =
+* Added vocative module - automatically change the salutation in emails to use correct Czech vocative
+
+= 1.2.10 =
+* Added group field option in settings (internal change for usage by WPify Woo and its extensions)
+
+= 1.2.9 =
+* Fix Packeta API
+
+= 1.2.8 =
+* Added Heureka Měření konverzí
+
+= 1.2.7 =
+* Fix loading of Packeta settings
+
+= 1.2.6 =
+* Add React select for settings
+
+= 1.2.5 =
+* Fix of assets paths
+
+= 1.2.4 =
+* VAT extempt fix
+
+= 1.2.0 =
+* Added VAT validations using VIES
+
+= 1.1.3 =
+* Readme update
+
+= 1.1.2 =
+* ARES reimplementation
+
+= 1.1.1 =
+* Bug fixes
+
+= 1.1.0 =
+* Bug fixes
+
+= 1.0.0 =
+* Initial version
