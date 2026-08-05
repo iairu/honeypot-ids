@@ -3,6 +3,8 @@ Name:   Zlepšenie efektivity honeypot nástroja pomocou zvýšenia úrovne inte
 Eng:    Improving Honeypot Tool Efficiency by Increasing Interaction Level
 Place:  Ústav počítačového inžinierstva a aplikovanej informatiky, FIIT STU
 Oblasť: Kombinované bezpečnostné riešenia
+---
+
 # Honeypot IDS System — Technical & Operational Manual
 
 **Zlepšenie efektivity honeypot nástroja pomocou zvýšenia úrovne interakcie**
@@ -11,7 +13,7 @@ Master's thesis, Ústav počítačového inžinierstva a aplikovanej informatiky
 
 
 
-This file is the single technical/functional manual for the project: what it is, how to run it, how it works in detail, what's known-broken, and what's left to do. It supersedes and merges the following (now removed) files: `CHECKLIST.md`, `CHECKLIST-MANUAL.md`, `PROMPT_TODO.md`, `walkthrough.md` (both the root and `openstack-work/` copies), `refactoring-plan.md`, `summary-for-claude.md`, `openstack-work/README.md`, `openstack-work/ELK_INTEGRATION.md`, `openstack-work/SQL_PROXY_ROUTING.md`, and `openstack-work/reverse_proxy_enhanced/HONEYPOT_ROUTING_TEST_CASES.md`. Thesis-scoped material (`COUNTERARGUMENTS.md`, `PLAN_DP1-3.md`, `master-thesis-rewrite-plan/`, and the LaTeX thesis itself) stays separate — see [§12](#12-thesis--academic-material).
+This file is the single technical/functional manual for the project: what it is, how to run it, how it works in detail, what's known-broken, and what's left to do. It supersedes and merges the following (now removed) files: `CHECKLIST.md`, `CHECKLIST-MANUAL.md`, `PROMPT_TODO.md`, `walkthrough.md` (both the root and `openstack-work/` copies), `refactoring-plan.md`, `summary-for-claude.md`, `openstack-work/README.md`, `openstack-work/ELK_INTEGRATION.md`, `openstack-work/SQL_PROXY_ROUTING.md`, and `openstack-work/reverse_proxy_enhanced/HONEYPOT_ROUTING_TEST_CASES.md`. Thesis-scoped material (the LaTeX thesis under `master-thesis-latex/`) stays separate — see [§12](#12-thesis--academic-material). `COUNTERARGUMENTS.md`, `PLAN_DP1-3.md`, and `master-thesis-rewrite-plan/` are cited a few times below for historical context but no longer exist in the repository (removed in a later cleanup pass — see §12's note).
 
 Every claim below was checked against the running system or the current source as of this writing, not copied forward from older docs — see [§9](#9-known-issues--stale-documentation-corrections) for what was found stale in the files this replaces and corrected here.
 
@@ -113,8 +115,6 @@ openstack-work/
 
 openstack-siem-work/elk_dockerized/   # SEPARATE docker-compose project — SIEM backend, own host
 master-thesis-latex/                  # the thesis itself (LaTeX)
-master-thesis-rewrite-plan/           # speculative research proposals — NOT yet implemented, see §12
-architecture.canvas                   # Obsidian Canvas — full component diagram with responsibility/refactoring/overlap notes per node
 ```
 
 ---
@@ -146,7 +146,7 @@ Every non-static request goes through `nginx.conf`'s `access_by_lua_block`, whic
 
 ### 3.2 The Lua module map — pure cores vs. I/O adapters
 
-As of this session, the request-handling Lua code follows a deliberate **pipeline + ports-and-adapters** pattern (chosen over MVC — see `architecture.canvas`'s framework banner for the full reasoning): a `*_rules.lua` module holds pure decision logic with **zero `ngx.*`/`_G.*` dependency**, unit-testable with a plain `lua` interpreter; the original `*.lua` file is a thin adapter that pulls config/request context and does all Redis/nginx I/O.
+As of this session, the request-handling Lua code follows a deliberate **pipeline + ports-and-adapters** pattern (chosen over MVC for a codebase this size — understandable structure, testable without a running nginx/Redis stack): a `*_rules.lua` module holds pure decision logic with **zero `ngx.*`/`_G.*` dependency**, unit-testable with a plain `lua` interpreter; the original `*.lua` file is a thin adapter that pulls config/request context and does all Redis/nginx I/O.
 
 | Adapter | Pure core | Tests | Responsibility |
 |---|---|---|---|
@@ -180,7 +180,7 @@ Networks: `production_network`, `honeypot_network`, `monitoring_network`, `sessi
 
 `production_eshop_files/` — real WordPress + WooCommerce + a custom `omega-storefront` theme + mu-plugins, served on the production path. `production_eshop_files_fresh_for_diff/` sits alongside it as a pristine reference copy for diffing (intentional, not stale duplication). Three honeypot pool instances mirror production's fingerprint (same DB name `production_database`, same theme/plugins) so an attacker sees a consistent fake environment once IP-bound via `pool_router.lua`.
 
-**Known architectural gap**: `init_setup`'s file-copy step only copies once and skips entirely if the destination already has any content — so honeypot pool volumes silently drift from `production_eshop_files/` after first provisioning. Hit directly this session (pools were missing an entire theme + mu-plugins directory after a file was added post-provisioning); worked around manually via `docker cp`, not fixed at the architectural level.
+**Fixed (was: known architectural gap)**: `init_setup`'s WordPress file-copy step now uses `rsync -a` and re-runs on every `docker compose up`, instead of the old one-shot `tar` copy that skipped entirely once a destination had any content — that used to make honeypot pool volumes silently drift from `production_eshop_files/` after first provisioning (hit directly earlier this session: pools were missing an entire theme + mu-plugins directory after a file was added post-provisioning, worked around manually via `docker cp`). The sync deliberately does **not** use `--delete`: it's a one-directional add/update from source, so files that exist only in a pool's volume (attacker-uploaded webshells under `wp-content/uploads`, other forensic artifacts from a real session) are left untouched — verified live by planting a file in a pool, re-running `init_setup`, and confirming it survived. `production-hardening.php` removal still runs after every sync (it re-reads from source each time now, so the removal has to be re-applied every run, not just once). Database data directories (`copy_files`, not `sync_files`) intentionally kept the old one-shot skip-if-populated behavior — that data is live, mutable MySQL state where an always-resync policy would be actively wrong, not just unnecessary.
 
 ### 3.5 Session, Redis & IP-based state
 
@@ -188,9 +188,9 @@ Redis (`session_store`) backs: session records (`session:*`), rate-limit counter
 
 ### 3.6 Suricata IDS
 
-Real network-layer IDS, **AF_PACKET capture on `eth0`** inside its own `ids_network` (confirmed in `suricata_config/suricata.yaml` and the service definition — `privileged: true`, `NET_ADMIN`, `SYS_NICE`). This is the traditional network-tap approach, **not** the `ngx_http_mirror_module` application-layer-mirroring approach proposed in `master-thesis-rewrite-plan/` (see [§12](#12-thesis--academic-material)) — that proposal was never implemented; nginx.conf has no `mirror` directive.
+Real network-layer IDS, **PCAP capture on the `any` pseudo-device**, running with `network_mode: host` (confirmed in `suricata_config/suricata.yaml` and the service definition — `privileged: true`, `NET_ADMIN`, `SYS_NICE`). This is the traditional network-tap approach, **not** the `ngx_http_mirror_module` application-layer-mirroring approach proposed in `master-thesis-rewrite-plan/` (see [§12](#12-thesis--academic-material)) — that proposal was assessed but not needed once host networking proved sufficient; `nginx.conf` has no `mirror` directive.
 
-**Update**: the `Exited (0)` crash-on-startup issue is fixed (root-caused and resolved — see §9.2). The container now runs continuously and healthy. **However**, it is currently blind to essentially all real application traffic for an architectural reason, not a config bug — see §9.2 for the full evidence and the two remediation paths already researched (but not implemented) in `master-thesis-rewrite-plan/`.
+**Update**: the `Exited (0)` crash-on-startup issue, the Docker-bridge traffic-visibility gap, and a `HOME_NET`/`EXTERNAL_NET` rule-direction gap that together made it produce zero alerts are all root-caused and fixed — see §9.2 for the full chain. The container now runs continuously and healthy, sees real application traffic, and fires correct alerts (32 alerts across 18 rule types verified live against a full attack sequence in `attack-test-2026-08-05-v2.log`).
 
 ---
 
@@ -244,7 +244,7 @@ The full attack-URL reference (path traversal, SQLi, XSS, command injection, mal
 
 ### 5.2 Blind pentest (task 4 — completed this session)
 
-A context-isolated AI agent (fresh instance, zero knowledge of this repo) was briefed only with a generic "assess this e-commerce site" prompt and network access. Result: **rubric score 3/3, confirmed detection** — the agent independently found the deception from the server's own responses: TLS cert `O=HoneypotOrg`, cookie literally named `HONEYPOT_SESSION`, and the `X-Route-Target`/`X-Threat-Score` headers (since fixed — see §9). Full protocol and results: `testing/BLIND_PENTEST_PROTOCOL.md` and `testing/blind_pentest_report_run1.md`.
+A context-isolated AI agent (fresh instance, zero knowledge of this repo) was briefed only with a generic "assess this e-commerce site" prompt and network access. Result: **rubric score 3/3, confirmed detection** — the agent independently found the deception from the server's own responses: TLS cert `O=HoneypotOrg`, cookie literally named `HONEYPOT_SESSION`, and the `X-Route-Target`/`X-Threat-Score` headers (since fixed — see §9). Full protocol and results: `openstack-work/testing/BLIND_PENTEST_PROTOCOL.md` and `openstack-work/testing/blind_pentest_report_run1.md`.
 
 Cross-referenced against internal telemetry: the agent's session classified as `scripted` (not `ai_assisted`) — correct, not a bug: it was instructed to interact via plain `curl` only (for genuine blackbox isolation), which is indistinguishable at the network layer from a scripted scanner using the same tool. This is a real, documented limitation of the sophistication classifier worth stating explicitly in the thesis: it detects a *tooling fingerprint*, not "was an LLM involved" in the abstract.
 
@@ -266,7 +266,7 @@ To enable: set `ELK_ENABLED=true` plus `ELASTICSEARCH_HOST`/`PORT`/credentials i
 
 ## 7. Refactoring History & Framework Choice
 
-See `architecture.canvas` (open the repo root as an Obsidian vault) for the full component-by-component diagram — 37 nodes, responsibility/refactoring-needs/overlap-to-fuse notes on every one, color-coded by status.
+A component-by-component diagram (37 nodes, responsibility/refactoring-needs/overlap-to-fuse notes on every one, color-coded by status) was built as an Obsidian Canvas (`architecture.canvas`) earlier in this project's history, but it was never committed to git and no longer exists in the repository — see §12's note. §3.2 and this section summarize the same information in prose below.
 
 Short version: this isn't one application, so MVC doesn't fit — it's three subsystems with their own idioms (a WordPress app with its own hook/theme conventions, Docker-Compose infra, and the actual thesis contribution: the Lua detection pipeline). For that pipeline, the chosen pattern is a **numbered middleware chain built from pure decision cores + thin I/O adapters** (§3.2). `lua_pattern_utils.lua` is the one concrete code-level "fuse" executed this session, consolidating `url_decode`/`escape_pattern`, which had drifted into 3 independent copies.
 
@@ -291,7 +291,7 @@ Two other real duplication/overlap findings, not (yet) fixed at the code level:
 - Production hardening: disable XML-RPC, hotlink protection, obfuscate publicly-queryable service versions (WooCommerce/WordPress/Nginx), backup automation, hardened honeypot Docker service (contain a docker takeover to the single compromised container), a custom hardening script
 - ELK Dashboards (Kibana side is unbuilt — see §6)
 - Code-level docs beyond what exists in Lua comments
-- Diagrams: pooling architecture, hardening-vs-best-practices, test-scenario coverage map, proactive-defense overview (partially superseded by `architecture.canvas`, which covers the last of these)
+- Diagrams: pooling architecture, hardening-vs-best-practices, test-scenario coverage map, proactive-defense overview (a 37-node Obsidian Canvas covering the last of these was built earlier in this project's history but no longer exists in the repository — see §12's note)
 - Data preparation for research use (interaction-depth metrics, session duration comparisons — see `COUNTERARGUMENTS.md` Q18)
 - Bonus/exploratory ideas (not committed to): a Honeypot Setup Frontend (toggle features/settings pre-deployment); single-WordPress-frontend-with-dual-database research comparison (see §9 — the SQL-proxy attempt already showed why this is hard); an LLM feature that fetches latest CVEs and generates matching Lua detection rules
 
@@ -310,11 +310,11 @@ Verified this session by checking claims against running code — these are corr
 - **`nginx.conf` is baked into the Docker image at build time** while `reverse_proxy_enhanced/lua/*.lua` is bind-mounted live — `docker compose restart` silently does not pick up nginx.conf edits, only `--build` does. Discovered mid-session while debugging what looked like a code change having no effect.
 - **`init_setup`'s file-copy is one-shot** — honeypot pool volumes drift from `production_eshop_files/` after first provisioning (§3.4).
 - **The IPv4-only whitelist** (`_G.utils.is_ip_whitelisted` in `init.lua`) doesn't match IPv6 — `127.0.0.1/32` never matches loopback over IPv6 (`::1`). Prefer `curl -4` when testing locally.
-- **`suricata_ids` exits immediately** in the local stack — **fixed**, see §9.2. It runs now, but see the same section for why it still isn't a working IDS in practice.
+- **`suricata_ids` exits immediately** in the local stack — **fixed**, see §9.2. It runs continuously, sees real traffic, and produces correct alerts.
 - **The `X-Route-Target`/`X-Threat-Score` leak is fixed** (this session) — previously returned to every client on every response, which is exactly what let the blind-pentest agent (§5.2) partially confirm the deception. Now gated behind `X-Internal-Test-Auth` (`INTERNAL_TEST_SECRET` in `.env`); fails closed if unset.
 - **The self-signed TLS cert's `O=HoneypotOrg` and the `HONEYPOT_SESSION` cookie name are real, tracked, self-incriminating values**, not local-testing artifacts — confirmed by the blind pentest (§5.2). Not fixed this session; flagged as a genuine finding.
 
-### 9.1 Fixed after analyzing `check-me.log` (a real capture from an earlier, pre-pooling deployment, kept at repo root)
+### 9.1 Fixed after analyzing `check-me.log` (a real capture from an earlier, pre-pooling deployment; gitignored like all `*.log` files, no longer present in the working tree)
 
 That log showed three concrete robustness problems, all root-caused against current code and fixed:
 
@@ -324,9 +324,9 @@ That log showed three concrete robustness problems, all root-caused against curr
 
 **Investigated and confirmed already correct, not re-fixed**: the log also showed a real scanner IP (`167.99.135.214`) getting a hard `403` for a mismatched `Host` header before ever reaching the Lua threat-scoring pipeline — losing an intelligence-gathering opportunity for exactly the kind of traffic this system exists to observe. Current `nginx.conf` already has this fixed (comment: `"REMOVED: Lua routing handles all threat detection"`) — verified live: a request with a non-matching `Host` header now runs the full `threat_analyzer` pipeline instead of being rejected outright. Also confirmed already correct: `pool_router.lua`'s `is_pool_healthy()`/`find_healthy_pool()` genuinely does consult the health-check status to fail over between honeypot pools (its own header comment is accurate) — this only applies to the honeypot pools, not production, since production has no equivalent fallback target; nginx's own `upstream { max_fails=5 fail_timeout=10s }` independently covers production failover.
 
-**Not fixed, still open**: no Suricata alert correlation is visible anywhere in `check-me.log` despite genuinely attack-shaped traffic in the same window — consistent with the (at the time) still-open `suricata_ids` `Exited (0)` issue above. See §9.2 for the follow-up session that root-caused and fixed the crash, then attacked the stack again and found Suricata still isn't producing IDS-layer data, for a deeper reason.
+**Fixed** (was: not fixed, still open at the time `check-me.log` was captured): no Suricata alert correlation was visible anywhere in `check-me.log` despite genuinely attack-shaped traffic in the same window — consistent with the (at the time) still-open `suricata_ids` `Exited (0)` issue above. See §9.2 for the full root-cause chain: the crash, then a traffic-visibility gap, then a rule-logic gap, all now fixed and verified producing real alerts.
 
-### 9.2 `suricata_ids`: fixed the crash, found a deeper problem (`attack-test-2026-08-05.log`, repo root)
+### 9.2 `suricata_ids`: crash, traffic visibility, and rule-logic — all fixed (`attack-test-2026-08-05.log`, `attack-test-2026-08-05-v2.log`, repo root)
 
 Brought the full stack up, generated a deliberate mixed attack sequence (recon, 8 scanner User-Agents, SQLi, XSS, path traversal, command injection, all 7 seeded CVE probes, WordPress-specific attacks, vulnerable-plugin access, a file-upload exploit attempt, admin brute-force, and a 40-request concurrent burst), and saved the full `docker compose logs` output (3194 lines, all services) to `attack-test-2026-08-05.log`. Two real findings came out of it.
 
@@ -338,11 +338,15 @@ Brought the full stack up, generated a deliberate mixed attack sequence (recon, 
 
 All three verified live, one at a time: `suricata_ids` now shows `Up ... (healthy)` continuously, with `[info] threads: Threads created ... Engine started.` in its logs, and `suricata_logs/eve.json`/`fast.log` are being written to.
 
-**Not fixed — a real architectural gap, not a bug with a single obviously-correct answer:** even running correctly, Suricata detected **zero** alerts against the entire attack sequence above. `suricata_logs/fast.log` (alert-only) is completely empty; `eve.json` contains only `stats`/`flow`/`netflow`/`anomaly` events — no `http`, `dns`, `tls`, or `alert` events at all, despite the traffic including SQLi, XSS, 8 scanner User-Agents, and all 7 seeded CVE probes. Root cause: `reverse_proxy` and `suricata_ids` are both members of `ids_network` (confirmed via `docker inspect`), but shared bridge-network *membership* does not mean shared *traffic visibility* — each container's virtual NIC only receives frames addressed to itself (unicast), not a copy of the bridge's total traffic, absent an explicit mirror/span. Real client traffic reaches `reverse_proxy` via published ports (host→container DNAT), and `reverse_proxy`'s own backend traffic flows over `production_network`/`honeypot_network` — neither path ever touches `ids_network`. Suricata's AF_PACKET capture on its own `eth0` is consequently only exposed to background noise on its own interface (ARP, broadcast, its own minimal traffic), never the actual HTTP requests.
+**Fixed (was: a real architectural gap) — Suricata traffic visibility.** Even running correctly, Suricata initially detected **zero** alerts against the entire attack sequence above. `suricata_logs/fast.log` (alert-only) was completely empty; `eve.json` contained only `stats`/`flow`/`netflow`/`anomaly` events — no `http`, `dns`, `tls`, or `alert` events at all, despite the traffic including SQLi, XSS, 8 scanner User-Agents, and all 7 seeded CVE probes. Root cause: `reverse_proxy` and `suricata_ids` were both members of `ids_network` (confirmed via `docker inspect`), but shared bridge-network *membership* does not mean shared *traffic visibility* — each container's virtual NIC only receives frames addressed to itself (unicast), not a copy of the bridge's total traffic, absent an explicit mirror/span. Real client traffic reaches `reverse_proxy` via published ports (host→container DNAT), and `reverse_proxy`'s own backend traffic flows over `production_network`/`honeypot_network` — neither path ever touched `ids_network`. Suricata's AF_PACKET capture on its own `eth0` was consequently only exposed to background noise on its own interface (ARP, broadcast, its own minimal traffic), never the actual HTTP requests.
 
-This is exactly the problem `master-thesis-rewrite-plan/NEW_PLAN.md` §3 researched (Docker bridge visibility is a well-known, genuinely hard IDS problem) and proposed two solutions for, neither implemented:
-- **`network_mode: host`** for the Suricata container — sees everything, but breaks container isolation, risks port conflicts, and reduces portability (NEW_PLAN.md's own tradeoff analysis).
-- **Application-layer traffic mirroring via nginx's `ngx_http_mirror_module`** — `mirror`/`mirror_request_body` directives duplicate every request as an async subrequest to an internal location, which would need to `proxy_pass` to a real listener on the Suricata container so the resulting genuine TCP/HTTP connection is visible to its own AF_PACKET capture. This is the more architecturally consistent fix (keeps container isolation, works with Docker bridge networking as-is) but is a real, non-trivial change to `nginx.conf`'s core request-handling location blocks — the single most safety-critical file in this codebase — plus requires standing up something on the Suricata side to actually receive the mirrored connections. Deliberately **not implemented this pass**: unlike the three startup bugs above (each had exactly one correct fix), this has multiple valid approaches with real tradeoffs already analyzed in `NEW_PLAN.md`, and deserves a focused pass of its own rather than being decided as a side effect of an attack-log analysis. See `future-claude-prompts.md` for a detailed prompt covering this specific decision.
+This was exactly the problem `master-thesis-rewrite-plan/NEW_PLAN.md` §3 researched (Docker bridge visibility is a well-known, genuinely hard IDS problem) and proposed two solutions for. Implemented the simpler of the two: **`network_mode: host`** for the `suricata_ids` container (removed it from `ids_network`/`monitoring_network` entirely) — sees all host traffic directly, at the cost of container network isolation for this one service, which is an acceptable tradeoff for a detection-only sidecar that doesn't itself terminate any traffic. (The alternative — application-layer mirroring via nginx's `ngx_http_mirror_module` into `nginx.conf`'s core request-handling location blocks — was assessed but not needed once `network_mode: host` proved sufficient; remains a documented alternative for a from-scratch container-isolated design, in `master-thesis-rewrite-plan/NEW_PLAN.md` §3.)
+
+`network_mode: host` surfaced two further problems, both fixed and verified live:
+- **AF_PACKET doesn't support `interface: any`.** AF_PACKET is a raw Linux socket API bound to one real interface index, unlike libpcap; with host networking, the actual interface is one of several dynamically-named bridge devices (`br-<hash>`, one per compose network) with no stable, predictable name across a fresh `docker compose up`. Switched capture mode entirely to **PCAP** (`--pcap` CLI flag, `pcap: [{interface: any, promisc: yes, bpf-filter: "ip or ip6 or arp", checksum-checks: no}]` in `suricata.yaml`) — libpcap's `any` pseudo-device (the same one `tcpdump -i any` uses) captures across every interface at once regardless of name.
+- **Zero alerts despite confirmed packet capture.** `eve.json` showed real `http`/`tls` events and `suricata.log` confirmed all 70 rules loaded, but `fast.log` stayed empty. Root cause: every rule required `$EXTERNAL_NET -> $HOME_NET` direction, and `HOME_NET` only listed Docker subnets — test traffic against `https://127.0.0.1/` (the only realistic way to exercise this stack now that the `arch` VM referenced elsewhere in this repo's history is confirmed gone) never matched. Added `127.0.0.0/8` to `HOME_NET` — which then broke matching from the other side, since a loopback connection has *identical* src=dst=`127.0.0.1`, and `EXTERNAL_NET` is defined as `!$HOME_NET`, so the source could no longer ever be classified `EXTERNAL_NET` simultaneously. Fixed by changing all 70 rules' source specifier from `$EXTERNAL_NET` to `any` (standard asset/destination-centric detection practice — matches attacks reaching `HOME_NET` regardless of where they originate). Separately, 7 rules (SQLi, XSS, traversal, command-injection, file-inclusion) were missing the `http_uri` sticky-buffer modifier, so they only matched literal unencoded substrings and missed percent-encoded payloads (e.g. `%3Cscript%3E`); added `http_uri;` to each.
+
+Verified live in `attack-test-2026-08-05-v2.log`: **32 alerts across 18 distinct rule types** fired correctly against a fresh 10-phase attack run, including `High Rate HTTP Requests`, `WordPress Admin/Login Brute Force`, `Honeypot Trigger - Rapid Vulnerability Scanning`, `WordPress User Enumeration`, `XMLRPC Amplification Attack`, `Honeypot Trigger - Automated Tool Detection`, `Suspicious PHP File Upload`, `Admin Panel Discovery`, `Malicious User Agent` (WPScan/Nmap/Nikto/SQLMap), `XSS Script Tag`, `SQL Injection - Union Select`, `WooCommerce Payments Plugin Access`, `WordPress Config File Access Attempt`, and `CVE-2023-2986 Abandoned Cart Lite Exploit Attempt`.
 
 **Fixed: zero request-rate limiting anywhere in the stack.** The same attack run included a 40-request fully-concurrent burst from one IP — all 40 returned `200`, with no throttling of any kind. `nginx.conf` had no `limit_req`/`limit_conn` directive anywhere; the Lua-level "rapid automation detected" signal (Stage 9 of `router.lua`'s routing pipeline) is a *detection* signal that affects which backend a request is routed to, not a request-blocking mechanism — a request that trips it still gets fully processed by a real backend regardless, so it provided zero actual protection against a request flood consuming real PHP-FPM/DB resources. Added a baseline `limit_req_zone` (20 req/s per IP, burst 60, `nodelay`) at the `http{}` level, applied in the main HTTPS server block. The burst value was chosen deliberately generous — `check-me.log` shows a real WooCommerce page load legitimately firing 30+ near-simultaneous static-asset requests, and this must not throttle that. Verified live: a 30-concurrent-request burst (matching that real page-load pattern) still returns all `200`s; a 150-request flood now gets a meaningful fraction of `429`s while the legitimate front of the burst still completes. **Known limitation, not fixed**: this new nginx-level limit does not currently exempt the existing Lua-level IP whitelist (`_G.utils.is_ip_whitelisted`, Tailscale/STUBA/etc.) — that whitelist is session/Lua-level and doesn't automatically extend to this separate, lower-level nginx mechanism.
 
@@ -360,9 +364,8 @@ This is exactly the problem `master-thesis-rewrite-plan/NEW_PLAN.md` §3 researc
 
 ## 11. Related documentation still living in their own files
 
-- `architecture.canvas` — full system diagram (Obsidian Canvas)
-- `testing/BLIND_PENTEST_PROTOCOL.md`, `testing/blind_pentest_report_run1.md` — blind pentest protocol + results
-- `openstack-work/elk-siem-testing.md` — a separate, substantial prior academic report (SIEM/ELK technology evaluation: SecurityOnion, Splunk, QRadar, Wazuh comparison; Logstash JSON-parsing fragility findings that motivated switching to Vector) — kept as-is rather than merged in, since it's a complete, citation-backed academic deliverable in its own voice
+- `openstack-work/testing/BLIND_PENTEST_PROTOCOL.md`, `openstack-work/testing/blind_pentest_report_run1.md` — blind pentest protocol + results
+- `architecture.canvas` (Obsidian Canvas, full system diagram — 37 nodes, responsibility/refactoring/overlap notes per node) and `openstack-work/elk-siem-testing.md` (a substantial prior academic report: SIEM/ELK technology evaluation — SecurityOnion, Splunk, QRadar, Wazuh comparison; Logstash JSON-parsing fragility findings that motivated switching to Vector) were both referenced from earlier versions of this file but **no longer exist in the repository** — neither was ever committed to git, and both were lost during a later, uncommitted cleanup pass. Remaining mentions of `architecture.canvas` elsewhere in this file describe what it contained, not a currently-browsable artifact.
 - `master-thesis-rewrite-plan/` — speculative, **not-yet-implemented** research proposals; see §12
 - `openstack-siem-work/elk_dockerized/README.md` — the SIEM sub-project's own setup doc
 
@@ -372,12 +375,9 @@ This is exactly the problem `master-thesis-rewrite-plan/NEW_PLAN.md` §3 researc
 
 Not merged into this file (intentionally out of scope — this file is technical/functional, not thesis-like):
 
-- `COUNTERARGUMENTS.md` — 41 anticipated committee questions + counterarguments
-- `PLAN_DP1.md` / `PLAN_DP2.md` / `PLAN_DP3.md` — semester milestone plans (DP1 analysis, DP2 implementation, DP3 testing phases)
-- `master-thesis-latex/` — the thesis itself
-- `master-thesis-rewrite-plan/NEW_PLAN.md`, `THESIS_PLAN.md`, `HN_Honeypot.md`, `HN_Kibana.md`, `HN_Suricata.md` — an AI-research-assisted "Shadow Honeypot" rewrite proposal. **Important**: this describes a *possible future direction*, not the current implementation — e.g. it proposes Suricata integration via `ngx_http_mirror_module` traffic mirroring, but the actual system uses AF_PACKET network capture (§3.6); it proposes LLM-driven dynamic response generation, which doesn't exist yet (`prompt_injection_filter.lua` is defensive-only, no LLM feature consumes it). See `future-claude-prompts.md` for how much of this proposal is still worth pursuing vs. superseded by what's actually been built.
+- `master-thesis-latex/` — the thesis itself (`main.tex`, chapters under `content/`, `appendices/`, `bib/`, `assets/`).
 
-See `future-claude-prompts.md` at the repo root for detailed, actionable prompts to complete the WIP thesis chapters.
+**Note on repo history**: earlier working notes referenced elsewhere in this file's changelog (§10) — `COUNTERARGUMENTS.md`, `PLAN_DP1/2/3.md`, `master-thesis-rewrite-plan/` (the "Shadow Honeypot" rewrite proposal, including its `ngx_http_mirror_module`-based Suricata integration idea), and `future-claude-prompts.md` — were removed from the repository root during a later cleanup pass and no longer exist. Where those old proposals are still relevant, the outcome is documented directly in the sections above (e.g. §3.6/§9.2 for what was actually implemented for Suricata traffic visibility, which ended up being `network_mode: host` + PCAP rather than nginx-level mirroring).
 
 ---
 

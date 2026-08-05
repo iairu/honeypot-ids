@@ -35,9 +35,44 @@ services:
       set -x
       echo 'Starting initialization setup (honeynet pool mode)...'
 
+      apk add --no-cache rsync openssl
+
       # -----------------------------------------------------------------------
-      # Helper: copy source files into a destination directory.
-      # Skips silently if the source is empty so a fresh checkout does not fail.
+      # Helper: idempotently SYNC source code files into a destination
+      # directory. Runs on EVERY \`docker compose up\`, not just first
+      # provisioning -- this is what keeps honeypot pool volumes from
+      # silently drifting from production_eshop_files/ when files are
+      # added/changed after the pools were first created (previously this
+      # used a one-shot copy_files() that skipped entirely once the
+      # destination had any content at all, so post-provisioning additions
+      # -- e.g. a new theme or mu-plugin -- never propagated and had to be
+      # \`docker cp\`'d in by hand).
+      #
+      # rsync -a with no --delete: this is a one-directional add/update from
+      # source, not a mirror. Anything that exists ONLY in the destination
+      # (attacker-uploaded webshells under wp-content/uploads, other
+      # honeypot-side forensic artifacts left by a real session) is
+      # deliberately left untouched -- syncing new production files must
+      # never destroy evidence of what an attacker did to a pool.
+      # -----------------------------------------------------------------------
+      sync_files() {
+        SRC=\$$1; DST=\$$2; LABEL=\$$3
+        if [ -d \"\$$SRC\" ] && [ -n \"\$$(find \$$SRC -mindepth 1 -maxdepth 1 2>/dev/null)\" ]; then
+          echo \"Syncing \$$LABEL into \$$DST...\"
+          rsync -a \"\$$SRC/\" \"\$$DST/\" || echo \"  Warning: rsync for \$$LABEL returned non-zero\"
+          echo \"  Done: \$$LABEL\"
+        else
+          echo \"  Source \$$SRC empty or absent – skipping \$$LABEL\"
+        fi
+      }
+
+      # -----------------------------------------------------------------------
+      # Helper: copy source data into a destination directory ONCE, skipping
+      # entirely if the destination is already populated. Used ONLY for
+      # stateful database data directories, where re-syncing on every startup
+      # would overwrite live, mutable database state (including a pool's own
+      # divergent history) -- unlike code files, an always-resync policy is
+      # actively wrong here, not just unnecessary.
       # -----------------------------------------------------------------------
       copy_files() {
         SRC=\$$1; DST=\$$2; LABEL=\$$3
@@ -56,31 +91,34 @@ services:
       }
 
       # -----------------------------------------------------------------------
-      # Copy WordPress files for each pool instance.
-      # After copying, remove production-hardening.php from every honeypot
+      # Sync WordPress files for each pool instance.
+      # After syncing, remove production-hardening.php from every honeypot
       # destination.  That mu-plugin disables XML-RPC, strips version strings,
       # and closes other attack vectors on the production instance.  Honeypot
       # instances MUST NOT have it: attackers need to see realistic fingerprints
       # and reach the intentionally vulnerable endpoints (including xmlrpc.php).
+      # Since sync_files() re-copies from source every run, this rm -f must
+      # also run every time (a prior run's removal doesn't stick otherwise).
       # -----------------------------------------------------------------------
-      copy_files /source_files /dest_files_1 'honeypot pool-1 WordPress files'
+      sync_files /source_files /dest_files_1 'honeypot pool-1 WordPress files'
       rm -f /dest_files_1/wp-content/mu-plugins/production-hardening.php
       echo '  Removed production-hardening.php from pool-1 (honeypot retains attack surface)'
 
-      copy_files /source_files /dest_files_2 'honeypot pool-2 WordPress files'
+      sync_files /source_files /dest_files_2 'honeypot pool-2 WordPress files'
       rm -f /dest_files_2/wp-content/mu-plugins/production-hardening.php
       echo '  Removed production-hardening.php from pool-2 (honeypot retains attack surface)'
 
-      copy_files /source_files /dest_files_3 'honeypot pool-3 WordPress files'
+      sync_files /source_files /dest_files_3 'honeypot pool-3 WordPress files'
       rm -f /dest_files_3/wp-content/mu-plugins/production-hardening.php
       echo '  Removed production-hardening.php from pool-3 (honeypot retains attack surface)'
 
       # -----------------------------------------------------------------------
-      # Copy database data directory for each pool instance.
-      # Each pool gets its own isolated MySQL data directory so that attacker
-      # writes to one pool's database do not affect the others.
-      # Also copy to production_mysql_data (named volume) so that the production
-      # MySQL container can own it – vmhgfs bind mounts reject chown at runtime.
+      # Copy database data directory for each pool instance, ONCE (see
+      # copy_files above). Each pool gets its own isolated MySQL data
+      # directory so that attacker writes to one pool's database do not
+      # affect the others. Also copy to production_mysql_data (named volume)
+      # so that the production MySQL container can own it – vmhgfs bind
+      # mounts reject chown at runtime.
       # -----------------------------------------------------------------------
       copy_files /source_db /dest_prod_db 'production database data'
       copy_files /source_db /dest_db_1 'honeypot pool-1 database data'
@@ -91,7 +129,6 @@ services:
       # Generate self-signed SSL certificates (shared across all services)
       # -----------------------------------------------------------------------
       echo 'Generating SSL certificates...'
-      apk add --no-cache openssl
 
       if [ ! -f '/ssl_certs/server.crt' ] || [ ! -f '/ssl_certs/server.key' ]; then
         openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
