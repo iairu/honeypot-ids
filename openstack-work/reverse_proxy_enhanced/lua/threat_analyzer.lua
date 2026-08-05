@@ -26,12 +26,15 @@
 --   Missing user-agent             → +10
 --   CVE-specific header present    → +50
 --   Automated tool signature       → +30
+--   Prompt-injection pattern hit   → +(prompt_injection_filter risk_score / 2)
 --   Honeypot threshold (default)   →  80 (configurable in init.lua)
 --
 -- DEPENDENCIES:
---   cjson        – JSON encoding for security event logging
---   resty.sha1   – SHA-1 for browser fingerprinting helper
---   resty.string – hex encoding for SHA-1 digests
+--   cjson                    – JSON encoding for security event logging
+--   resty.sha1               – SHA-1 for browser fingerprinting helper
+--   resty.string             – hex encoding for SHA-1 digests
+--   abuseipdb_client         – on-demand IP reputation lookups (Stage 4)
+--   prompt_injection_filter  – forward-looking LLM-abuse pattern probe (Stage 7)
 --   _G.config    – global config table initialised in init.lua
 --   _G.utils     – global utility functions initialised in init.lua
 
@@ -169,10 +172,32 @@ function _M.analyze_request(uri, headers, remote_ip)
     
     if automation_score.detected then
         table.insert(threat_result.details, "automation_detected: " .. automation_score.tool)
-        ngx.log(ngx.WARN, "[THREAT ANALYZER] 🤖 Automation detected (+", automation_score.score, ") | Tool: ", 
+        ngx.log(ngx.WARN, "[THREAT ANALYZER] 🤖 Automation detected (+", automation_score.score, ") | Tool: ",
                 automation_score.tool or "unknown")
     end
-    
+
+    -- Stage 7: Prompt-injection pattern probe (forward-looking LLM-abuse
+    -- signal; see prompt_injection_filter.lua header comment).
+    -- No LLM-driven feature exists yet in this codebase (NEW_PLAN.md 5.3.2
+    -- describes it as planned), but text engineered to look like a
+    -- chat-turn delimiter or a system-prompt override is anomalous on a
+    -- WooCommerce storefront regardless of whether anything downstream
+    -- currently consumes it as a prompt. Scored at half the filter's own
+    -- risk_score since this is a speculative signal today rather than a
+    -- confirmed exploit like a CVE match.
+    local prompt_injection_filter = require "prompt_injection_filter"
+    local injection_result = prompt_injection_filter.detect(_G.utils.url_decode(uri))
+    if injection_result.risk_score > 0 then
+        local injection_score = math.floor(injection_result.risk_score / 2)
+        threat_result.score = threat_result.score + injection_score
+        table.insert(threat_result.details, "prompt_injection_probe: risk_score=" .. injection_result.risk_score)
+        for _, m in ipairs(injection_result.matched) do
+            table.insert(threat_result.patterns_matched, "prompt_injection:" .. m.category)
+        end
+        ngx.log(ngx.WARN, "[THREAT ANALYZER] 🧪 Prompt-injection pattern detected (+", injection_score,
+                ") | Filter risk_score: ", injection_result.risk_score, " | URI: ", uri)
+    end
+
     -- Final determination: flag as suspicious when accumulated score meets
     -- or exceeds the threshold defined in _G.config.threat.honeypot_threshold.
     -- router.lua will act on this flag to assign a pool and redirect.
@@ -240,15 +265,7 @@ function _M.analyze_uri_patterns(uri)
     
     local uri_lower = string.lower(uri)
     -- URL decode the URI to catch encoded attack patterns
-    local function url_decode(str)
-        str = string.gsub(str, "%%(%x%x)", function(h)
-            return string.char(tonumber(h, 16))
-        end)
-        str = string.gsub(str, "+", " ")
-        return str
-    end
-    
-    local uri_decoded = url_decode(uri)
+    local uri_decoded = _G.utils.url_decode(uri)
     local uri_lower_decoded = string.lower(uri_decoded)
 
     

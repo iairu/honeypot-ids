@@ -400,6 +400,22 @@ function _G.utils.is_ip_whitelisted(ip)
     return false
 end
 
+--- URL-decode a string (percent-encoding and "+" as space).
+--- Shared by threat_analyzer.lua (URI pattern matching) and the
+--- prompt-injection probe stage so both operate on decoded text instead of
+--- each maintaining their own copy of this logic.
+---
+--- @param str string
+--- @return string
+function _G.utils.url_decode(str)
+    if not str then return "" end
+    str = string.gsub(str, "%%(%x%x)", function(h)
+        return string.char(tonumber(h, 16))
+    end)
+    str = string.gsub(str, "+", " ")
+    return str
+end
+
 --- Generate a random UUID v4 string.
 --- Used for session IDs and internal correlation tokens.
 --- NOTE: Relies on Lua's math.random which is seeded per-worker in
