@@ -100,6 +100,7 @@ define( 'NONCE_SALT',       getenv_docker('WORDPRESS_NONCE_SALT',       '99922c8
  * @link https://developer.wordpress.org/advanced-administration/wordpress/wp-config/#table-prefix
  */
 $table_prefix = getenv_docker('WORDPRESS_TABLE_PREFIX', 'wp_');
+define( 'FS_METHOD', 'direct' );
 
 /**
  * For developers: WordPress debugging mode.

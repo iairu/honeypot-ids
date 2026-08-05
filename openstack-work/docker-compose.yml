@@ -829,6 +829,7 @@ services:
       - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
       - ABUSEIPDB_CONFIDENCE_MINIMUM=${ABUSEIPDB_CONFIDENCE_MINIMUM:-90}
       - ABUSEIPDB_DAILY_CHECK_LIMIT=${ABUSEIPDB_DAILY_CHECK_LIMIT:-1000}
+      - INTERNAL_TEST_SECRET=${INTERNAL_TEST_SECRET:-}
       # - SESSION_MANAGER_URL=http://session_manager:3001
     # healthcheck:
     #   test: ["CMD", "curl", "-f", "http://localhost/nginx-health"]

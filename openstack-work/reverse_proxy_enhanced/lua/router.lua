@@ -79,8 +79,20 @@ local function assign_honeypot_pool(routing_decision, extra_session_data, remote
     routing_decision.upstream = upstream
     routing_decision.update_session = true
 
-    -- Merge caller-supplied session fields with the pool assignment metadata.
-    local sd = extra_session_data or {}
+    -- Merge caller-supplied session fields with the pool assignment metadata
+    -- on top of whatever routing_decision.session_data already holds --
+    -- for a brand-new visitor whose very first request already trips this
+    -- stage (the common case for CVE/exploit probes), that's the full
+    -- record decide_route's session-bootstrap step just built via
+    -- session_handler.create_session() (user_agent, ip_address, metadata,
+    -- ...). Overwriting it outright here used to silently drop those fields
+    -- before sophistication_analyzer ever saw them, blinding its
+    -- User-Agent-based scripted-tool signal for exactly the sessions it's
+    -- meant to classify.
+    local sd = routing_decision.session_data or {}
+    for k, v in pairs(extra_session_data or {}) do
+        sd[k] = v
+    end
     sd.honeypot_bound    = true
     sd.route_preference  = "honeypot"
     sd.honeypot_pool     = pool_num
@@ -607,8 +619,15 @@ function _M.apply_routing_decision(decision)
     ngx.req.set_header("X-DB-Target", decision.target)
     ngx.log(ngx.INFO, "[ROUTING] Setting X-DB-Target header: ", decision.target)
 
-    -- Set X-Route-Target header for testing/validation
-    ngx.header["X-Route-Target"] = decision.target
+    -- Set X-Route-Target header for testing/validation, gated behind the
+    -- same internal-test shared secret as nginx.conf's header_filter
+    -- blocks (see BLIND_PENTEST_PROTOCOL.md §8.2) -- this function is
+    -- currently unreferenced (dead code) but kept consistent with the live
+    -- gating so it isn't a landmine if it's ever wired back in.
+    local secret = _G.config.internal_test_secret
+    if secret and secret ~= "" and ngx.var.http_x_internal_test_auth == secret then
+        ngx.header["X-Route-Target"] = decision.target
+    end
 
     if decision.target == "honeypot" then
         ngx.var.suspicious_activity = "true"

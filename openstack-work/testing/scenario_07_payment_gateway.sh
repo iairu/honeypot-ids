@@ -52,6 +52,15 @@ TARGET_HOST="${1:-127.0.0.1}"
 TARGET_PORT="${2:-443}"
 BASE_URL="https://${TARGET_HOST}:${TARGET_PORT}"
 
+# Shared secret gating the X-Route-Target/X-Threat-Score response headers
+# this script depends on (see reverse_proxy_enhanced/nginx.conf and
+# BLIND_PENTEST_PROTOCOL.md §8.2). Export it in the shell before running:
+#   export INTERNAL_TEST_SECRET=<value from .env>
+INTERNAL_TEST_SECRET="${INTERNAL_TEST_SECRET:-}"
+if [ -z "${INTERNAL_TEST_SECRET}" ]; then
+    printf "WARNING: INTERNAL_TEST_SECRET is not set -- X-Route-Target will not be returned and every routing check below will read as 'unknown'.\n" >&2
+fi
+
 PASS=0
 FAIL=0
 SKIP=0
@@ -89,6 +98,7 @@ check() {
                      --cookie "${_jar}" \
                      --cookie-jar "${_jar}" \
                      --max-time 15 \
+                     --header "X-Internal-Test-Auth: ${INTERNAL_TEST_SECRET}" \
                      "$@" 2>&1) || true
 
     _route=$(printf '%s' "${_response}" \
@@ -647,6 +657,7 @@ _clean_route=$(curl --silent --include \
     --cookie "${JAR_CLEAN}" --cookie-jar "${JAR_CLEAN}" \
     --max-time 15 \
     --request GET "${BASE_URL}/checkout/" \
+    --header "X-Internal-Test-Auth: ${INTERNAL_TEST_SECRET}" \
     --header "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" \
     2>/dev/null | grep -i "^x-route-target:" | tr -d '\r' | awk '{print $2}' | head -1) || _clean_route=""
 

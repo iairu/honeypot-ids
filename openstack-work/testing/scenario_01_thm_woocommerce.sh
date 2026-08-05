@@ -53,6 +53,15 @@ TARGET_HOST="${1:-127.0.0.1}"
 TARGET_PORT="${2:-443}"
 BASE_URL="https://${TARGET_HOST}:${TARGET_PORT}"
 
+# Shared secret gating the X-Route-Target/X-Threat-Score response headers
+# this script depends on (see reverse_proxy_enhanced/nginx.conf and
+# BLIND_PENTEST_PROTOCOL.md §8.2). Export it in the shell before running:
+#   export INTERNAL_TEST_SECRET=<value from .env>
+INTERNAL_TEST_SECRET="${INTERNAL_TEST_SECRET:-}"
+if [ -z "${INTERNAL_TEST_SECRET}" ]; then
+    printf "WARNING: INTERNAL_TEST_SECRET is not set -- X-Route-Target will not be returned and every routing check below will read as 'unknown'.\n" >&2
+fi
+
 # Temporary cookie jar – one per run so sessions are clean.
 COOKIE_JAR="$(mktemp /tmp/scenario01_cookies_XXXXXX.txt)"
 
@@ -105,6 +114,7 @@ check() {
                      --cookie "${COOKIE_JAR}" \
                      --cookie-jar "${COOKIE_JAR}" \
                      --max-time 15 \
+                     --header "X-Internal-Test-Auth: ${INTERNAL_TEST_SECRET}" \
                      "$@" 2>&1) || true
 
     # Extract X-Route-Target header from final response (case-insensitive).
@@ -371,6 +381,7 @@ _clean_response=$(curl --silent --include \
     --cookie-jar "${CLEAN_COOKIE_JAR}" \
     --max-time 15 \
     --request GET "${BASE_URL}/" \
+    --header "X-Internal-Test-Auth: ${INTERNAL_TEST_SECRET}" \
     --header "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/115.0" \
     --header "Accept: text/html" 2>&1) || true
 

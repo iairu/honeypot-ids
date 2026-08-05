@@ -280,9 +280,16 @@ function _M.classify_session(session_data, threat_result, headers)
         totals.manual = totals.manual + part.manual
     end
 
-    for _, note in ipairs({ timing_note, ua_note, header_note, precision_note }) do
-        if note then table.insert(signals, note) end
-    end
+    -- NOTE: deliberately not `for _, note in ipairs({ timing_note, ... })` --
+    -- when the first element of a Lua table constructor is nil (the common
+    -- case here: score_timing() returns a nil note for any session under
+    -- MIN_SAMPLES_FOR_TIMING requests), ipairs stops at that leading hole
+    -- and silently skips every note after it, even though their scores were
+    -- already added to `totals` above via the separate `part` loop.
+    if timing_note then table.insert(signals, timing_note) end
+    if ua_note then table.insert(signals, ua_note) end
+    if header_note then table.insert(signals, header_note) end
+    if precision_note then table.insert(signals, precision_note) end
 
     -- Pick the highest-scoring bucket, but require both a minimum absolute
     -- score and a minimum margin over the runner-up before committing to a

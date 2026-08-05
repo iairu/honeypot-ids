@@ -295,6 +295,18 @@ _G.config = {
         daily_check_limit = tonumber(os.getenv("ABUSEIPDB_DAILY_CHECK_LIMIT")) or 1000
     },
 
+    -- internal_test_secret: shared secret gating the X-Route-Target /
+    -- X-Threat-Score response headers (see nginx.conf's two
+    -- header_filter_by_lua_block sites). Those headers exist so the
+    -- testing/scenario_*.sh scripts can externally verify routing
+    -- decisions, but shipping them on every response to every client
+    -- hands a real attacker (or a blind pentest) the routing/threat-score
+    -- oracle for free -- see BLIND_PENTEST_PROTOCOL.md §8.2. When this is
+    -- set, the headers are only emitted for requests carrying a matching
+    -- X-Internal-Test-Auth header; when unset/empty, the headers are never
+    -- emitted (fail closed, not fail open).
+    internal_test_secret = os.getenv("INTERNAL_TEST_SECRET") or "",
+
     vulnerability = {
         plugins = {
             "woocommerce-payments",           -- CVE-2023-28121
