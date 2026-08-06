@@ -44,6 +44,21 @@ class EnvFile:
             ef.lines.append(_parse_line(raw))
         return ef
 
+    @classmethod
+    def from_text(cls, text: str, path: Path) -> "EnvFile":
+        """Same parsing as load(), but from an in-memory string instead of
+        reading `path` from disk -- used for remote-fetched .env content
+        (see core/env_upload.py's download_env_text()), where there's no
+        local file to read. `path` is kept only for display (e.g. the
+        editor's "no keys found" message) and is NOT where .save() would
+        write -- callers editing remote content should call
+        apply_to_env_file() + render() and upload the result themselves,
+        not .save()."""
+        ef = cls(path=path)
+        for raw in text.splitlines():
+            ef.lines.append(_parse_line(raw))
+        return ef
+
     def get(self, key: str, default: str = "") -> str:
         for line in self.lines:
             if line.key == key:

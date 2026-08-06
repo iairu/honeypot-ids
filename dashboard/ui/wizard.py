@@ -6,6 +6,8 @@ doesn't discard everything else.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget,
@@ -13,7 +15,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core.cert_ctl import CertError, regenerate
-from core.env_file import seed_from_example
+from core.env_file import EnvFile, seed_from_example
+from core.env_upload import EnvUploadError, download_env_text, upload_env_text
 from core.paths import (
     EDGE_ENV_EXAMPLE, EDGE_ENV_FILE, SIEM_ENV_EXAMPLE, SIEM_ENV_FILE,
 )
@@ -34,9 +37,11 @@ EDGE_ENV_DEFAULT_KEYS = [
 # an import-order/forward-reference problem.
 PAGE_WELCOME, PAGE_REMOTE, PAGE_EDGE_ENV, PAGE_SIEM_ENV, PAGE_CERTS, PAGE_FINISH = range(6)
 
-# Fixed step labels, in wizard order. Which of these a run actually visits
-# depends on the remote/local choice (see visible_steps()) -- Edge/SIEM
-# .env are skipped entirely for a project marked remote.
+# Fixed step labels, in wizard order. Every run visits every page, in this
+# order -- a project marked remote no longer skips its .env page; that
+# page instead fetches and edits the .env directly on the remote host
+# (see RemoteAwareEnvPage). WizardTimeline appends "(remote)" to the
+# Edge/SIEM .env labels when that project is remote-enabled.
 _STEP_LABELS = {
     PAGE_WELCOME: "Welcome",
     PAGE_REMOTE: "Remote/Local",
@@ -45,21 +50,12 @@ _STEP_LABELS = {
     PAGE_CERTS: "Certificates",
     PAGE_FINISH: "Done",
 }
+_STEP_ORDER = (PAGE_WELCOME, PAGE_REMOTE, PAGE_EDGE_ENV, PAGE_SIEM_ENV, PAGE_CERTS, PAGE_FINISH)
 
 
-def visible_steps(state: AppState) -> list[tuple[int, str]]:
-    """The ordered list of (page_id, label) this wizard run will actually
-    visit, given the current remote/local choice. Recomputed on every page
-    show (not just once) since Back navigation can change remote/local
-    mid-run -- see WizardTimeline.refresh()."""
-    steps = [(PAGE_WELCOME, _STEP_LABELS[PAGE_WELCOME]), (PAGE_REMOTE, _STEP_LABELS[PAGE_REMOTE])]
-    if not state.remote_edge.enabled:
-        steps.append((PAGE_EDGE_ENV, _STEP_LABELS[PAGE_EDGE_ENV]))
-    if not state.remote_siem.enabled:
-        steps.append((PAGE_SIEM_ENV, _STEP_LABELS[PAGE_SIEM_ENV]))
-    steps.append((PAGE_CERTS, _STEP_LABELS[PAGE_CERTS]))
-    steps.append((PAGE_FINISH, _STEP_LABELS[PAGE_FINISH]))
-    return steps
+def visible_steps() -> list[tuple[int, str]]:
+    """The full, fixed step list -- every wizard run visits every page."""
+    return [(pid, _STEP_LABELS[pid]) for pid in _STEP_ORDER]
 
 
 class WizardTimeline(QWidget):
@@ -82,10 +78,15 @@ class WizardTimeline(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-        steps = visible_steps(state)
+        steps = visible_steps()
         current_index = next((i for i, (pid, _label) in enumerate(steps) if pid == current_id), None)
 
         for i, (pid, label) in enumerate(steps):
+            if pid == PAGE_EDGE_ENV and state.remote_edge.enabled:
+                label = f"{label} (remote)"
+            elif pid == PAGE_SIEM_ENV and state.remote_siem.enabled:
+                label = f"{label} (remote)"
+
             if current_index is not None and i < current_index:
                 text, style = f"✓ {label}", "color: #5cb85c;"
             elif pid == current_id:
@@ -165,9 +166,10 @@ class RemotePage(TimelineMixin, QWizardPage):
             "deployment this project is designed for -- see ARCHITECTURE.md), "
             "configure SSH access here. Leave disabled to control only the "
             "local stack.\n\n"
-            "A project marked remote here has its .env living on that "
-            "remote host, not on this machine -- so the next step skips "
-            "local .env editing for it entirely."
+            "A project marked remote here has its .env fetched live from "
+            "that remote host on the next step (prefilling the same form "
+            "you'd see for a local .env) instead of a local file -- Next "
+            "there saves it straight back to the remote host, not here."
         )
         info.setWordWrap(True)
         layout.addWidget(info)
@@ -186,64 +188,151 @@ class RemotePage(TimelineMixin, QWizardPage):
         self.state.save()
         return True
 
-    def nextId(self) -> int:
-        if self.state.remote_edge.enabled:
-            if self.state.remote_siem.enabled:
-                return PAGE_CERTS
-            return PAGE_SIEM_ENV
-        return PAGE_EDGE_ENV
 
+class RemoteAwareEnvPage(TimelineMixin, QWizardPage):
+    """Base for EdgeEnvPage/SiemEnvPage. Shows and edits a project's .env
+    in the same EnvEditorWidget either way, but the SOURCE depends on the
+    live remote/local choice from RemotePage, re-checked every time this
+    page is shown (initializePage(), same mechanism the timeline already
+    uses -- so going Back and toggling remote then Next again picks it up
+    correctly):
+      - local (default): seeded from .env.example if the real file doesn't
+        exist yet, same as before.
+      - remote (that project marked remote AND configured): fetched live
+        over SSH via download_env_text() and prefilled -- an empty/missing
+        remote .env prefills an empty form rather than failing, matching
+        how a missing local file behaves. A fetch failure (bad connection)
+        falls back to showing the local file instead, with an explanation.
 
-class EdgeEnvPage(TimelineMixin, QWizardPage):
-    def __init__(self, state: AppState, parent=None):
+    validatePage() saves back to whichever source was actually shown --
+    upload_env_text() for remote, EnvFile.save() for local.
+    """
+
+    def __init__(
+        self, state: AppState, project: str, title: str,
+        local_path: Path, local_example: Path,
+        default_keys: list[str] | None, parent=None,
+    ):
         super().__init__(parent)
         self.state = state
-        self.setTitle("openstack-work (edge honeypot) — .env")
+        self.project = project
+        self.local_path = local_path
+        self.local_example = local_example
+        self.default_keys = default_keys
+        self.setTitle(title)
+
         layout = QVBoxLayout(self)
         self._init_timeline(layout)
-        info = QLabel(
-            f"Writes to {EDGE_ENV_FILE}. Password/secret fields have a "
-            "Generate button for a random value -- recommended over the "
-            "placeholder defaults."
-        )
-        info.setWordWrap(True)
-        layout.addWidget(info)
 
-        self.env_file = seed_from_example(EDGE_ENV_FILE, EDGE_ENV_EXAMPLE)
-        self.editor = EnvEditorWidget(self.env_file, keys=EDGE_ENV_DEFAULT_KEYS)
-        layout.addWidget(self.editor, stretch=1)
+        self.info = QLabel("")
+        self.info.setWordWrap(True)
+        layout.addWidget(self.info)
+
+        self._editor_slot = QVBoxLayout()
+        layout.addLayout(self._editor_slot, stretch=1)
+
+        self.env_file: EnvFile | None = None
+        self.editor: EnvEditorWidget | None = None
+        self._source_is_remote = False
+
+    def _remote_config(self):
+        return self.state.remote_edge if self.project == "edge" else self.state.remote_siem
+
+    def initializePage(self) -> None:
+        super().initializePage()  # TimelineMixin's refresh, then QWizardPage's
+        self._load_source()
+
+    def _clear_editor(self) -> None:
+        while self._editor_slot.count():
+            item = self._editor_slot.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    def _load_source(self) -> None:
+        self._clear_editor()
+        remote = self._remote_config()
+
+        if remote.enabled and remote.is_configured():
+            self.info.setText(f"Fetching {remote.remote_path}/.env from {remote.user}@{remote.host}…")
+            self.repaint()
+            try:
+                text = download_env_text(remote)
+            except EnvUploadError as e:
+                self._source_is_remote = False
+                self.env_file = seed_from_example(self.local_path, self.local_example)
+                self.info.setText(
+                    f"Could not fetch the remote .env ({e}) -- showing the "
+                    f"LOCAL file instead ({self.local_path}). Fix the "
+                    "connection on the previous page and come back, or "
+                    "Next will just save locally."
+                )
+            else:
+                self._source_is_remote = True
+                display_path = Path(f"{remote.user}@{remote.host}:{remote.remote_path}/.env")
+                self.env_file = EnvFile.from_text(text, display_path)
+                if text:
+                    self.info.setText(
+                        f"Writes to REMOTE {remote.user}@{remote.host}:"
+                        f"{remote.remote_path}/.env (fetched live just now, "
+                        "shown below). Password/secret fields have a "
+                        "Generate button for a random value."
+                    )
+                else:
+                    self.info.setText(
+                        f"No .env found yet at {remote.user}@{remote.host}:"
+                        f"{remote.remote_path}/.env -- starting from an "
+                        "empty form; Next creates it there."
+                    )
+        else:
+            self._source_is_remote = False
+            self.env_file = seed_from_example(self.local_path, self.local_example)
+            self.info.setText(
+                f"Writes to {self.local_path}. Password/secret fields have "
+                "a Generate button for a random value -- recommended over "
+                "the placeholder defaults."
+            )
+
+        # The curated key subset (EDGE_ENV_DEFAULT_KEYS) only makes sense
+        # for the known local template -- a remote-fetched file might be
+        # structured differently, so show everything actually found there.
+        keys = self.default_keys if not self._source_is_remote else None
+        self.editor = EnvEditorWidget(self.env_file, keys=keys)
+        self._editor_slot.addWidget(self.editor)
 
     def validatePage(self) -> bool:
-        self.editor.save()
+        self.editor.apply_to_env_file()
+        if self._source_is_remote:
+            remote = self._remote_config()
+            try:
+                upload_env_text(self.env_file.render(), remote)
+            except EnvUploadError as e:
+                QMessageBox.warning(
+                    self, "Save to remote failed",
+                    f"Could not write to {remote.user}@{remote.host}:"
+                    f"{remote.remote_path}/.env:\n\n{e}\n\n"
+                    "Go back and fix the connection, or disable remote for "
+                    "this project to save locally instead.",
+                )
+                return False
+        else:
+            self.env_file.save()
         return True
 
-    def nextId(self) -> int:
-        if self.state.remote_siem.enabled:
-            return PAGE_CERTS
-        return PAGE_SIEM_ENV
 
-
-class SiemEnvPage(TimelineMixin, QWizardPage):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setTitle("openstack-siem-work (SIEM) — .env")
-        layout = QVBoxLayout(self)
-        self._init_timeline(layout)
-        info = QLabel(
-            f"Writes to {SIEM_ENV_FILE}. Password/secret fields have a "
-            "Generate button for a random value -- recommended over the "
-            "placeholder defaults."
+class EdgeEnvPage(RemoteAwareEnvPage):
+    def __init__(self, state: AppState, parent=None):
+        super().__init__(
+            state, "edge", "openstack-work (edge honeypot) — .env",
+            EDGE_ENV_FILE, EDGE_ENV_EXAMPLE, EDGE_ENV_DEFAULT_KEYS, parent,
         )
-        info.setWordWrap(True)
-        layout.addWidget(info)
 
-        self.env_file = seed_from_example(SIEM_ENV_FILE, SIEM_ENV_EXAMPLE)
-        self.editor = EnvEditorWidget(self.env_file)
-        layout.addWidget(self.editor, stretch=1)
 
-    def validatePage(self) -> bool:
-        self.editor.save()
-        return True
+class SiemEnvPage(RemoteAwareEnvPage):
+    def __init__(self, state: AppState, parent=None):
+        super().__init__(
+            state, "siem", "openstack-siem-work (SIEM) — .env",
+            SIEM_ENV_FILE, SIEM_ENV_EXAMPLE, None, parent,
+        )
 
 
 class CertsPage(TimelineMixin, QWizardPage):
@@ -301,11 +390,11 @@ class SetupWizard(QWizard):
         self.setMinimumSize(700, 620)
 
         # Remote/local choice comes first so the .env pages that follow
-        # know which projects to skip.
+        # know whether to fetch from the remote host instead of a local file.
         self.setPage(PAGE_WELCOME, WelcomePage())
         self.setPage(PAGE_REMOTE, RemotePage(state))
         self.setPage(PAGE_EDGE_ENV, EdgeEnvPage(state))
-        self.setPage(PAGE_SIEM_ENV, SiemEnvPage())
+        self.setPage(PAGE_SIEM_ENV, SiemEnvPage(state))
         self.setPage(PAGE_CERTS, CertsPage())
         self.setPage(PAGE_FINISH, FinishPage())
 

@@ -25,16 +25,18 @@ no terminal window) instead of running `run.sh` from a shell. It calls
 repo somewhere else, edit its `Exec=`/`Path=` lines to match.
 
 On first launch (no `state.json` yet), a setup wizard walks through the
-remote/local choice for each project first, then creating/populating
-`.env` for whichever project(s) are local (a project marked remote skips
-local `.env` editing entirely — its `.env` lives on that remote host, not
-here), then optional initial certificate generation. A step-timeline
-strip at the top of every page shows the whole run at a glance (✓ done /
-● current / dimmed upcoming), recomputed live so it always reflects which
-steps the current remote/local choice will actually visit. The wizard is
-also reachable anytime afterward from **Settings → Re-run setup wizard…**
-without losing existing values (it loads current `.env` content rather
-than blanking it).
+remote/local choice for each project first, then its `.env` (every run
+visits every page now — a project marked remote doesn't skip .env editing,
+it fetches the .env LIVE from that remote host over SSH and prefills the
+same form with it, instead of a local file; missing entirely on a fresh
+remote host prefills an empty form rather than failing, and Next saves
+straight back to the remote host, not locally), then optional initial
+certificate generation. A step-timeline strip at the top of every page
+shows the whole run at a glance (✓ done / ● current, adapting to black or
+white depending on the actual light/dark theme / dimmed upcoming, with
+"(remote)" appended to a project's .env step when it's remote-sourced).
+The wizard is also reachable anytime afterward from **Settings → Re-run
+setup wizard…** without losing existing values.
 
 ## Pages
 
@@ -93,9 +95,16 @@ than blanking it).
   console sit side by side (not stacked) so every cert group is visible
   without scrolling. See `../ARCHITECTURE.md` for why the SIEM side uses a
   private CA this way.
-- **Settings** — edit either project's real `.env` file directly (secret
-  fields are password-masked with a show/hide toggle and a "Generate"
-  button for a fresh random value), configure/test remote SSH access per
+- **Settings** — each project's `.env` tab has a **Local / Remote** dropdown
+  (secret fields are password-masked with a show/hide toggle and a
+  "Generate" button for a fresh random value either way): Local edits the
+  real local file as before; Remote (only selectable once that project's
+  remote connection is configured and tested — greyed out otherwise, and
+  switching to it turns grey/red if the fetch fails) fetches the .env live
+  from the remote host over SSH into the same form, and Save writes it
+  straight back there instead of touching the local file. A **Refresh**
+  button re-fetches from whichever source is currently selected, discarding
+  unsaved edits in the form. Also: configure/test remote SSH access per
   project, adjust the Health/Services status-refresh interval and toggle
   unhealthy-container tray notifications (**General** tab), and
   **export/import** the whole configuration — both `.env` files' values
@@ -125,15 +134,30 @@ the real two-host deployment this project is designed for (see
 `../ARCHITECTURE.md`) gets controlled from one place, including from the
 edge host toward a genuinely separate SIEM VM.
 
-A remote target needs its own `.env` already in place on that host for
-`docker compose` to work there. Once **Test connection** succeeds, an
-**Upload `<project>/.env` to remote…** button appears (clearly labeled per
-project — the wizard's Remote page shows both openstack-work's and
-openstack-siem-work's remote config side by side, each with its own
-upload button, so it's always clear which `.env` goes where) — it `scp`s
-the LOCAL `.env` file over the same tested SSH connection to
-`<remote_path>/.env`, overwriting whatever's there, after a confirmation
-prompt (secrets included, sent as-is).
+A remote target needs its own `.env` (and generally the rest of the
+project) already in place on that host for `docker compose` to work there.
+Once **Test connection** succeeds, two actions appear on that same remote
+config (in the wizard's Remote page and in Settings — clearly labeled per
+project, so with both projects' remote config shown side by side it's
+always obvious which goes where):
+
+- **Upload `<project>/.env` to remote…** — `scp`s the LOCAL `.env` file to
+  `<remote_path>/.env`, overwriting whatever's there, after a confirmation
+  prompt (secrets included, sent as-is). For editing a remote `.env`
+  in-place instead of overwriting it wholesale, use the Local/Remote
+  toggle on the Settings `.env` tabs (or the wizard) instead — this button
+  is for pushing a specific known-good local copy.
+- **Upload entire `<project>` to remote…** — syncs the WHOLE project
+  directory (code, compose files, certs, everything needed to actually run
+  `docker compose up` there — not just `.env`) via `rsync` over the same
+  SSH connection, with a live progress bar. Runtime-generated data is
+  excluded so it isn't blindly copied alongside the actual project
+  (backups, container logs, database/Redis volumes, and a
+  local-diffing-only file snapshot — confirmed live: `openstack-work/backups/`
+  alone was 1.2GB, `suricata_logs/` 378MB, neither belongs in "deploy the
+  project"). If the remote directory already has files in it, you're asked
+  to confirm before anything is overwritten. Needs `rsync` installed
+  locally (not on the remote host).
 
 ## State
 
@@ -163,12 +187,14 @@ dashboard/
     web_links.py                  # which services have a browsable web UI
     shell_ctl.py                   # docker exec / ssh shell command construction
     settings_bundle.py              # export/import bundle (.env values + remote config)
-    env_upload.py                    # scp a local .env to a configured remote host
+    env_upload.py                    # .env transfer: scp a local file, or fetch/send TEXT over ssh
+    project_upload.py                 # rsync a whole project directory to a remote host
   ui/                     # PyQt6 widgets
     main_window.py, wizard.py, page_services.py, page_health.py,
     page_certs.py, page_settings.py, health_diagram.py, env_editor.py,
     remote_config_widget.py, process_runner.py, status_poller.py,
     log_export.py         # shared "export logs to a file" (Health + Services)
+    env_source_tab.py     # Settings' per-project .env tab (Local/Remote toggle)
 ```
 
 `core/` has no PyQt6 imports at all — every module in it was verified

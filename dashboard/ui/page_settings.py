@@ -13,11 +13,12 @@ from PyQt6.QtWidgets import (
     QSpinBox, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from core.env_file import EnvFile
-from core.paths import EDGE_ENV_FILE, SIEM_ENV_FILE
+from core.paths import (
+    EDGE_ENV_EXAMPLE, EDGE_ENV_FILE, SIEM_ENV_EXAMPLE, SIEM_ENV_FILE,
+)
 from core.settings_bundle import BundleError, apply_bundle, export_bundle, read_bundle, write_bundle
 from core.state import AppState
-from ui.env_editor import EnvEditorWidget
+from ui.env_source_tab import EnvSourceTab
 from ui.remote_config_widget import RemoteConfigWidget
 
 
@@ -43,15 +44,19 @@ class SettingsPage(QWidget):
 
         self.tabs.addTab(self._build_general_tab(), "General")
 
-        self.edge_env_file = EnvFile.load(EDGE_ENV_FILE)
-        self.edge_env_editor = EnvEditorWidget(self.edge_env_file)
-        edge_env_tab = self._wrap_with_save(self.edge_env_editor, self._save_edge_env)
-        self.tabs.addTab(edge_env_tab, "openstack-work .env")
+        # Each .env tab has its own Local/Remote toggle (only enabled once
+        # that project's remote connection is configured) -- get_remote_config
+        # is a callable, not a snapshot, so it always reflects whatever the
+        # remote tabs below currently hold, including after they're saved.
+        self.edge_env_tab = EnvSourceTab(
+            "edge", EDGE_ENV_FILE, EDGE_ENV_EXAMPLE, lambda: self.state.remote_edge,
+        )
+        self.tabs.addTab(self.edge_env_tab, "openstack-work .env")
 
-        self.siem_env_file = EnvFile.load(SIEM_ENV_FILE)
-        self.siem_env_editor = EnvEditorWidget(self.siem_env_file)
-        siem_env_tab = self._wrap_with_save(self.siem_env_editor, self._save_siem_env)
-        self.tabs.addTab(siem_env_tab, "openstack-siem-work .env")
+        self.siem_env_tab = EnvSourceTab(
+            "siem", SIEM_ENV_FILE, SIEM_ENV_EXAMPLE, lambda: self.state.remote_siem,
+        )
+        self.tabs.addTab(self.siem_env_tab, "openstack-siem-work .env")
 
         self.edge_remote_widget = RemoteConfigWidget("edge", self.state.remote_edge)
         edge_remote_tab = self._wrap_with_save(self.edge_remote_widget, self._save_edge_remote)
@@ -110,24 +115,18 @@ class SettingsPage(QWidget):
         v.addWidget(save_btn)
         return container
 
-    def _save_edge_env(self) -> None:
-        self.edge_env_editor.save()
-        QMessageBox.information(self, "Saved", f"Saved {EDGE_ENV_FILE}")
-
-    def _save_siem_env(self) -> None:
-        self.siem_env_editor.save()
-        QMessageBox.information(self, "Saved", f"Saved {SIEM_ENV_FILE}")
-
     def _save_edge_remote(self) -> None:
         self.state.remote_edge = self.edge_remote_widget.to_config()
         self.state.save()
         self._on_state_changed()
+        self.edge_env_tab.refresh_remote_availability()
         QMessageBox.information(self, "Saved", "Remote settings saved for openstack-work.")
 
     def _save_siem_remote(self) -> None:
         self.state.remote_siem = self.siem_remote_widget.to_config()
         self.state.save()
         self._on_state_changed()
+        self.siem_env_tab.refresh_remote_availability()
         QMessageBox.information(self, "Saved", "Remote settings saved for openstack-siem-work.")
 
     # ---- Export / Import ----
