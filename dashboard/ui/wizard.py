@@ -6,6 +6,7 @@ doesn't discard everything else.
 """
 from __future__ import annotations
 
+from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget,
     QWizard, QWizardPage,
@@ -88,7 +89,7 @@ class WizardTimeline(QWidget):
             if current_index is not None and i < current_index:
                 text, style = f"✓ {label}", "color: #5cb85c;"
             elif pid == current_id:
-                text, style = f"● {label}", "color: #ffffff; font-weight: bold;"
+                text, style = f"● {label}", f"color: {self._current_step_text_color()}; font-weight: bold;"
             else:
                 text, style = label, "color: #888888;"
 
@@ -102,6 +103,17 @@ class WizardTimeline(QWidget):
                 self._row.addWidget(arrow)
 
         self._row.addStretch()
+
+    def _current_step_text_color(self) -> str:
+        """Black on a light background, white on a dark one. Was hardcoded
+        white -- unreadable (white-on-light) on a light system/Qt theme,
+        confirmed live. Reads the widget's own actual effective palette
+        rather than assuming either theme, so it's correct regardless of
+        OS light/dark mode or a custom app stylesheet."""
+        bg = self.palette().color(QPalette.ColorRole.Window)
+        # Perceived-brightness formula (ITU-R BT.601), 0-255 scale.
+        brightness = (bg.red() * 299 + bg.green() * 587 + bg.blue() * 114) / 1000
+        return "#000000" if brightness > 128 else "#ffffff"
 
 
 class TimelineMixin:

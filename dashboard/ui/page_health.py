@@ -5,19 +5,17 @@ quick "export logs to a file" icon (see ui/health_diagram.py) handled here
 via export_logs_requested."""
 from __future__ import annotations
 
-from datetime import datetime
-
 from PyQt6.QtCore import QProcess, QUrl, Qt
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QGroupBox, QHBoxLayout, QInputDialog, QLabel, QMessageBox, QPushButton,
-    QSplitter, QVBoxLayout, QWidget,
+    QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QSplitter,
+    QVBoxLayout, QWidget,
 )
 
-from core.paths import LOG_DIR
 from core.shell_ctl import build_shell_command
 from core.web_links import build_url, web_ui_for
 from ui.health_diagram import HealthDiagram, STATUS_COLORS, classify, status_detail
+from ui.log_export import LogExporter
 from ui.process_runner import LogPanel
 
 
@@ -101,7 +99,7 @@ class HealthPage(QWidget):
         splitter.setSizes([700, 320])
 
         self._selected: tuple[str, str] | None = None
-        self._export_processes: list[QProcess] = []
+        self._log_exporter = LogExporter(self)
 
     def apply_status(self, results: dict[str, list[dict]]) -> None:
         self._last_results = results
@@ -123,6 +121,9 @@ class HealthPage(QWidget):
         self.restart_btn.setEnabled(True)
         self.logs_btn.setEnabled(True)
         self._refresh_detail_label()
+        # Auto-start the live tail immediately -- no need to click "View
+        # logs" separately just to see what a newly-selected node is doing.
+        self._view_logs_selected()
 
     def _refresh_detail_label(self) -> None:
         target_key, service = self._selected
@@ -179,53 +180,7 @@ class HealthPage(QWidget):
         target = self._targets_by_key.get(target_key)
         if target is None:
             return
-
-        lines, ok = QInputDialog.getInt(
-            self, f"Export logs — {service}",
-            "How many lines (most recent)? 0 = entire log:",
-            200, 0, 1_000_000,
-        )
-        if not ok:
-            return
-
-        log_args = ["logs", "--no-color"]
-        if lines > 0:
-            log_args.append(f"--tail={lines}")
-        log_args.append(service)
-        argv, cwd = target.build(*log_args)
-
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_path = LOG_DIR / f"{target_key}_{service}_{timestamp}.log"
-
-        process = QProcess(self)
-        process.setProgram(argv[0])
-        process.setArguments(argv[1:])
-        if cwd:
-            process.setWorkingDirectory(cwd)
-        process.setStandardOutputFile(str(out_path))
-        process.setProcessChannelMode(QProcess.ProcessChannelMode.SeparateChannels)
-
-        def _on_finished(exit_code: int, _status, path=out_path, proc=process) -> None:
-            self._export_processes.remove(proc)
-            if exit_code == 0 and path.exists() and path.stat().st_size > 0:
-                QMessageBox.information(
-                    self, "Logs exported",
-                    f"{service} logs ({'all' if lines == 0 else lines} lines) "
-                    f"written to:\n\n{path}",
-                )
-            else:
-                stderr = bytes(proc.readAllStandardError()).decode(errors="replace").strip()
-                QMessageBox.warning(
-                    self, "Log export produced no output",
-                    f"'docker compose logs' for {service} exited with code "
-                    f"{exit_code} and produced no log content.\n\n"
-                    + (stderr or "(no error output -- the container may have no logs yet)"),
-                )
-
-        process.finished.connect(_on_finished)
-        self._export_processes.append(process)
-        process.start()
+        self._log_exporter.export(target, target_key, service, service)
 
     def _open_shell_selected(self) -> None:
         if not self._selected:

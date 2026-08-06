@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.docker_ctl import PROJECT_LABELS, Target
+from ui.log_export import LogExporter
 from ui.process_runner import LogPanel
 
 
@@ -60,8 +61,11 @@ class TargetPanel(QGroupBox):
         # Whether the LogPanel's current process is a mutating compose
         # command (up/down/restart) vs. the harmless auto-tail (logs -f) --
         # used to warn before quitting mid-operation without nagging the
-        # user every time (the auto-tail is running almost constantly).
+        # user every time (the auto-tail is running almost constantly), and
+        # to know whether to auto-resume the tail once it finishes (see
+        # _on_log_finished).
         self._mutating_action = False
+        self._log_exporter = LogExporter(self)
 
         layout = QVBoxLayout(self)
 
@@ -78,7 +82,8 @@ class TargetPanel(QGroupBox):
         self.stop_btn = QPushButton("Stop")
         self.purge_btn = QPushButton("Purge (⚠ deletes volumes)")
         self.purge_btn.setStyleSheet("QPushButton { color: #d9534f; }")
-        for b in (self.start_btn, self.restart_btn, self.stop_btn, self.purge_btn):
+        self.download_btn = QPushButton("Download logs…")
+        for b in (self.start_btn, self.restart_btn, self.stop_btn, self.purge_btn, self.download_btn):
             button_row.addWidget(b)
         layout.addLayout(button_row)
 
@@ -86,13 +91,21 @@ class TargetPanel(QGroupBox):
         self.restart_btn.clicked.connect(self._restart)
         self.stop_btn.clicked.connect(self._stop)
         self.purge_btn.clicked.connect(self._purge)
+        self.download_btn.clicked.connect(self._download_logs)
 
-        log_label = QLabel("Logs (auto-tailing -- Start/Restart/Stop/Purge takes over this panel):")
+        log_label = QLabel(
+            "Logs (auto-tailing -- Start/Restart/Stop/Purge takes over this "
+            "panel, then returns to auto-tailing once the command finishes):"
+        )
         log_label.setStyleSheet("color: #888888;")
         layout.addWidget(log_label)
 
-        self.log_panel = LogPanel()
+        # No Stop button on this LogPanel -- Start/Restart/Stop/Purge above
+        # already cover stopping/controlling this target, a second "Stop"
+        # here would just be redundant (and ambiguous about what it stops).
+        self.log_panel = LogPanel(show_stop_button=False)
         self.log_panel.setMinimumHeight(160)
+        self.log_panel.finished.connect(self._on_log_finished)
         layout.addWidget(self.log_panel)
 
         # Auto-show logs immediately rather than waiting for a button click
@@ -113,6 +126,22 @@ class TargetPanel(QGroupBox):
         self._mutating_action = mutating
         argv, cwd = self.target.build(*compose_args)
         self.log_panel.run(argv, cwd)
+
+    def _on_log_finished(self, _exit_code: int) -> None:
+        # `docker compose up -d` (and restart/down/down -v) exit as soon as
+        # the command completes -- with -d, that's almost immediately, so
+        # the panel would otherwise just sit there showing "process exited
+        # with code 0" instead of going back to showing what the containers
+        # are actually doing. Resume the live tail once a mutating action
+        # finishes; don't do this for the tail itself finishing (would only
+        # happen on a genuine failure/all-containers-gone, and retrying
+        # immediately in a loop isn't useful there).
+        if self._mutating_action:
+            self._mutating_action = False
+            self._run("logs", "--tail=50", "-f", mutating=False)
+
+    def _download_logs(self) -> None:
+        self._log_exporter.export(self.target, self.target.key, None, self.target.label)
 
     def _start(self) -> None:
         self._run("up", "-d")

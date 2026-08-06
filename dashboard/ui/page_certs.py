@@ -4,10 +4,10 @@ several run in sequence for "all", and blocking the UI thread even
 briefly for a click is bad practice)."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea,
-    QVBoxLayout, QWidget,
+    QSplitter, QVBoxLayout, QWidget,
 )
 
 from core.cert_ctl import CERT_GROUPS, CertError, regenerate
@@ -46,9 +46,17 @@ class CertsPage(QWidget):
         warn.setWordWrap(True)
         outer.addWidget(warn)
 
+        # Horizontal split (buttons left, console right) rather than
+        # stacking the console below the button list -- with 6+ cert
+        # groups, a fixed-height console below ate enough vertical space
+        # that the button list needed scrolling to see every group. The
+        # console now gets its own full-height column instead.
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        outer.addWidget(splitter, stretch=1)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        outer.addWidget(scroll)
+        splitter.addWidget(scroll)
 
         inner = QWidget()
         inner_layout = QVBoxLayout(inner)
@@ -75,10 +83,18 @@ class CertsPage(QWidget):
         all_layout.addWidget(all_btn)
         inner_layout.addWidget(all_box)
 
+        console_panel = QWidget()
+        console_layout = QVBoxLayout(console_panel)
+        console_layout.setContentsMargins(0, 0, 0, 0)
+        console_layout.addWidget(QLabel("<b>Output</b>"))
+
         self.log_panel = LogPanel()
         self.log_panel.stop_button.setVisible(False)  # cert generation isn't interruptible mid-openssl-call
-        self.log_panel.setMinimumHeight(200)
-        outer.addWidget(self.log_panel)
+        console_layout.addWidget(self.log_panel, stretch=1)
+
+        console_panel.setMinimumWidth(320)
+        splitter.addWidget(console_panel)
+        splitter.setSizes([420, 480])
 
         self._queue: list[str] = []
 

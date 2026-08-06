@@ -8,7 +8,12 @@ from PyQt6.QtWidgets import (
 )
 
 from core.docker_ctl import Target
+from core.env_upload import EnvUploadError, upload_env
+from core.paths import EDGE_ENV_FILE, SIEM_ENV_FILE
 from core.state import RemoteConfig
+
+_LOCAL_ENV_FILES = {"edge": EDGE_ENV_FILE, "siem": SIEM_ENV_FILE}
+_PROJECT_ENV_LABELS = {"edge": "openstack-work/.env", "siem": "openstack-siem-work/.env"}
 
 
 class RemoteConfigWidget(QWidget):
@@ -60,6 +65,20 @@ class RemoteConfigWidget(QWidget):
         test_row.addStretch()
         layout.addLayout(test_row)
 
+        # Only enabled after a successful Test connection -- clearly names
+        # which project's .env it would send (openstack-work vs.
+        # openstack-siem-work), since a remote target's own .env otherwise
+        # has to be placed there by hand.
+        upload_row = QHBoxLayout()
+        self.upload_btn = QPushButton(f"Upload {_PROJECT_ENV_LABELS[project]} to remote…")
+        self.upload_btn.setEnabled(False)
+        self.upload_btn.clicked.connect(self._upload_env)
+        self.upload_result = QLabel("")
+        upload_row.addWidget(self.upload_btn)
+        upload_row.addWidget(self.upload_result)
+        upload_row.addStretch()
+        layout.addLayout(upload_row)
+
     def _browse_key(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select SSH private key")
         if path:
@@ -80,15 +99,55 @@ class RemoteConfigWidget(QWidget):
         if not config.is_configured():
             self.test_result.setText("Fill in host, user, and key path first.")
             self.test_result.setStyleSheet("color: #f0ad4e;")
+            self.upload_btn.setEnabled(False)
             return
         target = Target(project=self.project, remote=config)
         self.test_result.setText("Testing…")
         self.test_result.setStyleSheet("color: #888888;")
+        self.upload_btn.setEnabled(False)
         self.repaint()
         ok = target.is_reachable()
         if ok:
             self.test_result.setText("✓ Reachable")
             self.test_result.setStyleSheet("color: #5cb85c;")
+            self.upload_result.setText("")
+            self.upload_btn.setEnabled(True)
         else:
             self.test_result.setText("✗ Could not connect")
             self.test_result.setStyleSheet("color: #d9534f;")
+
+    def _upload_env(self) -> None:
+        config = self.to_config()
+        local_path = _LOCAL_ENV_FILES[self.project]
+        env_label = _PROJECT_ENV_LABELS[self.project]
+
+        reply = QMessageBox.warning(
+            self, "Confirm upload",
+            f"This will overwrite {config.remote_path}/.env on "
+            f"{config.user}@{config.host} with the LOCAL {env_label} file "
+            "(sent as-is, including secrets, over the SSH connection just "
+            "tested).\n\nContinue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self.upload_result.setText("Uploading…")
+        self.upload_result.setStyleSheet("color: #888888;")
+        self.repaint()
+
+        try:
+            upload_env(local_path, config)
+        except EnvUploadError as e:
+            self.upload_result.setText("✗ Upload failed")
+            self.upload_result.setStyleSheet("color: #d9534f;")
+            QMessageBox.warning(self, "Upload failed", str(e))
+            return
+
+        self.upload_result.setText("✓ Uploaded")
+        self.upload_result.setStyleSheet("color: #5cb85c;")
+        QMessageBox.information(
+            self, "Uploaded",
+            f"{env_label} uploaded to {config.host}:{config.remote_path}/.env",
+        )

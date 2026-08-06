@@ -47,7 +47,13 @@ than blanking it).
   (`docker compose logs --tail=50 -f`) the moment it's shown — no need to
   click anything first, and for a remote target with bad SSH config this
   surfaces the connectivity problem immediately. Clicking Start/Restart/
-  Stop/Purge takes over that same panel for the command's own output.
+  Stop/Purge takes over that same panel for the command's own output, then
+  automatically goes back to auto-tailing once the command finishes (Start
+  uses `up -d`, which exits almost immediately once containers are up —
+  without this the panel would just sit showing "process exited with code
+  0" instead of what the containers are actually doing). A single
+  **Download logs…** button exports that target's whole combined log to a
+  file under `dashboard/logs/` (prompts for a line count, 0 = everything).
   *Purge* runs `docker compose down -v` (deletes volumes) and always asks
   for confirmation first. Closing the app while a Start/Restart/Stop/Purge
   is still running (not the auto-tail, which is harmless to interrupt)
@@ -68,16 +74,25 @@ than blanking it).
   top-right **↗** (shown only on nodes with a web UI — Kibana,
   Elasticsearch, `reverse_proxy`, and every eshop container, since nginx is
   their only reachable entrypoint) opens it in your browser directly.
-  Click the rest of a node for its detail panel: **Restart**, **View
-  logs** (live-tailed), **Open web UI**, and **Open shell** (launches
+  Clicking a node also immediately starts live-tailing its logs in the
+  detail panel — no separate "View logs" click needed (the button's still
+  there to re-trigger it manually if you want). Detail panel: **Restart**,
+  **View logs**, **Open web UI**, and **Open shell** (launches
   `docker exec -it <container> sh -c 'exec bash || exec sh'` in your
-  terminal emulator — over SSH first for remote targets).
+  terminal emulator — over SSH first for remote targets). Every log
+  console in the app (Services, Health, Certificates) has **Pause**
+  (holds the view still — including across the process finishing — while
+  still buffering everything that arrives) and **Catch up** (flushes the
+  buffer immediately without leaving pause mode, so you can jump to "now"
+  and keep reading from there without it scrolling away again).
 - **Certificates** — regenerate the SIEM CA + all service certs, or just
   one service's cert (reusing the existing CA rather than rotating it),
   or the edge host's nginx self-signed SSL cert. Regenerating the
   `vector-agent` client cert (or everything) automatically re-copies it
-  to the edge host's `vector/certs/` directory. See `../ARCHITECTURE.md`
-  for why the SIEM side uses a private CA this way.
+  to the edge host's `vector/certs/` directory. Buttons and the output
+  console sit side by side (not stacked) so every cert group is visible
+  without scrolling. See `../ARCHITECTURE.md` for why the SIEM side uses a
+  private CA this way.
 - **Settings** — edit either project's real `.env` file directly (secret
   fields are password-masked with a show/hide toggle and a "Generate"
   button for a fresh random value), configure/test remote SSH access per
@@ -110,6 +125,16 @@ the real two-host deployment this project is designed for (see
 `../ARCHITECTURE.md`) gets controlled from one place, including from the
 edge host toward a genuinely separate SIEM VM.
 
+A remote target needs its own `.env` already in place on that host for
+`docker compose` to work there. Once **Test connection** succeeds, an
+**Upload `<project>/.env` to remote…** button appears (clearly labeled per
+project — the wizard's Remote page shows both openstack-work's and
+openstack-siem-work's remote config side by side, each with its own
+upload button, so it's always clear which `.env` goes where) — it `scp`s
+the LOCAL `.env` file over the same tested SSH connection to
+`<remote_path>/.env`, overwriting whatever's there, after a confirmation
+prompt (secrets included, sent as-is).
+
 ## State
 
 `dashboard/state.json` (gitignored) holds window geometry, which page you
@@ -138,10 +163,12 @@ dashboard/
     web_links.py                  # which services have a browsable web UI
     shell_ctl.py                   # docker exec / ssh shell command construction
     settings_bundle.py              # export/import bundle (.env values + remote config)
+    env_upload.py                    # scp a local .env to a configured remote host
   ui/                     # PyQt6 widgets
     main_window.py, wizard.py, page_services.py, page_health.py,
     page_certs.py, page_settings.py, health_diagram.py, env_editor.py,
-    remote_config_widget.py, process_runner.py, status_poller.py
+    remote_config_widget.py, process_runner.py, status_poller.py,
+    log_export.py         # shared "export logs to a file" (Health + Services)
 ```
 
 `core/` has no PyQt6 imports at all — every module in it was verified
