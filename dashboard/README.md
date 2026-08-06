@@ -34,21 +34,31 @@ existing values (it loads current `.env` content rather than blanking it).
 
 - **Services** — Start / Restart / Stop / Purge for each project, local
   and (if configured in Settings) remote, with a live status summary next
-  to the buttons and command output streamed below. *Purge* runs `docker
-  compose down -v` (deletes volumes) and always asks for confirmation
-  first.
+  to the buttons ("all N up" turns green once every container is either
+  running or a cleanly-completed one-shot job — it doesn't stay stuck on
+  "N-2/N up" just because `init_setup`/`honeypot_db_migration` finished
+  and exited, as expected) and command output streamed below. *Purge* runs
+  `docker compose down -v` (deletes volumes) and always asks for
+  confirmation first.
 - **Health** — a live, auto-refreshing (every 5s) diagram of every
   container across all configured targets, grouped by project/target and
   connected by lines showing the real relationships between services
   (reverse proxy → backends → databases, edge Vector → SIEM Vector
   aggregator → Elasticsearch → Kibana, etc.). Node color = status (see
   the in-app legend: healthy / running-no-healthcheck / unhealthy /
-  exited-ok / exited-with-error / down). Click a node for its detail
-  panel: **Restart**, **View logs** (live-tailed), **Open web UI** (for
-  services that have one — Kibana, Elasticsearch, and the honeypot site
-  itself), and **Open shell** (launches `docker exec -it <container> sh
-  -c 'exec bash || exec sh'` in your terminal emulator — over SSH first
-  for remote targets).
+  exited-ok / exited-with-error / down — a container that exited with code
+  0 counts as "up", not down: run-once-and-exit jobs like `init_setup` and
+  `honeypot_db_migration` finishing cleanly is their expected end state).
+  Two small icons sit directly on every node, no click-through required:
+  top-left **⬇** exports that container's logs to a file under
+  `dashboard/logs/` (prompts for a line count, 0 = the entire log), and
+  top-right **↗** (shown only on nodes with a web UI — Kibana,
+  Elasticsearch, `reverse_proxy`, and every eshop container, since nginx is
+  their only reachable entrypoint) opens it in your browser directly.
+  Click the rest of a node for its detail panel: **Restart**, **View
+  logs** (live-tailed), **Open web UI**, and **Open shell** (launches
+  `docker exec -it <container> sh -c 'exec bash || exec sh'` in your
+  terminal emulator — over SSH first for remote targets).
 - **Certificates** — regenerate the SIEM CA + all service certs, or just
   one service's cert (reusing the existing CA rather than rotating it),
   or the edge host's nginx self-signed SSL cert. Regenerating the

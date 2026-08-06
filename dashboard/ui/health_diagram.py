@@ -5,14 +5,20 @@ edge Vector -> SIEM Vector aggregator -> Elasticsearch -> Kibana, etc.).
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import QRectF, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPen
+from PyQt6.QtCore import QRectF, QUrl, Qt, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QDesktopServices, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QGraphicsItem, QGraphicsLineItem, QGraphicsObject, QGraphicsScene,
+    QGraphicsLineItem, QGraphicsObject, QGraphicsScene,
     QGraphicsSimpleTextItem, QGraphicsView,
 )
 
+from core.web_links import build_url, web_ui_for
+
 NODE_W, NODE_H = 150, 44
+WEB_UI_ICON_SIZE = 16
+WEB_UI_ICON_MARGIN = 3
+EXPORT_ICON_SIZE = 16
+EXPORT_ICON_MARGIN = 3
 COL_GAP, ROW_GAP = 24, 18
 GROUP_PADDING = 30
 GROUP_GAP_Y = 60
@@ -88,8 +94,12 @@ def status_detail(container: dict | None) -> str:
 
 class ServiceNode(QGraphicsObject):
     clicked = pyqtSignal(str, str)  # target_key, service
+    export_logs_clicked = pyqtSignal(str, str)  # target_key, service
 
-    def __init__(self, target_key: str, project_label: str, service: str, x: float, y: float):
+    def __init__(
+        self, target_key: str, project_label: str, service: str,
+        x: float, y: float, project: str, host: str,
+    ):
         super().__init__()
         self.target_key = target_key
         self.project_label = project_label
@@ -99,14 +109,32 @@ class ServiceNode(QGraphicsObject):
         self._status = "down"
         self._detail = ""
         self._selected = False
+        self.web_ui_url = build_url(project, service, host)
+        self._web_ui_label = web_ui_for(project, service).label if self.web_ui_url else None
 
     def boundingRect(self) -> QRectF:
         return QRectF(0, 0, NODE_W, NODE_H)
 
+    def _web_ui_icon_rect(self) -> QRectF:
+        return QRectF(
+            NODE_W - WEB_UI_ICON_SIZE - WEB_UI_ICON_MARGIN, WEB_UI_ICON_MARGIN,
+            WEB_UI_ICON_SIZE, WEB_UI_ICON_SIZE,
+        )
+
+    def _export_icon_rect(self) -> QRectF:
+        return QRectF(
+            EXPORT_ICON_MARGIN, EXPORT_ICON_MARGIN,
+            EXPORT_ICON_SIZE, EXPORT_ICON_SIZE,
+        )
+
     def set_status(self, status: str, detail: str) -> None:
         self._status = status
         self._detail = detail
-        self.setToolTip(f"{self.service}\n{detail}")
+        tooltip = f"{self.service}\n{detail}"
+        if self._web_ui_label:
+            tooltip += f"\n\n↗ top-right icon: {self._web_ui_label}"
+        tooltip += "\n⬇ top-left icon: export logs to a file"
+        self.setToolTip(tooltip)
         self.update()
 
     def set_selected_look(self, selected: bool) -> None:
@@ -126,15 +154,47 @@ class ServiceNode(QGraphicsObject):
         font = QFont()
         font.setPointSize(9)
         painter.setFont(font)
-        painter.drawText(self.boundingRect().adjusted(6, 4, -6, -4), Qt.AlignmentFlag.AlignCenter, self.service)
+        text_rect = self.boundingRect().adjusted(6, 4, -6, -4)
+        text_rect.setLeft(text_rect.left() + EXPORT_ICON_SIZE)
+        if self.web_ui_url:
+            text_rect.setRight(text_rect.right() - WEB_UI_ICON_SIZE)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, self.service)
+
+        icon_font = QFont()
+        icon_font.setPointSize(9)
+        icon_font.setBold(True)
+
+        if self.web_ui_url:
+            icon_rect = self._web_ui_icon_rect()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(255, 255, 255, 60)))
+            painter.drawRoundedRect(icon_rect, 3, 3)
+            painter.setPen(QPen(QColor("#ffffff")))
+            painter.setFont(icon_font)
+            painter.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, "↗")
+
+        export_rect = self._export_icon_rect()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(255, 255, 255, 60)))
+        painter.drawRoundedRect(export_rect, 3, 3)
+        painter.setPen(QPen(QColor("#ffffff")))
+        painter.setFont(icon_font)
+        painter.drawText(export_rect, Qt.AlignmentFlag.AlignCenter, "⬇")
 
     def mousePressEvent(self, event) -> None:
+        if self.web_ui_url and self._web_ui_icon_rect().contains(event.pos()):
+            QDesktopServices.openUrl(QUrl(self.web_ui_url))
+            return
+        if self._export_icon_rect().contains(event.pos()):
+            self.export_logs_clicked.emit(self.target_key, self.service)
+            return
         self.clicked.emit(self.target_key, self.service)
         super().mousePressEvent(event)
 
 
 class HealthDiagram(QGraphicsView):
     node_selected = pyqtSignal(str, str)  # target_key, service
+    export_logs_requested = pyqtSignal(str, str)  # target_key, service
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -159,6 +219,7 @@ class HealthDiagram(QGraphicsView):
             containers = results.get(target.key, [])
             by_service = {c.get("Service"): c for c in containers}
             services = sorted(by_service.keys()) or ["(no containers found)"]
+            host = target.remote.host if target.is_remote else "127.0.0.1"
 
             n_cols = max(1, min(4, len(services)))
             n_rows = (len(services) + n_cols - 1) // n_cols
@@ -183,11 +244,12 @@ class HealthDiagram(QGraphicsView):
                 x = GROUP_PADDING + col * (NODE_W + COL_GAP)
                 y = group_top + GROUP_PADDING + row * (NODE_H + ROW_GAP)
 
-                node = ServiceNode(target.key, target.label, service, x, y)
+                node = ServiceNode(target.key, target.label, service, x, y, target.project, host)
                 container = by_service.get(service)
                 status = classify(container)
                 node.set_status(status, status_detail(container))
                 node.clicked.connect(self._on_node_clicked)
+                node.export_logs_clicked.connect(self.export_logs_requested)
                 self.scene_.addItem(node)
                 self.nodes[(target.key, service)] = node
 

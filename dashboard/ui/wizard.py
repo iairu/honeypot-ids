@@ -45,9 +45,50 @@ class WelcomePage(QWizardPage):
         layout.addWidget(label)
 
 
-class EdgeEnvPage(QWizardPage):
-    def __init__(self, parent=None):
+class RemotePage(QWizardPage):
+    def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
+        self.state = state
+        self.setTitle("Remote hosts (optional)")
+        layout = QVBoxLayout(self)
+        info = QLabel(
+            "If either project runs on a separate host (the real two-host "
+            "deployment this project is designed for -- see ARCHITECTURE.md), "
+            "configure SSH access here. Leave disabled to control only the "
+            "local stack.\n\n"
+            "A project marked remote here has its .env living on that "
+            "remote host, not on this machine -- so the next step skips "
+            "local .env editing for it entirely."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        self.edge_widget = RemoteConfigWidget("edge", state.remote_edge)
+        layout.addWidget(QLabel("<b>openstack-work</b>"))
+        layout.addWidget(self.edge_widget)
+
+        self.siem_widget = RemoteConfigWidget("siem", state.remote_siem)
+        layout.addWidget(QLabel("<b>openstack-siem-work</b>"))
+        layout.addWidget(self.siem_widget)
+
+    def validatePage(self) -> bool:
+        self.state.remote_edge = self.edge_widget.to_config()
+        self.state.remote_siem = self.siem_widget.to_config()
+        self.state.save()
+        return True
+
+    def nextId(self) -> int:
+        if self.state.remote_edge.enabled:
+            if self.state.remote_siem.enabled:
+                return SetupWizard.PAGE_CERTS
+            return SetupWizard.PAGE_SIEM_ENV
+        return SetupWizard.PAGE_EDGE_ENV
+
+
+class EdgeEnvPage(QWizardPage):
+    def __init__(self, state: AppState, parent=None):
+        super().__init__(parent)
+        self.state = state
         self.setTitle("openstack-work (edge honeypot) — .env")
         layout = QVBoxLayout(self)
         info = QLabel(
@@ -65,6 +106,11 @@ class EdgeEnvPage(QWizardPage):
     def validatePage(self) -> bool:
         self.editor.save()
         return True
+
+    def nextId(self) -> int:
+        if self.state.remote_siem.enabled:
+            return SetupWizard.PAGE_CERTS
+        return SetupWizard.PAGE_SIEM_ENV
 
 
 class SiemEnvPage(QWizardPage):
@@ -86,36 +132,6 @@ class SiemEnvPage(QWizardPage):
 
     def validatePage(self) -> bool:
         self.editor.save()
-        return True
-
-
-class RemotePage(QWizardPage):
-    def __init__(self, state: AppState, parent=None):
-        super().__init__(parent)
-        self.state = state
-        self.setTitle("Remote hosts (optional)")
-        layout = QVBoxLayout(self)
-        info = QLabel(
-            "If either project runs on a separate host (the real two-host "
-            "deployment this project is designed for -- see ARCHITECTURE.md), "
-            "configure SSH access here. Leave disabled to control only the "
-            "local stacks."
-        )
-        info.setWordWrap(True)
-        layout.addWidget(info)
-
-        self.edge_widget = RemoteConfigWidget("edge", state.remote_edge)
-        layout.addWidget(QLabel("<b>openstack-work</b>"))
-        layout.addWidget(self.edge_widget)
-
-        self.siem_widget = RemoteConfigWidget("siem", state.remote_siem)
-        layout.addWidget(QLabel("<b>openstack-siem-work</b>"))
-        layout.addWidget(self.siem_widget)
-
-    def validatePage(self) -> bool:
-        self.state.remote_edge = self.edge_widget.to_config()
-        self.state.remote_siem = self.siem_widget.to_config()
-        self.state.save()
         return True
 
 
@@ -165,18 +181,30 @@ class FinishPage(QWizardPage):
 
 
 class SetupWizard(QWizard):
+    # Explicit page IDs so nextId() overrides can skip a project's .env page
+    # when that project is configured as remote (its .env lives on the
+    # remote host, not here -- see RemotePage/EdgeEnvPage.nextId()).
+    PAGE_WELCOME = 0
+    PAGE_REMOTE = 1
+    PAGE_EDGE_ENV = 2
+    PAGE_SIEM_ENV = 3
+    PAGE_CERTS = 4
+    PAGE_FINISH = 5
+
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.state = state
         self.setWindowTitle("Honeypot Dashboard — Setup")
         self.setMinimumSize(700, 560)
 
-        self.addPage(WelcomePage())
-        self.addPage(EdgeEnvPage())
-        self.addPage(SiemEnvPage())
-        self.addPage(RemotePage(state))
-        self.addPage(CertsPage())
-        self.addPage(FinishPage())
+        # Remote/local choice comes first so the .env pages that follow
+        # know which projects to skip.
+        self.setPage(self.PAGE_WELCOME, WelcomePage())
+        self.setPage(self.PAGE_REMOTE, RemotePage(state))
+        self.setPage(self.PAGE_EDGE_ENV, EdgeEnvPage(state))
+        self.setPage(self.PAGE_SIEM_ENV, SiemEnvPage())
+        self.setPage(self.PAGE_CERTS, CertsPage())
+        self.setPage(self.PAGE_FINISH, FinishPage())
 
     def accept(self) -> None:
         self.state.first_run_complete = True

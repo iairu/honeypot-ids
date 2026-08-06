@@ -16,10 +16,26 @@ class WebUI:
     path: str = "/"
 
 
+_ESHOP_VIA_NGINX = WebUI(
+    "Open site via nginx (routing decides production vs. honeypot pool)",
+    "https", 443, "/",
+)
+
 WEB_UI_SERVICES: dict[tuple[str, str], WebUI] = {
     ("edge", "reverse_proxy"): WebUI("Open site (production/honeypot)", "https", 443, "/"),
     ("siem", "kibana"): WebUI("Open Kibana", "https", 5601, "/"),
     ("siem", "es01"): WebUI("Open Elasticsearch (API root)", "https", 9200, "/"),
+    # The eshop containers have no port of their own published to the host --
+    # nginx (reverse_proxy) is the only entrypoint that reaches them, and
+    # which backend actually answers (production or a specific honeypot
+    # pool) is decided by pool_router.lua's routing logic, not by URL. These
+    # entries exist so clicking "Open web UI" on an eshop node in the health
+    # diagram still does something useful (the same nginx endpoint) instead
+    # of the button just being absent for those nodes.
+    ("edge", "production_eshop"): _ESHOP_VIA_NGINX,
+    ("edge", "honeypot_eshop_1"): _ESHOP_VIA_NGINX,
+    ("edge", "honeypot_eshop_2"): _ESHOP_VIA_NGINX,
+    ("edge", "honeypot_eshop_3"): _ESHOP_VIA_NGINX,
 }
 
 

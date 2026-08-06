@@ -18,6 +18,7 @@ def summarize_status(containers: list[dict]) -> tuple[str, str]:
     if not containers:
         return "not running / unreachable", "#888888"
 
+    total = len(containers)
     running = sum(1 for c in containers if c.get("State") == "running")
     healthy = sum(1 for c in containers if c.get("Health") == "healthy")
     unhealthy = sum(1 for c in containers if c.get("Health") == "unhealthy")
@@ -25,15 +26,30 @@ def summarize_status(containers: list[dict]) -> tuple[str, str]:
         1 for c in containers
         if c.get("State") == "exited" and str(c.get("ExitCode", "0")) not in ("0", "")
     )
-    total = len(containers)
+    # Run-once-and-exit services (init_setup, honeypot_db_migration,
+    # init-password, ...) are expected to end in State=exited/ExitCode=0 --
+    # that's their successful terminal state, not a sign anything is down.
+    # Count them toward "up" alongside actually-running containers so a
+    # fully healthy stack doesn't sit permanently at "N/total up" (orange)
+    # just because some of its services are one-shot jobs by design.
+    exited_ok = sum(
+        1 for c in containers
+        if c.get("State") == "exited" and str(c.get("ExitCode", "0")) in ("0", "")
+    )
+    up = running + exited_ok
 
     if unhealthy or exited_bad:
-        return f"{running}/{total} up ({unhealthy} unhealthy, {exited_bad} exited with error)", "#d9534f"
-    if running == total:
-        detail = f" ({healthy} healthy)" if healthy else ""
+        return f"{up}/{total} up ({unhealthy} unhealthy, {exited_bad} exited with error)", "#d9534f"
+    if up == total:
+        details = []
+        if healthy:
+            details.append(f"{healthy} healthy")
+        if exited_ok:
+            details.append(f"{exited_ok} completed")
+        detail = f" ({', '.join(details)})" if details else ""
         return f"all {total} up{detail}", "#5cb85c"
-    if running > 0:
-        return f"{running}/{total} up", "#f0ad4e"
+    if up > 0:
+        return f"{up}/{total} up", "#f0ad4e"
     return f"0/{total} up", "#888888"
 
 

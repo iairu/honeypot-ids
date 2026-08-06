@@ -34,6 +34,7 @@
 --   local upstream   = pool_router.get_upstream_for_pool(pool_num)
 
 local cjson = require "cjson"
+local rules = require "pool_router_rules"
 
 local _M = {}
 
@@ -70,12 +71,9 @@ local LOCAL_CACHE_KEY_PREFIX = "pool_ip:"
 -- ---------------------------------------------------------------------------
 
 -- Clamp pool_num to [1..POOL_COUNT], defaulting to 1 on invalid input.
+-- Pure arithmetic lives in pool_router_rules.lua (see tests/test_pool_router_rules.lua).
 local function clamp_pool(pool_num)
-    pool_num = tonumber(pool_num)
-    if not pool_num or pool_num < 1 or pool_num > POOL_COUNT then
-        return 1
-    end
-    return pool_num
+    return rules.clamp_pool(pool_num, POOL_COUNT)
 end
 
 -- Return the cached pool number for ip_address from the local shared dict,
@@ -111,6 +109,7 @@ end
 -- Check whether a pool instance is considered healthy according to the health
 -- status recorded by health_check.lua in ngx.shared.threat_intel.
 -- Returns true when the status is unknown (assume healthy to avoid blocking traffic).
+-- Staleness/default rules are pure logic in pool_router_rules.is_health_status_healthy.
 local function is_pool_healthy(pool_num)
     local health_dict = ngx.shared.threat_intel
     if not health_dict then return true end -- no data → optimistic
@@ -121,41 +120,33 @@ local function is_pool_healthy(pool_num)
     end
 
     local ok, status = pcall(cjson.decode, status_json)
-    if not ok or type(status) ~= "table" then
+    if not ok then
         return true -- malformed entry → optimistic
     end
 
-    -- Treat stale health data (>60 s old) as healthy to avoid blocking traffic
-    -- when the health-check timer hasn't fired recently.
-    if status.last_check and (ngx.time() - status.last_check) > 60 then
-        return true
-    end
-
-    return status.healthy ~= false -- default to healthy unless explicitly false
+    return rules.is_health_status_healthy(status, ngx.time())
 end
 
 -- Starting from `preferred_pool`, iterate through all pools in order and return
 -- the first healthy one.  If none are healthy, return preferred_pool anyway so
 -- nginx can handle the failure naturally (returns 502 etc.).
+-- Search order/fallback logic is pure in pool_router_rules.find_healthy_pool.
 local function find_healthy_pool(preferred_pool)
-    for offset = 0, POOL_COUNT - 1 do
-        local candidate = ((preferred_pool - 1 + offset) % POOL_COUNT) + 1
-        if is_pool_healthy(candidate) then
-            if candidate ~= preferred_pool then
-                ngx.log(ngx.WARN,
-                    "[POOL] Preferred pool ", preferred_pool, " is unhealthy; ",
-                    "falling back to pool ", candidate, " (temporary, assignment unchanged)")
-            end
-            return candidate
-        end
+    local candidate, is_fallback = rules.find_healthy_pool(preferred_pool, POOL_COUNT, is_pool_healthy)
+
+    if is_fallback then
+        ngx.log(ngx.WARN,
+            "[POOL] Preferred pool ", preferred_pool, " is unhealthy; ",
+            "falling back to pool ", candidate, " (temporary, assignment unchanged)")
+    elseif candidate == preferred_pool and not is_pool_healthy(preferred_pool) then
+        -- All pools report unhealthy – route to the assigned pool and let nginx
+        -- return the appropriate error to the attacker.
+        ngx.log(ngx.ERR,
+            "[POOL] All ", POOL_COUNT, " honeypot pools appear unhealthy; ",
+            "routing to assigned pool ", preferred_pool, " anyway")
     end
 
-    -- All pools report unhealthy – route to the assigned pool and let nginx
-    -- return the appropriate error to the attacker.
-    ngx.log(ngx.ERR,
-        "[POOL] All ", POOL_COUNT, " honeypot pools appear unhealthy; ",
-        "routing to assigned pool ", preferred_pool, " anyway")
-    return preferred_pool
+    return candidate
 end
 
 -- ---------------------------------------------------------------------------
@@ -173,7 +164,7 @@ end
 --- @return string  Upstream name, e.g. "honeypot_backend_2".
 function _M.get_upstream_for_pool(pool_num)
     pool_num = clamp_pool(pool_num)
-    return "honeypot_backend_" .. pool_num
+    return rules.upstream_for_pool(pool_num)
 end
 
 --- Retrieve an existing IP→pool assignment or create a new one via round-robin.
@@ -234,7 +225,7 @@ function _M.get_or_assign_pool(ip_address)
     end
 
     -- Map counter to pool number using modular arithmetic (1-indexed).
-    local pool_num = ((counter - 1) % POOL_COUNT) + 1
+    local pool_num = rules.pool_from_counter(counter, POOL_COUNT)
 
     -- Persist the assignment with TTL so the same IP always hits the same pool.
     local set_ok, set_err = red:setex(redis_key, POOL_ASSIGNMENT_TTL, tostring(pool_num))
@@ -316,12 +307,11 @@ function _M.get_pool_stats()
 
     local pools = {}
     for i = 1, POOL_COUNT do
-        local upstream = "honeypot_backend_" .. i
         pools[i] = {
             pool_id    = i,
-            upstream   = upstream,
-            service    = "honeypot_eshop_" .. i,
-            database   = "honeypot_database_" .. i,
+            upstream   = rules.upstream_for_pool(i),
+            service    = rules.service_for_pool(i),
+            database   = rules.database_for_pool(i),
             healthy    = is_pool_healthy(i),
         }
     end

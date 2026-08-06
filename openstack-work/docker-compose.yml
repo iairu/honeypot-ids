@@ -174,18 +174,55 @@ services:
       - MYSQL_DATABASE=production_database
       - MYSQL_USER=production_user
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_PASSWORD_POOL_2=${MYSQL_PASSWORD_POOL_2}
+      - MYSQL_PASSWORD_POOL_3=${MYSQL_PASSWORD_POOL_3}
     command: |
       bash -c "
       echo 'Waiting for all honeypot pool databases to settle...'
       sleep 5
 
       # -----------------------------------------------------------------------
-      # Helper: apply all migrations to a single database host.
+      # Helper: rotate a pool's DB user password to its own pool-specific
+      # value.  honeypot_database_N's data directory is a raw copy of
+      # production_database_data made ONCE by init_setup (see that service's
+      # copy_files comment) -- MySQL only applies MYSQL_USER/MYSQL_PASSWORD
+      # env vars on a truly empty data directory, so a freshly-provisioned
+      # pool still has the SAME credentials as production and every other
+      # pool until this rotates it. Idempotent: if NEW_PASS already works,
+      # nothing to do (a previous run already rotated it); otherwise falls
+      # back to the shared/original MYSQL_PASSWORD to perform the rotation.
+      # Without this, all pools share one password despite sitting on one
+      # flat network that lets any pool reach any other pool's database over
+      # TCP -- see the note on the honeypot_database_N block above and
+      # openstack-work/testing/test_pool_isolation.sh.
+      # -----------------------------------------------------------------------
+      set_pool_password() {
+        HOST=\$$1
+        NEW_PASS=\$$2
+        if mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$NEW_PASS\" -e 'SELECT 1' >/dev/null 2>&1; then
+          echo \"  \$$HOST already uses its pool-specific password\"
+          return 0
+        fi
+        if mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" -e \"ALTER USER '\$$MYSQL_USER'@'%' IDENTIFIED BY '\$$NEW_PASS'; FLUSH PRIVILEGES;\" 2>/dev/null; then
+          echo \"  Rotated \$$HOST to its pool-specific password\"
+        else
+          echo \"  WARNING: could not set pool-specific password for \$$HOST (neither old nor new password worked)\"
+        fi
+      }
+
+      set_pool_password honeypot_database_2 \"\$$MYSQL_PASSWORD_POOL_2\"
+      set_pool_password honeypot_database_3 \"\$$MYSQL_PASSWORD_POOL_3\"
+
+      # -----------------------------------------------------------------------
+      # Helper: apply all migrations to a single database host. Each pool has
+      # its own DB password (see set_pool_password above), so the password to
+      # use is passed in per call, not read from a single shared MYSQL_PASSWORD.
       # Exits with status 1 if any migration fails so Docker marks the service
       # as failed and dependent services (honeypot_eshop_N) do not start.
       # -----------------------------------------------------------------------
       apply_migrations() {
         HOST=\$$1
+        PASS=\$$2
         echo \"\"
         echo \"=== Applying migrations to \$$HOST ===\"
 
@@ -193,7 +230,7 @@ services:
           for migration in \$$(ls /migrations/*.sql | sort); do
             if [ -f \"\$$migration\" ]; then
               echo \"  Applying: \$$migration\"
-              mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" \"\$$MYSQL_DATABASE\" --force < \"\$$migration\"
+              mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$PASS\" \"\$$MYSQL_DATABASE\" --force < \"\$$migration\"
               if [ \$$? -eq 0 ]; then
                 echo \"  [OK] \$$migration applied to \$$HOST\"
               else
@@ -207,12 +244,12 @@ services:
         fi
       }
 
-      # Apply to every pool database in turn.
+      # Apply to every pool database in turn, each with its own password.
       # Failures are fatal so that a honeypot pool is never started with
       # incomplete schema (which would expose real production data).
-      apply_migrations honeypot_database_1
-      apply_migrations honeypot_database_2
-      apply_migrations honeypot_database_3
+      apply_migrations honeypot_database_1 \"\$$MYSQL_PASSWORD\"
+      apply_migrations honeypot_database_2 \"\$$MYSQL_PASSWORD_POOL_2\"
+      apply_migrations honeypot_database_3 \"\$$MYSQL_PASSWORD_POOL_3\"
 
       echo ''
       echo 'All honeypot pool database migrations completed successfully.'
@@ -317,8 +354,14 @@ services:
   # so that attacker writes (SQL injections, data exfiltration, etc.) are
   # isolated per-pool and never affect other pools or production.
   #
-  # All three use identical credentials and schema (enforced by migrations) so
-  # pool_router.lua can assign any new IP to any pool interchangeably.
+  # All three use identical SCHEMA (enforced by migrations) so pool_router.lua
+  # can assign any new IP to any pool interchangeably. Credentials, however,
+  # are deliberately DIFFERENT per pool (MYSQL_PASSWORD / MYSQL_PASSWORD_POOL_2
+  # / MYSQL_PASSWORD_POOL_3): all honeypot_eshop_N containers share one flat
+  # honeypot_network and can reach every honeypot_database_N over TCP, so
+  # without distinct credentials a compromised pool could authenticate
+  # directly into another attacker's pool database. See
+  # openstack-work/testing/test_pool_isolation.sh.
   # ---------------------------------------------------------------------------
 
   # Pool 1 – uses the original honeypot_database_data directory (backward compat)
@@ -391,7 +434,7 @@ services:
     environment:
       - MYSQL_DATABASE=production_database
       - MYSQL_USER=production_user
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD_POOL_2}
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
     volumes:
       # Named volume avoids vmhgfs chown restriction; populated by init_setup.
@@ -414,7 +457,7 @@ services:
     cpus: "0.5"
     pids_limit: 200
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD_POOL_2}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -434,7 +477,7 @@ services:
     environment:
       - MYSQL_DATABASE=production_database
       - MYSQL_USER=production_user
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD_POOL_3}
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
     volumes:
       # Named volume avoids vmhgfs chown restriction; populated by init_setup.
@@ -457,7 +500,7 @@ services:
     cpus: "0.5"
     pids_limit: 200
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD_POOL_3}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -575,7 +618,7 @@ services:
       - WORDPRESS_DB_HOST=honeypot_database_2:3306
       - WORDPRESS_DB_NAME=production_database
       - WORDPRESS_DB_USER=production_user
-      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
+      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD_POOL_2}
       - WORDPRESS_DEBUG=1
       - WORDPRESS_DEBUG_LOG=1
       - HONEYPOT_POOL_ID=2
@@ -634,7 +677,7 @@ services:
       - WORDPRESS_DB_HOST=honeypot_database_3:3306
       - WORDPRESS_DB_NAME=production_database
       - WORDPRESS_DB_USER=production_user
-      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
+      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD_POOL_3}
       - WORDPRESS_DEBUG=1
       - WORDPRESS_DEBUG_LOG=1
       - HONEYPOT_POOL_ID=3
