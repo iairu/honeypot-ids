@@ -44,6 +44,8 @@ sudo docker compose up
 
 The SIEM half is optional for local development — the main stack runs standalone without it; you only need it if you want shipped logs to land somewhere (see [§6](#6-observability-elk--siem)). For running *both* halves together on one machine (e.g. to actually test the log pipeline rather than just the honeypot itself), see `ARCHITECTURE.md`'s "Running both on one host" section — verified working this session, including two real bugs it surfaced in the SIEM side that also affected the genuine two-host deployment.
 
+**Or skip the CLI entirely**: `dashboard/` is a PyQt6 desktop app (`cd dashboard && ./run.sh`, sets up its own venv on first run) that does all of the above through a GUI — a setup wizard for both `.env` files, Start/Restart/Stop/Purge for each project (local and, if configured, a real remote host over SSH), a live auto-refreshing health diagram of every container with per-service restart/logs/open-web-UI/open-shell actions, and per-service certificate regeneration. See `dashboard/README.md`.
+
 ### First-time setup (main VM / local dev)
 
 ```bash
@@ -117,6 +119,7 @@ openstack-work/
 
 openstack-siem-work/elk_dockerized/   # SEPARATE docker-compose project — SIEM backend, own host
 ARCHITECTURE.md                       # the two-host split: why, data flow, single-host testing — see §1/§6
+dashboard/                            # PyQt6 GUI: start/stop/health/certs/settings for both projects, local+remote — see dashboard/README.md
 master-thesis-latex/                  # the thesis itself (LaTeX)
 ```
 
@@ -353,7 +356,7 @@ To enable: set `ELK_ENABLED=true` plus `ELASTICSEARCH_HOST`/`PORT`/credentials i
 
 ## 7. Refactoring History & Framework Choice
 
-See `architecture.canvas` (open the repo root as an Obsidian vault) for the full component-by-component diagram — 38 nodes, responsibility/refactoring-needs/overlap-to-fuse notes on every one, color-coded by status. It was lost for a stretch of this project's history (never committed to git, removed during an uncommitted cleanup pass) and has since been restored and brought up to date with everything described in this file, including this session's fixes. §3.2 and this section summarize the same information in prose below.
+See `architecture.canvas` (open the repo root as an Obsidian vault) for the full component-by-component diagram — 39 nodes, responsibility/refactoring-needs/overlap-to-fuse notes on every one, color-coded by status. It was lost for a stretch of this project's history (never committed to git, removed during an uncommitted cleanup pass) and has since been restored and brought up to date with everything described in this file, including this session's fixes. §3.2 and this section summarize the same information in prose below.
 
 Short version: this isn't one application, so MVC doesn't fit — it's three subsystems with their own idioms (a WordPress app with its own hook/theme conventions, Docker-Compose infra, and the actual thesis contribution: the Lua detection pipeline). For that pipeline, the chosen pattern is a **numbered middleware chain built from pure decision cores + thin I/O adapters** (§3.2). `lua_pattern_utils.lua` is one concrete code-level "fuse" executed this session, consolidating `url_decode`/`escape_pattern`, which had drifted into 3 independent copies. A second, later fuse: `session_handler.lua`'s own copy of the static-asset check (a third, never-reconciled duplicate of the same `router_rules.lua`/`threat_rules.lua` check) was replaced with a direct call to `router_rules.is_static_asset()`.
 
@@ -480,13 +483,16 @@ Verified live end-to-end after all four fixes: `docker compose exec backup_servi
 - **Lua pure/adapter refactor + `lua_pattern_utils.lua` fuse**: see §3.2 and §7.
 - **All remaining `architecture.canvas` refactor candidates completed**: `session_rules.lua`, `admin_rules.lua`, `honeytoken_rules.lua`, `abuseipdb_rules.lua` — 4 new pure modules, 81 new unit tests (224 total, up from 143). `pool_router.lua` re-assessed and confirmed to need no split (100% Redis I/O, no pure core exists). Found and fixed a third undiscovered duplicate of the static-asset query-string-stripping check (`session_handler.lua`'s own copy, the one that was never reconciled when the other two were). Verified live end-to-end (admin access, login POST, admin-ajax, all session/threat paths) with zero Lua errors; `scripts/hardening_audit.sh` and `scripts/redis_key_audit.sh` both still fully green. See §7 / `architecture.canvas`.
 - **`architecture.canvas` restored and brought current**, then **dead code and stale duplicates it flagged were actually removed**: `elk_logger.lua` (confirmed dead code — never `require`d anywhere, its own header comment said so) and `admin_handler.lua.backup`/`admin_handler.lua.bak` (byte-identical to each other, both a stale pre-fix snapshot of the real file) deleted outright. Verified live: clean `reverse_proxy` restart, homepage `200`, no Lua errors, `scripts/hardening_audit.sh` all green. The canvas itself updated accordingly (40 → 38 nodes, both removed nodes' edges pruned) — see §7.
+- **`ARCHITECTURE.md` written**, closing the "two-host split is undocumented" gap `architecture.canvas` had flagged — data-flow diagram, why the split is a real security boundary, and (going further than originally recommended) exact steps to run both projects together on one host for testing. Verified by actually doing it: brought both stacks up simultaneously, found and fixed three real, previously-unexercised SIEM-side bugs in the process (aggregator healthcheck using a binary that doesn't exist in its image; TLS cert with no SANs, silently broken for the real two-host deployment too, not just local testing; an Elasticsearch index sink still pointed at a literal `hello-world-index` placeholder) — see §1/§6.
+- **Two Kibana dashboards built** ("IDS Alerts", "Web Traffic & Threat Overview") after fixing `nginx_security` log parsing (the aggregator was shipping `route`/`threat_score`/`suspicious` as one opaque text blob) — see §6.
+- **`dashboard/` — a PyQt6 GUI control panel** for both projects, local or remote (SSH): setup wizard, Start/Restart/Stop/Purge, a live health diagram color-coded per container with per-service restart/logs/open-web-UI/open-shell, per-service certificate regeneration, and a `.env` editor. `core/` (command construction, `.env` parsing, cert generation) has no PyQt imports and was verified directly against the real repo — real `.env` round-tripping, real `docker compose ps` parsing, a real certificate regeneration confirmed end-to-end (new cert → copied to edge host → `vector` restarted → mTLS reconnected → confirmed via Elasticsearch document count) — before any UI code was written on top of it. See `dashboard/README.md`.
 
 ---
 
 ## 11. Related documentation still living in their own files
 
 - `openstack-work/testing/BLIND_PENTEST_PROTOCOL.md`, `openstack-work/testing/blind_pentest_report_run1.md` — blind pentest protocol + results
-- `architecture.canvas` (Obsidian Canvas, full system diagram — 38 nodes, 28 edges, responsibility/refactoring/overlap notes per node, color-coded by status) — restored and brought current this session after being lost for a stretch of this project's history; open the repo root as an Obsidian vault to browse it
+- `architecture.canvas` (Obsidian Canvas, full system diagram — 39 nodes, 28 edges, responsibility/refactoring/overlap notes per node, color-coded by status) — restored and brought current this session after being lost for a stretch of this project's history; open the repo root as an Obsidian vault to browse it
 - `openstack-work/elk-siem-testing.md` and `master-thesis-rewrite-plan/` were both referenced from earlier versions of this file but **no longer exist in the repository** — neither was ever committed to git, and both were lost during a later, uncommitted cleanup pass.
 - `openstack-siem-work/elk_dockerized/README.md` — the SIEM sub-project's own setup doc
 

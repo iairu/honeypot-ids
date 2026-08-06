@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Honeypot / SIEM Dashboard
+Comment=Control openstack-work and openstack-siem-work (start/stop, health, certs, .env)
+Exec=/home/ondrej/Desktop/DP_Repository/dashboard/run.sh
+Path=/home/ondrej/Desktop/DP_Repository/dashboard
+Icon=utilities-system-monitor
+Terminal=false
+Categories=System;
+StartupNotify=true
