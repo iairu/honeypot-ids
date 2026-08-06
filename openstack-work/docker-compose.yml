@@ -726,6 +726,16 @@ services:
 
   # Redis for session management and threat intelligence
   session_store:
+    # KNOWN, UNFIXED WARNING: logs "WARNING Memory overcommit must be
+    # enabled!" on every start. This is a HOST-level kernel setting
+    # (vm.overcommit_memory, not namespaced per-container -- docker-compose
+    # can't set it via `sysctls:` for just this service, it would need
+    # `sudo sysctl vm.overcommit_memory=1` on the host itself, persisted in
+    # /etc/sysctl.d/ to survive a reboot). Deliberately left alone: harmless
+    # under normal memory conditions (this Redis instance holds only
+    # ephemeral session data, not something a background save/replication
+    # failure would be catastrophic for), and changing host-wide memory
+    # overcommit behavior was explicitly declined as out of scope here.
     image: redis:7-alpine
     depends_on:
       init_setup:
