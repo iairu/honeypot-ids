@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.docker_ctl import all_targets
+from core.paths import DASHBOARD_DIR
 from core.state import AppState
 from ui.health_diagram import classify
 from ui.page_certs import CertsPage
@@ -23,6 +24,14 @@ from ui.page_services import ServicesPage
 from ui.page_settings import SettingsPage
 from ui.status_poller import StatusPoller
 from ui.wizard import SetupWizard
+
+# Bundled instead of relying on QIcon.fromTheme() -- confirmed live that
+# "utilities-system-monitor" resolves to a NULL icon on this window
+# manager/icon theme, which QSystemTrayIcon happily accepts and then shows
+# as blank, clickable empty space in the tray rather than erroring or
+# falling back to anything. A file shipped in the repo works the same
+# regardless of the host's icon theme.
+_APP_ICON_PATH = DASHBOARD_DIR / "resources" / "app_icon.svg"
 
 # Statuses (see ui.health_diagram.classify()) worth a tray notification when
 # a container transitions INTO them. Deliberately excludes "down" (a
@@ -46,6 +55,8 @@ class MainWindow(QMainWindow):
         self.state = state
         self.setWindowTitle("Honeypot / SIEM Dashboard")
         self.resize(1200, 800)
+        if _APP_ICON_PATH.exists():
+            self.setWindowIcon(QIcon(str(_APP_ICON_PATH)))
         self._restore_geometry()
 
         self._build_menu()
@@ -130,7 +141,9 @@ class MainWindow(QMainWindow):
             # unavailable there, not an error.
             return
 
-        icon = QIcon.fromTheme("utilities-system-monitor")
+        icon = QIcon(str(_APP_ICON_PATH)) if _APP_ICON_PATH.exists() else QIcon()
+        if icon.isNull():
+            icon = QIcon.fromTheme("utilities-system-monitor")
         if icon.isNull():
             icon = self.windowIcon()
 
