@@ -10,10 +10,14 @@ from this app).
 from __future__ import annotations
 
 from PyQt6.QtCore import QProcess, pyqtSignal
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QHBoxLayout, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
+
+from ui.ansi import AnsiStyle, AnsiTextParser
+
+_DEFAULT_TEXT_COLOR = "#d4d4d4"  # matches this panel's own stylesheet below
 
 
 class LogPanel(QWidget):
@@ -24,6 +28,9 @@ class LogPanel(QWidget):
         self.process: QProcess | None = None
         self._paused = False
         self._pending: list[str] = []
+        self._ansi = AnsiTextParser()
+        self._last_argv: list[str] | None = None
+        self._last_cwd: str | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -47,6 +54,16 @@ class LogPanel(QWidget):
         self.catchup_button.setEnabled(False)
         button_row.addWidget(self.catchup_button)
 
+        # Re-runs the last run() command from scratch (fresh process, fresh
+        # output) -- only ever enabled once run() has actually been called,
+        # since pages that only ever push lines in via append() (e.g. the
+        # Certificates page's worker-thread output) have no command to
+        # replay.
+        self.reload_button = QPushButton("Reload")
+        self.reload_button.clicked.connect(self._reload)
+        self.reload_button.setEnabled(False)
+        button_row.addWidget(self.reload_button)
+
         # The Services page already has its own Start/Restart/Stop/Purge
         # buttons directly above this panel -- a second "Stop" button here
         # would be redundant (and ambiguous: stopping WHAT, the compose
@@ -60,13 +77,38 @@ class LogPanel(QWidget):
 
         layout.addLayout(button_row)
 
+    @staticmethod
+    def _format_for(style: AnsiStyle) -> QTextCharFormat:
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(style.fg or _DEFAULT_TEXT_COLOR))
+        if style.bg:
+            fmt.setBackground(QColor(style.bg))
+        if style.bold:
+            fmt.setFontWeight(QFont.Weight.Bold)
+        if style.italic:
+            fmt.setFontItalic(True)
+        if style.underline:
+            fmt.setFontUnderline(True)
+        return fmt
+
     def append(self, text: str) -> None:
-        self.text.moveCursor(QTextCursor.MoveOperation.End)
-        self.text.insertPlainText(text)
+        """text may contain raw ANSI SGR escape codes (e.g. from `docker
+        compose --ansi always logs`) -- self._ansi turns those into styled
+        segments instead of literal escape-code garbage. Plain text with no
+        codes in it (worker-thread lines, the "$ ..." command echo below,
+        "[process exited...]" banners) just comes back as one segment in
+        the default color, unchanged from before."""
+        cursor = self.text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        for segment, style in self._ansi.feed(text):
+            if segment:
+                cursor.insertText(segment, self._format_for(style))
+        self.text.setTextCursor(cursor)
         self.text.moveCursor(QTextCursor.MoveOperation.End)
 
     def clear(self) -> None:
         self.text.clear()
+        self._ansi = AnsiTextParser()
 
     def run(self, argv: list[str], cwd: str | None = None) -> None:
         self.stop()
@@ -76,6 +118,9 @@ class LogPanel(QWidget):
         self._pending.clear()
         self.catchup_button.setEnabled(False)
         self.catchup_button.setText("Catch up (0)")
+        self._last_argv = argv
+        self._last_cwd = cwd
+        self.reload_button.setEnabled(True)
         self.append(f"$ {' '.join(argv)}\n\n")
 
         self.process = QProcess(self)
@@ -89,6 +134,10 @@ class LogPanel(QWidget):
         program, args = argv[0], argv[1:]
         self.process.start(program, args)
         self.stop_button.setEnabled(True)
+
+    def _reload(self) -> None:
+        if self._last_argv is not None:
+            self.run(self._last_argv, self._last_cwd)
 
     def is_running(self) -> bool:
         return self.process is not None and self.process.state() != QProcess.ProcessState.NotRunning

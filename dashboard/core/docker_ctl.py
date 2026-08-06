@@ -82,12 +82,12 @@ class Target:
             remote_dir = f"{remote_dir}/docker"
         return remote_dir
 
-    def build(self, *compose_args: str) -> tuple[list[str], str | None]:
-        """Returns (argv, cwd). cwd is None for remote (the ssh command
-        does its own `cd`).
+    @staticmethod
+    def _global_flags(compose_args: tuple[str, ...]) -> list[str]:
+        """Flags inserted between `docker compose` and the subcommand.
 
-        Always passes --profile '*' (activates every profile, e.g. the
-        edge project's `vector` service, which is `profiles: [elk]`) --
+        --profile '*' (always): activates every profile, e.g. the edge
+        project's `vector` service, which is `profiles: [elk]` --
         confirmed live that without it, `docker compose down`/`up`/
         `restart` silently exclude profiled services from their scope
         entirely (docker compose ps does NOT have this filtering, which is
@@ -96,13 +96,33 @@ class Target:
         already-running containers but it's harmless there too, so it's
         applied unconditionally for every command rather than only the
         mutating ones.
+
+        --ansi always (logs only): docker compose's default --ansi auto
+        disables ANSI color whenever stdout isn't a TTY, which QProcess's
+        pipes never are -- confirmed live that `logs` output was
+        colorless through this app without it. Scoped to `logs`
+        specifically (not applied to every command) so it can never affect
+        machine-parsed output like `ps --format json`. See ui/ansi.py for
+        the LogPanel-side rendering of the resulting escape codes.
         """
+        flags = ["--profile", "*"]
+        if compose_args and compose_args[0] == "logs":
+            flags += ["--ansi", "always"]
+        return flags
+
+    def build(self, *compose_args: str) -> tuple[list[str], str | None]:
+        """Returns (argv, cwd). cwd is None for remote (the ssh command
+        does its own `cd`). See _global_flags() for what's inserted
+        between `docker compose` and the subcommand."""
+        global_flags = self._global_flags(compose_args)
+
         if not self.is_remote:
-            return ["docker", "compose", "--profile", "*", *compose_args], self._local_dir()
+            return ["docker", "compose", *global_flags, *compose_args], self._local_dir()
 
         remote_dir = self.remote_compose_dir()
         remote_cmd = (
-            f"cd {shlex.quote(remote_dir)} && docker compose --profile '*' "
+            f"cd {shlex.quote(remote_dir)} && docker compose "
+            f"{' '.join(shlex.quote(a) for a in global_flags)} "
             f"{' '.join(shlex.quote(a) for a in compose_args)}"
         )
         argv = [
