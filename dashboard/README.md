@@ -24,11 +24,17 @@ no terminal window) instead of running `run.sh` from a shell. It calls
 (`/home/ondrej/Desktop/DP_Repository/dashboard`), so if you clone the
 repo somewhere else, edit its `Exec=`/`Path=` lines to match.
 
-On first launch (no `state.json` yet), a setup wizard walks through
-creating/populating both projects' `.env` files, optional remote SSH
-config, and optional initial certificate generation. It's also reachable
-anytime afterward from **Settings → Re-run setup wizard…** without losing
-existing values (it loads current `.env` content rather than blanking it).
+On first launch (no `state.json` yet), a setup wizard walks through the
+remote/local choice for each project first, then creating/populating
+`.env` for whichever project(s) are local (a project marked remote skips
+local `.env` editing entirely — its `.env` lives on that remote host, not
+here), then optional initial certificate generation. A step-timeline
+strip at the top of every page shows the whole run at a glance (✓ done /
+● current / dimmed upcoming), recomputed live so it always reflects which
+steps the current remote/local choice will actually visit. The wizard is
+also reachable anytime afterward from **Settings → Re-run setup wizard…**
+without losing existing values (it loads current `.env` content rather
+than blanking it).
 
 ## Pages
 
@@ -37,10 +43,17 @@ existing values (it loads current `.env` content rather than blanking it).
   to the buttons ("all N up" turns green once every container is either
   running or a cleanly-completed one-shot job — it doesn't stay stuck on
   "N-2/N up" just because `init_setup`/`honeypot_db_migration` finished
-  and exited, as expected) and command output streamed below. *Purge* runs
-  `docker compose down -v` (deletes volumes) and always asks for
-  confirmation first.
-- **Health** — a live, auto-refreshing (every 5s) diagram of every
+  and exited, as expected). Each panel auto-tails combined logs
+  (`docker compose logs --tail=50 -f`) the moment it's shown — no need to
+  click anything first, and for a remote target with bad SSH config this
+  surfaces the connectivity problem immediately. Clicking Start/Restart/
+  Stop/Purge takes over that same panel for the command's own output.
+  *Purge* runs `docker compose down -v` (deletes volumes) and always asks
+  for confirmation first. Closing the app while a Start/Restart/Stop/Purge
+  is still running (not the auto-tail, which is harmless to interrupt)
+  asks for confirmation first.
+- **Health** — a live, auto-refreshing (every 5s by default — adjustable
+  in Settings → General) diagram of every
   container across all configured targets, grouped by project/target and
   connected by lines showing the real relationships between services
   (reverse proxy → backends → databases, edge Vector → SIEM Vector
@@ -67,8 +80,25 @@ existing values (it loads current `.env` content rather than blanking it).
   for why the SIEM side uses a private CA this way.
 - **Settings** — edit either project's real `.env` file directly (secret
   fields are password-masked with a show/hide toggle and a "Generate"
-  button for a fresh random value), and configure/test remote SSH access
-  per project.
+  button for a fresh random value), configure/test remote SSH access per
+  project, adjust the Health/Services status-refresh interval and toggle
+  unhealthy-container tray notifications (**General** tab), and
+  **export/import** the whole configuration — both `.env` files' values
+  plus both remote (SSH) settings — as one JSON file, for backup or moving
+  this setup to a fresh checkout instead of re-typing everything by hand.
+  Import only changes keys actually present in the file (same
+  comment-preserving editing this whole app uses elsewhere); other
+  existing `.env` keys and comments are untouched. The exported file
+  contains real secrets in plaintext — store it securely, never commit it.
+
+## System tray
+
+If the desktop environment has one, a tray icon appears with **Show
+dashboard** and **Quit**, and posts a notification when a container
+transitions into unhealthy or exited-with-error (toggle in Settings →
+General). Closing the main window still fully quits the app as before —
+the tray doesn't change that, it's a notification/quick-access surface,
+not a minimize-to-tray mode.
 
 ## Remote (SSH) targets
 
@@ -83,11 +113,13 @@ edge host toward a genuinely separate SIEM VM.
 ## State
 
 `dashboard/state.json` (gitignored) holds window geometry, which page you
-were last on, and remote-connection settings. It does **not** hold
-`.env` contents — those live in the real `.env` files this app edits
-directly (`openstack-work/.env`, `openstack-siem-work/elk_dockerized/docker/.env`),
-so `docker compose` and this app are always looking at the same
-configuration.
+were last on, remote-connection settings, the status-poll interval, and
+the tray-notification toggle. It does **not** hold `.env` contents — those
+live in the real `.env` files this app edits directly (`openstack-work/.env`,
+`openstack-siem-work/elk_dockerized/docker/.env`), so `docker compose` and
+this app are always looking at the same configuration. For a portable
+backup of the *whole* setup (env values + remote config together), use
+Settings → Export/Import instead of copying `state.json` by hand.
 
 ## Layout
 
@@ -105,6 +137,7 @@ dashboard/
     cert_ctl.py                  # certificate generation (openssl, direct)
     web_links.py                  # which services have a browsable web UI
     shell_ctl.py                   # docker exec / ssh shell command construction
+    settings_bundle.py              # export/import bundle (.env values + remote config)
   ui/                     # PyQt6 widgets
     main_window.py, wizard.py, page_services.py, page_health.py,
     page_certs.py, page_settings.py, health_diagram.py, env_editor.py,

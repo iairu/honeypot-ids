@@ -1,24 +1,35 @@
 """Main application window: sidebar navigation between Services / Health /
 Certificates / Settings, a menu bar (Settings menu + re-run wizard), a
-shared background status poller, and window-geometry persistence."""
+shared background status poller, window-geometry persistence, a system
+tray icon (unhealthy-container notifications), and a confirm-before-quit
+guard while a mutating docker compose action is in flight."""
 from __future__ import annotations
 
 import base64
 
 from PyQt6.QtCore import QByteArray
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QListWidget, QListWidgetItem, QMainWindow, QMenuBar, QSplitter,
-    QStackedWidget, QWidget,
+    QListWidget, QListWidgetItem, QMainWindow, QMenu, QMenuBar, QMessageBox,
+    QSplitter, QStackedWidget, QSystemTrayIcon, QWidget,
 )
 
 from core.docker_ctl import all_targets
 from core.state import AppState
+from ui.health_diagram import classify
 from ui.page_certs import CertsPage
 from ui.page_health import HealthPage
 from ui.page_services import ServicesPage
 from ui.page_settings import SettingsPage
 from ui.status_poller import StatusPoller
 from ui.wizard import SetupWizard
+
+# Statuses (see ui.health_diagram.classify()) worth a tray notification when
+# a container transitions INTO them. Deliberately excludes "down" (a
+# container simply not running -- e.g. before the user has hit Start -- is
+# the normal resting state, not a problem) and "exited_ok" (a one-shot job
+# finishing cleanly is success, not something to alarm about).
+_NOTIFY_ON_STATUSES = {"unhealthy", "exited_bad"}
 
 PAGES = ["services", "health", "certificates", "settings"]
 PAGE_LABELS = {
@@ -58,7 +69,7 @@ class MainWindow(QMainWindow):
         self.services_page = ServicesPage(self._get_targets)
         self.health_page = HealthPage(self._get_targets)
         self.certs_page = CertsPage()
-        self.settings_page = SettingsPage(state, self._on_remote_settings_changed)
+        self.settings_page = SettingsPage(state, self._on_remote_settings_changed, self.set_poll_interval)
 
         for page_id, widget in [
             ("services", self.services_page),
@@ -71,9 +82,17 @@ class MainWindow(QMainWindow):
         start_index = PAGES.index(state.last_page) if state.last_page in PAGES else 0
         self.nav_list.setCurrentRow(start_index)
 
-        self.poller = StatusPoller(self._get_targets, interval_ms=5000)
+        self.poller = StatusPoller(self._get_targets, interval_ms=state.poll_interval_ms)
         self.poller.results_ready.connect(self._on_status_results)
         self.poller.start()
+
+        # Previous poll's classified status per (target_key, service), used
+        # to detect NEW unhealthy/exited-with-error transitions rather than
+        # re-notifying on every single poll tick while a container just sits
+        # unhealthy.
+        self._last_status: dict[tuple[str, str], str] = {}
+
+        self._build_tray_icon()
 
     # ---- navigation / target plumbing ----
 
@@ -91,9 +110,82 @@ class MainWindow(QMainWindow):
         # Health page rebuilds its diagram automatically on the next poll
         # tick (it always calls _get_targets() fresh in apply_status()).
 
+    def set_poll_interval(self, interval_ms: int) -> None:
+        self.state.poll_interval_ms = interval_ms
+        self.state.save()
+        self.poller.set_interval(interval_ms)
+
     def _on_status_results(self, results: dict) -> None:
         self.services_page.apply_status(results)
         self.health_page.apply_status(results)
+        self._notify_new_problems(results)
+
+    # ---- system tray ----
+
+    def _build_tray_icon(self) -> None:
+        self.tray_icon = None
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            # Headless/offscreen environments and some minimal window
+            # managers have no tray at all -- notifications are simply
+            # unavailable there, not an error.
+            return
+
+        icon = QIcon.fromTheme("utilities-system-monitor")
+        if icon.isNull():
+            icon = self.windowIcon()
+
+        self.tray_icon = QSystemTrayIcon(icon, self)
+        self.tray_icon.setToolTip("Honeypot / SIEM Dashboard")
+
+        menu = QMenu()
+        show_action = menu.addAction("Show dashboard")
+        show_action.triggered.connect(self._show_and_raise)
+        quit_action = menu.addAction("Quit")
+        quit_action.triggered.connect(self.close)
+        self.tray_icon.setContextMenu(menu)
+        self.tray_icon.activated.connect(self._on_tray_activated)
+
+        self.tray_icon.show()
+
+    def _on_tray_activated(self, reason) -> None:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self._show_and_raise()
+
+    def _show_and_raise(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _notify_new_problems(self, results: dict) -> None:
+        if not self.tray_icon or not self.state.tray_notifications_enabled:
+            self._last_status = self._classify_all(results)
+            return
+
+        current = self._classify_all(results)
+        for key, status in current.items():
+            if status in _NOTIFY_ON_STATUSES and self._last_status.get(key) != status:
+                target_key, service = key
+                label = "unhealthy" if status == "unhealthy" else "exited with an error"
+                self.tray_icon.showMessage(
+                    "Container problem",
+                    f"{service} ({target_key}) is {label}",
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    8000,
+                )
+        self._last_status = current
+
+    @staticmethod
+    def _classify_all(results: dict) -> dict[tuple[str, str], str]:
+        classified = {}
+        for target_key, containers in results.items():
+            for container in containers:
+                service = container.get("Service")
+                if service:
+                    classified[(target_key, service)] = classify(container)
+        return classified
 
     # ---- menu ----
 
@@ -124,7 +216,7 @@ class MainWindow(QMainWindow):
         index = self.stack.indexOf(self.settings_page)
         self.stack.removeWidget(self.settings_page)
         self.settings_page.deleteLater()
-        self.settings_page = SettingsPage(self.state, self._on_remote_settings_changed)
+        self.settings_page = SettingsPage(self.state, self._on_remote_settings_changed, self.set_poll_interval)
         self.stack.insertWidget(index, self.settings_page)
 
     # ---- geometry persistence ----
@@ -138,9 +230,24 @@ class MainWindow(QMainWindow):
                 pass
 
     def closeEvent(self, event) -> None:
+        if self.services_page.any_mutating_action_running():
+            reply = QMessageBox.warning(
+                self, "Command still running",
+                "A docker compose command (start/restart/stop/purge) is "
+                "still running for at least one target. Closing now will "
+                "kill it mid-operation.\n\nClose anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+
         data = bytes(self.saveGeometry())
         self.state.window_geometry_b64 = base64.b64encode(data).decode("ascii")
         self.state.save()
         self.poller.stop()
         self.poller.wait(2000)
+        if self.tray_icon:
+            self.tray_icon.hide()
         super().closeEvent(event)

@@ -62,6 +62,9 @@ class LogPanel(QWidget):
         self.process.start(program, args)
         self.stop_button.setEnabled(True)
 
+    def is_running(self) -> bool:
+        return self.process is not None and self.process.state() != QProcess.ProcessState.NotRunning
+
     def stop(self) -> None:
         if self.process is not None and self.process.state() != QProcess.ProcessState.NotRunning:
             self.process.kill()

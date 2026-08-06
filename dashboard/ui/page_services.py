@@ -57,6 +57,11 @@ class TargetPanel(QGroupBox):
     def __init__(self, target: Target, parent=None):
         super().__init__(target.label, parent)
         self.target = target
+        # Whether the LogPanel's current process is a mutating compose
+        # command (up/down/restart) vs. the harmless auto-tail (logs -f) --
+        # used to warn before quitting mid-operation without nagging the
+        # user every time (the auto-tail is running almost constantly).
+        self._mutating_action = False
 
         layout = QVBoxLayout(self)
 
@@ -94,14 +99,18 @@ class TargetPanel(QGroupBox):
         # -- for a remote target with bad SSH config this also surfaces the
         # connectivity problem right away instead of only on the next
         # manual action.
-        self._run("logs", "--tail=50", "-f")
+        self._run("logs", "--tail=50", "-f", mutating=False)
 
     def update_status(self, containers: list[dict]) -> None:
         text, color = summarize_status(containers)
         self.status_label.setText(text)
         self.status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
 
-    def _run(self, *compose_args: str) -> None:
+    def is_mutating_action_running(self) -> bool:
+        return self._mutating_action and self.log_panel.is_running()
+
+    def _run(self, *compose_args: str, mutating: bool = True) -> None:
+        self._mutating_action = mutating
         argv, cwd = self.target.build(*compose_args)
         self.log_panel.run(argv, cwd)
 
@@ -159,6 +168,13 @@ class ServicesPage(QWidget):
             panel = TargetPanel(target)
             self.panels[target.key] = panel
             self.inner_layout.addWidget(panel)
+
+    def any_mutating_action_running(self) -> bool:
+        """True if any panel has an in-flight up/down/restart/purge --
+        used to warn before quitting mid-operation. Deliberately excludes
+        the auto-tail log stream, which is always running and harmless to
+        interrupt."""
+        return any(p.is_mutating_action_running() for p in self.panels.values())
 
     def apply_status(self, results: dict[str, list[dict]]) -> None:
         for key, containers in results.items():

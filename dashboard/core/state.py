@@ -33,6 +33,16 @@ class AppState:
     last_page: str = "services"
     remote_edge: RemoteConfig = field(default_factory=RemoteConfig)
     remote_siem: RemoteConfig = field(default_factory=RemoteConfig)
+    # How often (ms) StatusPoller re-runs `docker compose ps` for every
+    # configured target. Adjustable from Settings -- lower for snappier
+    # health-diagram updates, higher to reduce SSH round-trips against a
+    # remote target on a slow/metered link.
+    poll_interval_ms: int = 5000
+    # Notify (system tray balloon) when a container transitions into
+    # unhealthy/exited-with-error. Off by default so a first-run headless
+    # environment without a tray isn't surprised by anything; the tray
+    # icon itself only appears when the platform actually supports one.
+    tray_notifications_enabled: bool = True
 
     @classmethod
     def load(cls) -> "AppState":
@@ -50,6 +60,8 @@ class AppState:
             state.remote_edge = RemoteConfig(**raw["remote_edge"])
         if "remote_siem" in raw:
             state.remote_siem = RemoteConfig(**raw["remote_siem"])
+        state.poll_interval_ms = raw.get("poll_interval_ms", 5000)
+        state.tray_notifications_enabled = raw.get("tray_notifications_enabled", True)
         return state
 
     def save(self) -> None:
@@ -60,5 +72,7 @@ class AppState:
             "last_page": self.last_page,
             "remote_edge": asdict(self.remote_edge),
             "remote_siem": asdict(self.remote_siem),
+            "poll_interval_ms": self.poll_interval_ms,
+            "tray_notifications_enabled": self.tray_notifications_enabled,
         }
         STATE_FILE.write_text(json.dumps(data, indent=2))

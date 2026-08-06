@@ -25,6 +25,11 @@ class StatusPoller(QThread):
     def stop(self) -> None:
         self._stop = True
 
+    def set_interval(self, interval_ms: int) -> None:
+        """Takes effect on the next sleep -- read fresh every loop
+        iteration, so no restart of the thread is needed."""
+        self._interval_ms = interval_ms
+
     def run(self) -> None:
         while not self._stop:
             results: dict[str, list[dict]] = {}
