@@ -345,6 +345,20 @@ threading:
 # properly support capturing across every interface at once, which is what
 # actually gives this container visibility into whichever bridge ends up
 # carrying reverse_proxy's traffic, without needing to know its name.
+#
+# KNOWN-HARMLESS STARTUP WARNINGS: opening "any" logs a handful of `W:
+# ioctl: any: failed to get SIOCETHTOOL ioctl: No such device` / `Failure
+# when trying to get MTU via ioctl for 'any'` lines. These come from
+# libpcap's own interface-open routine (pcap_activate() unconditionally
+# probes ethtool/MTU offload info on whatever interface it's given) --
+# NOT from Suricata itself, and NOT affected by checksum-checks below
+# (that's a separate, unrelated setting). "any" is a virtual pseudo-device
+# with no real ethtool/MTU support, so these ioctls always fail --
+# `tcpdump -i any` prints the identical warnings. Cosmetic only: capture,
+# detection and alerting all work correctly regardless (confirmed live
+# with triggered CVE alerts). Deliberately NOT suppressed by lowering
+# logging.default-log-level below "notice" -- that would also hide
+# genuinely useful warnings if something else goes wrong at startup.
 pcap:
   - interface: any
     # Promiscuous mode
