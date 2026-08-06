@@ -340,6 +340,56 @@ services:
     mem_limit: 1024m
     cpus: "1.0"
     pids_limit: 300
+    # WordPress writes (Font Library cache under wp-content/fonts, plugin/
+    # theme auto-updates, wp-content/upgrade, debug.log, etc.) all happen
+    # from apache WORKER processes running as www-data, not from the
+    # container's root master process -- and confirmed live via
+    # /proc/<worker-pid>/status that a plain setuid() to www-data drops
+    # EVERY capability (CapEff 0000000000000000), including the
+    # DAC_OVERRIDE granted above. That cap_add only ever helps things the
+    # root master does; it can never bypass a permission check for
+    # anything PHP itself writes.
+    #
+    # First attempt here was `chown -R www-data:www-data /var/www/html/
+    # wp-content` -- WRONG for a bind mount: that chown doesn't stay
+    # inside the container, it directly reassigns the HOST files (this is
+    # ./production_eshop_files, a git-tracked directory) to uid/gid 33,
+    # which on THIS host resolves to the unrelated system account `http`,
+    # not the host user that owns the rest of the repo -- confirmed live,
+    # broke `git add`/`git status` with "Permission denied" reading those
+    # files from the host side afterward.
+    #
+    # Fixed the other way around instead: remap the CONTAINER's www-data
+    # user/group to whatever uid/gid the bind mount is ALREADY owned by
+    # (read via `stat` on the mount root itself, /var/www/html, which this
+    # command never touches -- only wp-content underneath it gets
+    # chowned), via usermod/groupmod, before apache ever starts. Apache
+    # resolves its worker identity by NAME (`User www-data`, see
+    # /etc/apache2/envvars) via getpwnam(), so remapping what uid that
+    # name points to is enough -- no apache/wordpress config changes
+    # needed. This means apache's workers end up running as the SAME
+    # uid/gid that already owns the bind mount (the host user), so they
+    # get write access via plain ownership with zero host-side ownership
+    # change at all, and every file PHP creates going forward is owned by
+    # that same uid too -- git keeps working indefinitely, not just once.
+    # The one remaining chown (now a no-op / correctness net, not the
+    # actual fix) re-claims anything still numerically owned by the OLD
+    # www-data (33) from before this fix, or from a stale image layer.
+    #
+    # Left as the default ENTRYPOINT (docker-entrypoint.sh, unmodified --
+    # still does its normal wp-config/DB-wait/core-file setup as root)
+    # with only the final CMD replaced, so all of this runs after that
+    # setup and before apache starts serving requests.
+    command:
+      - sh
+      - -c
+      - |
+        HOST_UID=$$(stat -c '%u' /var/www/html)
+        HOST_GID=$$(stat -c '%g' /var/www/html)
+        usermod -u "$$HOST_UID" www-data
+        groupmod -g "$$HOST_GID" www-data
+        chown -R www-data:www-data /var/www/html/wp-content
+        exec apache2-foreground
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
@@ -599,6 +649,29 @@ services:
     mem_limit: 1024m
     cpus: "1.0"
     pids_limit: 300
+    # Same wp-content ownership fix as production_eshop above, same reason:
+    # apache workers run as www-data and lose DAC_OVERRIDE (and every other
+    # capability) on setuid(), so cap_add above can't help PHP's own
+    # writes -- confirmed the same "Permission denied" write failure
+    # reproduces here too (e.g. Font Library cache under wp-content/fonts)
+    # once a font combination not already cached gets requested. This is a
+    # named volume rather than production's bind mount, so a flat `chown
+    # -R www-data:www-data` doesn't corrupt any host-tracked git files the
+    # way it did there -- but it's remapped the same way regardless (see
+    # production_eshop's comment for the full reasoning), both for
+    # consistency and because this volume was itself seeded by an rsync
+    # init step running as the host user, so it starts out owned by that
+    # host uid/gid too, not www-data.
+    command:
+      - sh
+      - -c
+      - |
+        HOST_UID=$$(stat -c '%u' /var/www/html)
+        HOST_GID=$$(stat -c '%g' /var/www/html)
+        usermod -u "$$HOST_UID" www-data
+        groupmod -g "$$HOST_GID" www-data
+        chown -R www-data:www-data /var/www/html/wp-content
+        exec apache2-foreground
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
@@ -658,6 +731,29 @@ services:
     mem_limit: 1024m
     cpus: "1.0"
     pids_limit: 300
+    # Same wp-content ownership fix as production_eshop above, same reason:
+    # apache workers run as www-data and lose DAC_OVERRIDE (and every other
+    # capability) on setuid(), so cap_add above can't help PHP's own
+    # writes -- confirmed the same "Permission denied" write failure
+    # reproduces here too (e.g. Font Library cache under wp-content/fonts)
+    # once a font combination not already cached gets requested. This is a
+    # named volume rather than production's bind mount, so a flat `chown
+    # -R www-data:www-data` doesn't corrupt any host-tracked git files the
+    # way it did there -- but it's remapped the same way regardless (see
+    # production_eshop's comment for the full reasoning), both for
+    # consistency and because this volume was itself seeded by an rsync
+    # init step running as the host user, so it starts out owned by that
+    # host uid/gid too, not www-data.
+    command:
+      - sh
+      - -c
+      - |
+        HOST_UID=$$(stat -c '%u' /var/www/html)
+        HOST_GID=$$(stat -c '%g' /var/www/html)
+        usermod -u "$$HOST_UID" www-data
+        groupmod -g "$$HOST_GID" www-data
+        chown -R www-data:www-data /var/www/html/wp-content
+        exec apache2-foreground
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
@@ -717,6 +813,29 @@ services:
     mem_limit: 1024m
     cpus: "1.0"
     pids_limit: 300
+    # Same wp-content ownership fix as production_eshop above, same reason:
+    # apache workers run as www-data and lose DAC_OVERRIDE (and every other
+    # capability) on setuid(), so cap_add above can't help PHP's own
+    # writes -- confirmed the same "Permission denied" write failure
+    # reproduces here too (e.g. Font Library cache under wp-content/fonts)
+    # once a font combination not already cached gets requested. This is a
+    # named volume rather than production's bind mount, so a flat `chown
+    # -R www-data:www-data` doesn't corrupt any host-tracked git files the
+    # way it did there -- but it's remapped the same way regardless (see
+    # production_eshop's comment for the full reasoning), both for
+    # consistency and because this volume was itself seeded by an rsync
+    # init step running as the host user, so it starts out owned by that
+    # host uid/gid too, not www-data.
+    command:
+      - sh
+      - -c
+      - |
+        HOST_UID=$$(stat -c '%u' /var/www/html)
+        HOST_GID=$$(stat -c '%g' /var/www/html)
+        usermod -u "$$HOST_UID" www-data
+        groupmod -g "$$HOST_GID" www-data
+        chown -R www-data:www-data /var/www/html/wp-content
+        exec apache2-foreground
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/"]
       interval: 30s
