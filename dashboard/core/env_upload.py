@@ -21,6 +21,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from core.docker_ctl import Target
 from core.state import RemoteConfig
 
 
@@ -40,12 +41,19 @@ def _base_ssh_argv(remote: RemoteConfig, timeout: float) -> list[str]:
     ]
 
 
-def _remote_env_path(remote: RemoteConfig) -> str:
-    return f"{remote.remote_path.rstrip('/')}/.env"
+def _remote_env_path(project: str, remote: RemoteConfig) -> str:
+    """.env lives right alongside docker-compose.yml -- reuses
+    Target.remote_compose_dir() (docker_ctl.py) rather than duplicating
+    its "siem's compose dir is remote_path + /docker, edge's is just
+    remote_path" logic a second time here. That asymmetry was previously
+    hardcoded as an unconditional "/docker" in this exact function,
+    silently breaking edge's remote .env upload/fetch -- confirmed live."""
+    remote_dir = Target(project=project, remote=remote).remote_compose_dir()
+    return f"{remote_dir}/.env"
 
 
-def build_scp_argv(local_path: Path, remote: RemoteConfig, timeout: float = 8.0) -> list[str]:
-    remote_target = f"{remote.user}@{remote.host}:{_remote_env_path(remote)}"
+def build_scp_argv(local_path: Path, project: str, remote: RemoteConfig, timeout: float = 8.0) -> list[str]:
+    remote_target = f"{remote.user}@{remote.host}:{_remote_env_path(project, remote)}"
     return [
         "scp",
         "-i", remote.key_path,
@@ -61,7 +69,7 @@ def build_scp_argv(local_path: Path, remote: RemoteConfig, timeout: float = 8.0)
     ]
 
 
-def upload_env(local_path: Path, remote: RemoteConfig, timeout: float = 15.0) -> None:
+def upload_env(local_path: Path, project: str, remote: RemoteConfig, timeout: float = 15.0) -> None:
     """Sends an existing LOCAL FILE to the remote host via scp. Raises
     EnvUploadError with a human-readable message on any failure (not
     configured, local file missing, scp itself failing/timing out)."""
@@ -70,7 +78,7 @@ def upload_env(local_path: Path, remote: RemoteConfig, timeout: float = 15.0) ->
     if not local_path.exists():
         raise EnvUploadError(f"Local file not found: {local_path}")
 
-    argv = build_scp_argv(local_path, remote, timeout=timeout)
+    argv = build_scp_argv(local_path, project, remote, timeout=timeout)
     try:
         result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout + 5)
     except subprocess.TimeoutExpired:
@@ -82,7 +90,7 @@ def upload_env(local_path: Path, remote: RemoteConfig, timeout: float = 15.0) ->
         raise EnvUploadError(result.stderr.strip() or f"scp exited with code {result.returncode}")
 
 
-def download_env_text(remote: RemoteConfig, timeout: float = 15.0) -> str:
+def download_env_text(project: str, remote: RemoteConfig, timeout: float = 15.0) -> str:
     """Fetches the remote .env's content via `ssh ... cat <remote_path>/.env`
     directly to stdout -- no local temp file. Returns the empty string if
     the remote file doesn't exist yet (a fresh remote host with no .env
@@ -93,7 +101,7 @@ def download_env_text(remote: RemoteConfig, timeout: float = 15.0) -> str:
     if not remote.is_configured():
         raise EnvUploadError("Remote connection is not fully configured.")
 
-    remote_file = _remote_env_path(remote)
+    remote_file = _remote_env_path(project, remote)
     # `|| true` (and discarding cat's stderr) means the ssh command itself
     # always exits 0 for "connected fine, file just isn't there yet" --
     # only a real connection failure (bad host/key/auth) should raise.
@@ -111,7 +119,7 @@ def download_env_text(remote: RemoteConfig, timeout: float = 15.0) -> str:
     return result.stdout
 
 
-def upload_env_text(text: str, remote: RemoteConfig, timeout: float = 15.0) -> None:
+def upload_env_text(text: str, project: str, remote: RemoteConfig, timeout: float = 15.0) -> None:
     """Writes `text` directly to <remote_path>/.env over SSH stdin -- no
     local file involved. Used when the content being saved was itself
     fetched from remote and edited in memory (wizard remote-prefill,
@@ -120,7 +128,7 @@ def upload_env_text(text: str, remote: RemoteConfig, timeout: float = 15.0) -> N
     if not remote.is_configured():
         raise EnvUploadError("Remote connection is not fully configured.")
 
-    remote_file = _remote_env_path(remote)
+    remote_file = _remote_env_path(project, remote)
     argv = _base_ssh_argv(remote, timeout) + [f"cat > {shlex.quote(remote_file)}"]
     try:
         result = subprocess.run(argv, input=text, capture_output=True, text=True, timeout=timeout + 5)

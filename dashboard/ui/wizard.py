@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.cert_ctl import CertError, regenerate
+from core.docker_ctl import Target
 from core.env_file import EnvFile, seed_from_example
 from core.env_upload import EnvUploadError, download_env_text, upload_env_text
 from core.paths import (
@@ -253,10 +254,11 @@ class RemoteAwareEnvPage(TimelineMixin, QWizardPage):
         remote = self._remote_config()
 
         if remote.enabled and remote.is_configured():
-            self.info.setText(f"Fetching {remote.remote_path}/.env from {remote.user}@{remote.host}…")
+            remote_env_path = f"{Target(project=self.project, remote=remote).remote_compose_dir()}/.env"
+            self.info.setText(f"Fetching {remote_env_path} from {remote.user}@{remote.host}…")
             self.repaint()
             try:
-                text = download_env_text(remote)
+                text = download_env_text(self.project, remote)
             except EnvUploadError as e:
                 self._source_is_remote = False
                 self.env_file = seed_from_example(self.local_path, self.local_example)
@@ -268,19 +270,19 @@ class RemoteAwareEnvPage(TimelineMixin, QWizardPage):
                 )
             else:
                 self._source_is_remote = True
-                display_path = Path(f"{remote.user}@{remote.host}:{remote.remote_path}/.env")
+                display_path = Path(f"{remote.user}@{remote.host}:{remote_env_path}")
                 self.env_file = EnvFile.from_text(text, display_path)
                 if text:
                     self.info.setText(
                         f"Writes to REMOTE {remote.user}@{remote.host}:"
-                        f"{remote.remote_path}/.env (fetched live just now, "
+                        f"{remote_env_path} (fetched live just now, "
                         "shown below). Password/secret fields have a "
                         "Generate button for a random value."
                     )
                 else:
                     self.info.setText(
                         f"No .env found yet at {remote.user}@{remote.host}:"
-                        f"{remote.remote_path}/.env -- starting from an "
+                        f"{remote_env_path} -- starting from an "
                         "empty form; Next creates it there."
                     )
         else:
@@ -304,12 +306,13 @@ class RemoteAwareEnvPage(TimelineMixin, QWizardPage):
         if self._source_is_remote:
             remote = self._remote_config()
             try:
-                upload_env_text(self.env_file.render(), remote)
+                upload_env_text(self.env_file.render(), self.project, remote)
             except EnvUploadError as e:
+                remote_env_path = f"{Target(project=self.project, remote=remote).remote_compose_dir()}/.env"
                 QMessageBox.warning(
                     self, "Save to remote failed",
                     f"Could not write to {remote.user}@{remote.host}:"
-                    f"{remote.remote_path}/.env:\n\n{e}\n\n"
+                    f"{remote_env_path}:\n\n{e}\n\n"
                     "Go back and fix the connection, or disable remote for "
                     "this project to save locally instead.",
                 )

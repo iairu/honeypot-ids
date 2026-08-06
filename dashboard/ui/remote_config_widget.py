@@ -21,7 +21,7 @@ from core.project_upload import (
 from core.state import RemoteConfig
 
 _LOCAL_ENV_FILES = {"edge": EDGE_ENV_FILE, "siem": SIEM_ENV_FILE}
-_PROJECT_ENV_LABELS = {"edge": "openstack-work/.env", "siem": "openstack-siem-work/.env"}
+_PROJECT_ENV_LABELS = {"edge": "openstack-work/.env", "siem": "openstack-siem-work/docker/.env"}
 _LOCAL_PROJECT_DIRS = {"edge": EDGE_DIR, "siem": SIEM_DIR}
 _PROJECT_DIR_LABELS = {"edge": "openstack-work", "siem": "openstack-siem-work"}
 
@@ -60,7 +60,10 @@ class RemoteConfigWidget(QWidget):
         self.remote_path_edit = QLineEdit(config.remote_path)
         self.remote_path_edit.setPlaceholderText(
             "e.g. /home/user/DP_Repository/openstack-work "
-            "(or .../openstack-siem-work/elk_dockerized/docker)"
+            "(or .../openstack-siem-work/elk_dockerized -- same idea, the "
+            "project root either way; this app finds SIEM's "
+            "docker-compose.yml in the docker/ subdirectory automatically, "
+            "same as it does locally)"
         )
         form.addRow("Remote project path:", self.remote_path_edit)
 
@@ -141,8 +144,24 @@ class RemoteConfigWidget(QWidget):
         self.repaint()
         ok = target.is_reachable()
         if ok:
-            self.test_result.setText("✓ Reachable")
-            self.test_result.setStyleSheet("color: #5cb85c;")
+            # Purely informational -- never blocks the upload/sync buttons
+            # below, since a brand new remote host legitimately has no
+            # compose file yet until "Upload entire project to remote"
+            # puts one there. remote_compose_file_exists() already knows
+            # to look in remote_path + "/docker" for SIEM (same as
+            # everything else here) -- Remote project path is just the
+            # project root either way, not something that needs a manual
+            # "/docker" suffix.
+            if target.remote_compose_file_exists():
+                self.test_result.setText("✓ Reachable (compose file found)")
+                self.test_result.setStyleSheet("color: #5cb85c;")
+            else:
+                self.test_result.setText(
+                    "✓ Reachable, but no docker-compose.yml found there yet "
+                    "-- upload the project first (below), or double-check "
+                    "Remote project path if you expected one already."
+                )
+                self.test_result.setStyleSheet("color: #f0ad4e;")
             self.upload_result.setText("")
             self.upload_btn.setEnabled(True)
             self.sync_result.setText("")
@@ -155,10 +174,11 @@ class RemoteConfigWidget(QWidget):
         config = self.to_config()
         local_path = _LOCAL_ENV_FILES[self.project]
         env_label = _PROJECT_ENV_LABELS[self.project]
+        remote_env_path = f"{Target(project=self.project, remote=config).remote_compose_dir()}/.env"
 
         reply = QMessageBox.warning(
             self, "Confirm upload",
-            f"This will overwrite {config.remote_path}/.env on "
+            f"This will overwrite {remote_env_path} on "
             f"{config.user}@{config.host} with the LOCAL {env_label} file "
             "(sent as-is, including secrets, over the SSH connection just "
             "tested).\n\nContinue?",
@@ -173,7 +193,7 @@ class RemoteConfigWidget(QWidget):
         self.repaint()
 
         try:
-            upload_env(local_path, config)
+            upload_env(local_path, self.project, config)
         except EnvUploadError as e:
             self.upload_result.setText("✗ Upload failed")
             self.upload_result.setStyleSheet("color: #d9534f;")
@@ -184,7 +204,7 @@ class RemoteConfigWidget(QWidget):
         self.upload_result.setStyleSheet("color: #5cb85c;")
         QMessageBox.information(
             self, "Uploaded",
-            f"{env_label} uploaded to {config.host}:{config.remote_path}/.env",
+            f"{env_label} uploaded to {config.host}:{remote_env_path}",
         )
 
     def _sync_project(self) -> None:

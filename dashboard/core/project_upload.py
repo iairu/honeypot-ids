@@ -59,9 +59,15 @@ def build_rsync_argv(local_dir: Path, remote: RemoteConfig, timeout: float = 10.
         argv += ["--exclude", pattern]
     # Trailing slash on the source: copies the DIRECTORY'S CONTENTS into
     # remote_path, not the directory itself nested one level deeper --
-    # remote_path is already meant to BE the project root on the remote
-    # host (matches how docker_ctl.py's Target.build() treats it: `cd
-    # remote_path && docker compose ...`).
+    # remote_path is meant to BE the project root on the remote host
+    # (matching local_dir here, EDGE_DIR/SIEM_DIR -- the whole project,
+    # not wherever docker-compose.yml itself happens to live). For SIEM,
+    # Target.build() (docker_ctl.py) appends "/docker" onto remote_path
+    # internally when actually running compose commands there, the same
+    # way PROJECT_DIRS["siem"] already does locally -- this sync target
+    # stays remote_path itself since it's syncing the WHOLE project
+    # (docker/ included, as one of several sibling directories), not just
+    # the compose-file directory.
     local_src = str(local_dir).rstrip("/") + "/"
     remote_dst = f"{remote.user}@{remote.host}:{remote.remote_path.rstrip('/')}/"
     argv += [local_src, remote_dst]

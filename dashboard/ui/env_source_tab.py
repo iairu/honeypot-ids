@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.docker_ctl import Target
 from core.env_file import EnvFile, seed_from_example
 from core.env_upload import EnvUploadError, download_env_text, upload_env_text
 from core.state import RemoteConfig
@@ -129,12 +130,13 @@ class EnvSourceTab(QWidget):
             return
 
         self._clear_editor()
-        self.status_label.setText(f"Fetching {remote.remote_path}/.env from {remote.user}@{remote.host}…")
+        remote_env_path = f"{Target(project=self.project, remote=remote).remote_compose_dir()}/.env"
+        self.status_label.setText(f"Fetching {remote_env_path} from {remote.user}@{remote.host}…")
         self.status_label.setStyleSheet("color: #888888;")
         self.repaint()
 
         try:
-            text = download_env_text(remote)
+            text = download_env_text(self.project, remote)
         except EnvUploadError as e:
             QMessageBox.warning(self, "Fetch failed", str(e))
             self.source_combo.blockSignals(True)
@@ -144,19 +146,19 @@ class EnvSourceTab(QWidget):
             return
 
         self._source_is_remote = True
-        display_path = Path(f"{remote.user}@{remote.host}:{remote.remote_path}/.env")
+        display_path = Path(f"{remote.user}@{remote.host}:{remote_env_path}")
         self.env_file = EnvFile.from_text(text, display_path)
         self.editor = EnvEditorWidget(self.env_file)
         self._editor_slot.addWidget(self.editor)
 
         if text:
             self.status_label.setText(
-                f"Editing REMOTE file: {remote.user}@{remote.host}:{remote.remote_path}/.env"
+                f"Editing REMOTE file: {remote.user}@{remote.host}:{remote_env_path}"
             )
         else:
             self.status_label.setText(
                 f"No .env found yet at {remote.user}@{remote.host}:"
-                f"{remote.remote_path}/.env -- starting from an empty form; "
+                f"{remote_env_path} -- starting from an empty form; "
                 "Save will create it there."
             )
         self.status_label.setStyleSheet("color: #5cb85c;")
@@ -166,13 +168,14 @@ class EnvSourceTab(QWidget):
         if self._source_is_remote:
             remote = self._get_remote_config()
             try:
-                upload_env_text(self.env_file.render(), remote)
+                upload_env_text(self.env_file.render(), self.project, remote)
             except EnvUploadError as e:
                 QMessageBox.warning(self, "Save to remote failed", str(e))
                 return
+            remote_env_path = f"{Target(project=self.project, remote=remote).remote_compose_dir()}/.env"
             QMessageBox.information(
                 self, "Saved",
-                f"Saved to {remote.user}@{remote.host}:{remote.remote_path}/.env",
+                f"Saved to {remote.user}@{remote.host}:{remote_env_path}",
             )
         else:
             self.env_file.save()
