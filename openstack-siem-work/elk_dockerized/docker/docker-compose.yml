@@ -17,7 +17,12 @@ services:
       - xpack.security.transport.ssl.verification_mode=certificate
       - bootstrap.memory_lock=true
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
-#    mem_limit: ${ES_MEM_LIMIT}
+      # Pins the JVM heap explicitly rather than relying on ES's default
+      # ~50%-of-host-RAM auto-sizing -- see .env's ES_MEM_LIMIT/ES_JAVA_OPTS
+      # comment for why (confirmed live: this was sizing to ~8.3GB heap
+      # for well under 500MB of actual indexed data).
+      - ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms1g -Xmx1g}
+    mem_limit: ${ES_MEM_LIMIT}
     ulimits:
       memlock:
         soft: -1
@@ -62,6 +67,18 @@ services:
 
         # If the loop exits, curl succeeded
         echo "Password set successfully for kibana_system.";
+
+        # This is a single-node cluster -- a replica shard can never be
+        # assigned to a second node, so the default number_of_replicas=1
+        # on every honeypot-* index leaves the cluster permanently in
+        # "yellow" status with unassigned shards for no benefit (no HA is
+        # possible with one node anyway). Applies to indices created AFTER
+        # this template exists; run once, idempotent (same template body
+        # every time this service starts).
+        echo "Setting number_of_replicas=0 for future honeypot-* indices...";
+        curl --cacert /certs/ca/ca.crt -X PUT -u elastic:${ELASTIC_PASSWORD} -H "Content-Type: application/json" \
+          "https://es01:9200/_index_template/honeypot-single-node" -d "{\"index_patterns\":[\"honeypot-*\"],\"template\":{\"settings\":{\"number_of_replicas\":0}},\"priority\":500}";
+        echo "Index template applied.";
         exit 0;
       '
     volumes:
@@ -82,7 +99,7 @@ services:
       - ELASTICSEARCH_USERNAME=kibana_system
       - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
       - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
-  #    mem_limit: ${KIBANA_MEM_LIMIT}
+    mem_limit: ${KIBANA_MEM_LIMIT}
     ports:
       - "${KIBANA_PORT}:${KIBANA_PORT}"
     healthcheck:
