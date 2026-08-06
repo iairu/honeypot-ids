@@ -70,6 +70,11 @@ local _M = {}
 --                              .patterns_matched – list of matched pattern names
 --                              .cve_matched      – list of matched CVE IDs
 --                              .ip_reputation    – integer reputation score
+--                              .ip_reputation_reason – string|nil, why (e.g.
+--                                "suricata: CVE-2023-28121 ..." when a
+--                                Suricata alert is what flagged this IP --
+--                                see init_worker.lua's parse_suricata_logs);
+--                                nil when ip_reputation is 0/unset.
 --                              .details          – list of human-readable notes
 -- ---------------------------------------------------------------------------
 function _M.analyze_request(uri, headers, remote_ip)
@@ -79,6 +84,7 @@ function _M.analyze_request(uri, headers, remote_ip)
         patterns_matched = {},
         cve_matched = {},
         ip_reputation = 0,
+        ip_reputation_reason = nil,
         details = {}
     }
 
@@ -143,6 +149,7 @@ function _M.analyze_request(uri, headers, remote_ip)
     -- Stage 4: IP reputation check
     local ip_rep = _M.check_ip_reputation(remote_ip)
     threat_result.ip_reputation = ip_rep.score
+    threat_result.ip_reputation_reason = ip_rep.reason
     threat_result.score = threat_result.score + ip_rep.score
 
     if ip_rep.reason then

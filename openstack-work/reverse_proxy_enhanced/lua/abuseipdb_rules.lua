@@ -24,7 +24,17 @@ _M.REASON_CATEGORIES = {
     vulnerable_plugin_access        = { 15, 21 },
     multiple_admin_attempts         = { 18 },       -- Brute-Force
     rapid_automation_detected       = { 19 },       -- Bad Web Bot
-    suspicious_file_upload          = { 21 }        -- Web App Attack
+    suspicious_file_upload          = { 21 },       -- Web App Attack
+    -- An IP that crossed router.lua Stage 6's IP-reputation threshold
+    -- because Suricata fired on it (not the AbuseIPDB blacklist feed --
+    -- see router.lua's honeypot_reason selection there) is just as
+    -- deterministic a signal as cve_pattern_match/vulnerable_plugin_access
+    -- above, so it's reportable too. Previously "bad_ip_reputation" (the
+    -- reason string used for every IP-reputation hit regardless of source)
+    -- was never in this whitelist, so Suricata-confirmed attackers were
+    -- never actually reported to AbuseIPDB despite Suricata correctly
+    -- detecting them.
+    suricata_confirmed_alert        = { 15, 21 },
 }
 
 --- Whether a given routing reason is confident enough to justify reporting

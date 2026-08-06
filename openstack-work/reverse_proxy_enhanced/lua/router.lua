@@ -291,16 +291,35 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
     -- Stage 6: IP reputation gate.
     -- threat_intel shared dict is seeded at init time and updated every 30 s
     -- by the Suricata log parser in init_worker.lua.  IPs that appear in
-    -- Suricata fast.log alerts accumulate a score there; any IP scoring > 50
-    -- is diverted immediately regardless of the current request's content.
+    -- Suricata eve.json alerts accumulate a severity-graded score there
+    -- (suricata_rules.severity_to_score); any IP scoring > 50 is diverted
+    -- immediately regardless of the current request's content.
     if threat_result.ip_reputation > 50 then
+        -- honeypot_reason stays one of the fixed category strings every
+        -- other stage uses (matches abuseipdb_rules.REASON_CATEGORIES'
+        -- whitelist, which does exact-string lookup) -- NOT the rich,
+        -- per-signature text in threat_result.ip_reputation_reason (that
+        -- already reaches Kibana via the WARN log line a few lines below
+        -- and via threat_ips[ip].reason in Redis; it would never match the
+        -- whitelist if used here directly). Distinguishing "flagged by
+        -- Suricata" from "flagged by the AbuseIPDB blacklist feed" (both
+        -- populate the same threat_ips structure) makes Suricata-confirmed
+        -- attackers reportable for the first time -- "bad_ip_reputation"
+        -- was never in the whitelist regardless of source.
+        local reputation_reason = "bad_ip_reputation"
+        if threat_result.ip_reputation_reason
+            and threat_result.ip_reputation_reason:find("^suricata: ") then
+            reputation_reason = "suricata_confirmed_alert"
+        end
+
         assign_honeypot_pool(routing_decision, {
             threat_score    = threat_result.score,
-            honeypot_reason = "bad_ip_reputation",
+            honeypot_reason = reputation_reason,
         }, remote_ip)
 
         ngx.log(ngx.WARN, "[ROUTING] 🚫 BAD IP REPUTATION -> HONEYPOT | IP Rep Score: ",
                 threat_result.ip_reputation, " | Threat Score: ", threat_result.score,
+                " | Reason: ", threat_result.ip_reputation_reason or "unknown",
                 " | IP: ", remote_ip, " | URI: ", uri)
 
         return routing_decision

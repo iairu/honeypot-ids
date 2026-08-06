@@ -2,6 +2,7 @@
 -- This module initializes worker-specific components and background tasks
 
 local cjson = require "cjson"
+local suricata_rules = require "suricata_rules"
 
 -- Try to load optional modules
 local http_ok, http = pcall(require, "resty.http")
@@ -198,93 +199,123 @@ local function init_worker()
             _G.redis_pool.close_connection(red)
         end
         
-        -- Start Suricata log parser
+        -- Start Suricata log parser.
+        --
+        -- Reads eve.json (structured JSON alerts), not fast.log. The
+        -- previous version regex-parsed fast.log's flat-text format with a
+        -- pattern whose capture-group count (8) didn't match its
+        -- destination variable count (7) -- Lua silently drops the last
+        -- matched value when destructuring into fewer variables than
+        -- there are captures, so every field from `priority` onward was
+        -- shifted by one position. `src_ip` actually received the
+        -- classification TEXT (e.g. "Attempted Denial of Service"), never
+        -- a real IP address -- confirmed live against a real fast.log line
+        -- before this fix. That meant threat_ips was keyed by that string
+        -- instead of the attacker's IP, so Suricata alerts never actually
+        -- reached the real attacker's IP reputation record, silently, the
+        -- whole time. eve.json's fields are named JSON keys, not
+        -- positionally inferred, so this bug class can't recur. See
+        -- suricata_rules.lua for the pure parsing/scoring logic and its
+        -- unit tests (tests/test_suricata_rules.lua).
         local function parse_suricata_logs()
             local red, err = _G.redis_pool.get_connection()
             if not red then
                 ngx.log(ngx.ERR, "Failed to connect to Redis for Suricata log parsing: ", err)
                 return
             end
-            
-            -- Parse fast.log file for new alerts
-            local alert_file = "/var/log/suricata/fast.log"
+
+            local alert_file = "/var/log/suricata/eve.json"
             local file = io.open(alert_file, "r")
             if file then
-                local last_position = red:get("suricata_log_position") or 0
+                local last_position = red:get("suricata_eve_log_position") or 0
                 file:seek("set", tonumber(last_position))
-                
+
                 local alerts_processed = 0
                 for line in file:lines() do
-                    -- Parse Suricata alert format
-                    local timestamp, priority, classification, src_ip, src_port, dst_ip, dst_port = 
-                        line:match("(%d+/%d+/%d+%-%d+:%d+:%d+%.%d+)%s+%[%*%*%]%s+%[(%d+):(%d+):%d+%]%s+.-%s+%[Classification:%s+([^%]]+)%].-(%d+%.%d+%.%d+%.%d+):(%d+)%s+%-%>%s+(%d+%.%d+%.%d+%.%d+):(%d+)")
-                    
-                    if src_ip then
-                        local alert_data = {
-                            timestamp = timestamp,
-                            priority = tonumber(priority),
-                            classification = classification,
-                            src_ip = src_ip,
-                            src_port = tonumber(src_port),
-                            dst_ip = dst_ip,
-                            dst_port = tonumber(dst_port),
-                            processed_time = ngx.time()
-                        }
-                        
-                        -- Store alert in Redis
-                        red:lpush("suricata_alerts", cjson.encode(alert_data))
-                        red:ltrim("suricata_alerts", 0, 1000) -- Keep only last 1000 alerts
-                        
-                        -- Update threat intelligence.
-                        -- red:get() returns the ngx.null userdata sentinel for
-                        -- a missing key, not Lua nil -- "if current_intel then"
-                        -- doesn't catch that (ngx.null is truthy), so
-                        -- cjson.decode() would crash with "string expected,
-                        -- got userdata" on a fresh/flushed Redis (same bug
-                        -- already fixed this session in admin_handler.lua,
-                        -- upload_handler.lua, and vulnerability_handler.lua).
-                        local current_intel = red:get("threat_ips")
-                        local threat_ips = {}
-                        if current_intel and current_intel ~= ngx.null then
-                            threat_ips = cjson.decode(current_intel)
+                    -- Cheap substring pre-check before paying for a JSON
+                    -- decode -- eve.json interleaves alert/flow/netflow/
+                    -- http/dns/tls/... event types in one file, and
+                    -- flow/netflow accounting events vastly outnumber
+                    -- alerts in practice.
+                    if suricata_rules.is_alert_line(line) then
+                        local ok, decoded = pcall(cjson.decode, line)
+                        local alert = ok and suricata_rules.extract_alert(decoded) or nil
+
+                        if alert then
+                            -- Store the raw alert (forensic record, same
+                            -- 1000-entry cap as before).
+                            red:lpush("suricata_alerts", cjson.encode(alert))
+                            red:ltrim("suricata_alerts", 0, 1000)
+
+                            -- Update threat intelligence.
+                            -- red:get() returns the ngx.null userdata sentinel for
+                            -- a missing key, not Lua nil -- "if current_intel then"
+                            -- doesn't catch that (ngx.null is truthy), so
+                            -- cjson.decode() would crash with "string expected,
+                            -- got userdata" on a fresh/flushed Redis (same bug
+                            -- already fixed this session in admin_handler.lua,
+                            -- upload_handler.lua, and vulnerability_handler.lua).
+                            local current_intel = red:get("threat_ips")
+                            local threat_ips = {}
+                            if current_intel and current_intel ~= ngx.null then
+                                threat_ips = cjson.decode(current_intel)
+                            end
+
+                            -- Score is graded by Suricata's own severity
+                            -- field (suricata_rules.severity_to_score),
+                            -- not a flat +20 per alert regardless of what
+                            -- fired -- a single confirmed CVE-exploit-
+                            -- attempt (priority 1 in local.rules) now moves
+                            -- an IP most of the way to Stage 6's >50
+                            -- honeypot-diversion threshold on its own; a
+                            -- low-priority scan/recon signature contributes
+                            -- much less, so noisy background scanning
+                            -- doesn't force honeypot diversion as readily
+                            -- as a real exploit attempt does. The reason
+                            -- string carries the actual matched signature
+                            -- (e.g. "suricata: CVE-2023-28121 ...") through
+                            -- to router.lua's Stage 6 honeypot_reason
+                            -- instead of a generic "bad_ip_reputation".
+                            local previous = threat_ips[alert.src_ip]
+                            threat_ips[alert.src_ip] = {
+                                score = suricata_rules.next_score(previous and previous.score, alert.severity),
+                                reason = suricata_rules.build_reason(alert),
+                                updated = ngx.time(),
+                                alert_count = (previous and previous.alert_count or 0) + 1,
+                            }
+
+                            local encoded_threat_ips = cjson.encode(threat_ips)
+                            red:set("threat_ips", encoded_threat_ips)
+
+                            -- Mirror into the shared-memory cache threat_analyzer.lua
+                            -- actually reads on the hot path (it never touches Redis
+                            -- directly, for latency) -- without this, a Suricata
+                            -- alert would update Redis's durable threat_ips record
+                            -- but have zero effect on live routing/scoring until
+                            -- something else happened to refresh the shared dict.
+                            local threat_intel_shared = ngx.shared.threat_intel
+                            if threat_intel_shared then
+                                threat_intel_shared:set("threat_ips", encoded_threat_ips)
+                            end
+
+                            alerts_processed = alerts_processed + 1
+
+                            ngx.log(ngx.WARN, "Suricata alert processed: ", alert.src_ip, " -> ", alert.signature,
+                                    " (severity ", alert.severity or "?", ", score now ",
+                                    threat_ips[alert.src_ip].score, ")")
                         end
-
-                        threat_ips[src_ip] = {
-                            score = math.min((threat_ips[src_ip] and threat_ips[src_ip].score or 0) + 20, 100),
-                            reason = "snort_alert_" .. classification,
-                            updated = ngx.time(),
-                            alert_count = (threat_ips[src_ip] and threat_ips[src_ip].alert_count or 0) + 1
-                        }
-
-                        local encoded_threat_ips = cjson.encode(threat_ips)
-                        red:set("threat_ips", encoded_threat_ips)
-
-                        -- Mirror into the shared-memory cache threat_analyzer.lua
-                        -- actually reads on the hot path (it never touches Redis
-                        -- directly, for latency) -- without this, a Suricata
-                        -- alert would update Redis's durable threat_ips record
-                        -- but have zero effect on live routing/scoring until
-                        -- something else happened to refresh the shared dict.
-                        local threat_intel_shared = ngx.shared.threat_intel
-                        if threat_intel_shared then
-                            threat_intel_shared:set("threat_ips", encoded_threat_ips)
-                        end
-
-                        alerts_processed = alerts_processed + 1
-                            
-                        ngx.log(ngx.WARN, "Suricata alert processed: ", src_ip, " -> ", classification)
                     end
                 end
-                
+
                 -- Update file position
-                red:set("suricata_log_position", file:seek())
+                red:set("suricata_eve_log_position", file:seek())
                 file:close()
-                    
+
                 if alerts_processed > 0 then
                     ngx.log(ngx.INFO, "Processed ", alerts_processed, " Suricata alerts")
                 end
             end
-            
+
             _G.redis_pool.close_connection(red)
         end
         
