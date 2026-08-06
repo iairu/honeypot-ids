@@ -314,6 +314,25 @@ local function init_worker()
                 if alerts_processed > 0 then
                     ngx.log(ngx.INFO, "Processed ", alerts_processed, " Suricata alerts")
                 end
+            else
+                -- Deliberately NOT silent: a missing/unreadable eve.json
+                -- (wrong volume mount, permissions, Suricata not started
+                -- yet) used to fail exactly like "no new alerts this
+                -- cycle" -- indistinguishable, and this pipeline sat
+                -- completely inert for a long time before that was
+                -- noticed. Rate-limited to once per 10 minutes (via the
+                -- threat_intel shared dict as a cheap timestamp store) so
+                -- a genuinely missing mount is still diagnosable quickly
+                -- without spamming the log every 30s forever.
+                local threat_intel_shared = ngx.shared.threat_intel
+                local last_warned = threat_intel_shared and threat_intel_shared:get("suricata_file_missing_warned")
+                if not last_warned or (ngx.time() - last_warned) > 600 then
+                    ngx.log(ngx.WARN, "Suricata log parser: could not open ", alert_file,
+                            " -- check the reverse_proxy service's volume mounts and that suricata_ids is running")
+                    if threat_intel_shared then
+                        threat_intel_shared:set("suricata_file_missing_warned", ngx.time())
+                    end
+                end
             end
 
             _G.redis_pool.close_connection(red)

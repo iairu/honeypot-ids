@@ -7,7 +7,8 @@ doesn't discard everything else.
 from __future__ import annotations
 
 from PyQt6.QtWidgets import (
-    QLabel, QMessageBox, QPushButton, QVBoxLayout, QWizard, QWizardPage,
+    QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget,
+    QWizard, QWizardPage,
 )
 
 from core.cert_ctl import CertError, regenerate
@@ -27,12 +28,107 @@ EDGE_ENV_DEFAULT_KEYS = [
     "COMPOSE_PROJECT_NAME", "ENVIRONMENT",
 ]
 
+# Page IDs, module-level (not SetupWizard class attributes) so both the
+# wizard itself and WizardTimeline's step list can reference them without
+# an import-order/forward-reference problem.
+PAGE_WELCOME, PAGE_REMOTE, PAGE_EDGE_ENV, PAGE_SIEM_ENV, PAGE_CERTS, PAGE_FINISH = range(6)
 
-class WelcomePage(QWizardPage):
+# Fixed step labels, in wizard order. Which of these a run actually visits
+# depends on the remote/local choice (see visible_steps()) -- Edge/SIEM
+# .env are skipped entirely for a project marked remote.
+_STEP_LABELS = {
+    PAGE_WELCOME: "Welcome",
+    PAGE_REMOTE: "Remote/Local",
+    PAGE_EDGE_ENV: "Edge .env",
+    PAGE_SIEM_ENV: "SIEM .env",
+    PAGE_CERTS: "Certificates",
+    PAGE_FINISH: "Done",
+}
+
+
+def visible_steps(state: AppState) -> list[tuple[int, str]]:
+    """The ordered list of (page_id, label) this wizard run will actually
+    visit, given the current remote/local choice. Recomputed on every page
+    show (not just once) since Back navigation can change remote/local
+    mid-run -- see WizardTimeline.refresh()."""
+    steps = [(PAGE_WELCOME, _STEP_LABELS[PAGE_WELCOME]), (PAGE_REMOTE, _STEP_LABELS[PAGE_REMOTE])]
+    if not state.remote_edge.enabled:
+        steps.append((PAGE_EDGE_ENV, _STEP_LABELS[PAGE_EDGE_ENV]))
+    if not state.remote_siem.enabled:
+        steps.append((PAGE_SIEM_ENV, _STEP_LABELS[PAGE_SIEM_ENV]))
+    steps.append((PAGE_CERTS, _STEP_LABELS[PAGE_CERTS]))
+    steps.append((PAGE_FINISH, _STEP_LABELS[PAGE_FINISH]))
+    return steps
+
+
+class WizardTimeline(QWidget):
+    """Step-indicator row shown at the top of every wizard page: all steps
+    that will actually be visited (see visible_steps()), with completed
+    steps checked off, the current one highlighted, and remaining ones
+    dimmed. Rebuilt via refresh() on every page show (TimelineMixin calls
+    this from initializePage(), which Qt calls on every visit including
+    Back navigation) since the skip-aware step list can change mid-run.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._row = QHBoxLayout(self)
+        self._row.setContentsMargins(0, 0, 0, 10)
+
+    def refresh(self, state: AppState, current_id: int) -> None:
+        while self._row.count():
+            item = self._row.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        steps = visible_steps(state)
+        current_index = next((i for i, (pid, _label) in enumerate(steps) if pid == current_id), None)
+
+        for i, (pid, label) in enumerate(steps):
+            if current_index is not None and i < current_index:
+                text, style = f"✓ {label}", "color: #5cb85c;"
+            elif pid == current_id:
+                text, style = f"● {label}", "color: #ffffff; font-weight: bold;"
+            else:
+                text, style = label, "color: #888888;"
+
+            lbl = QLabel(text)
+            lbl.setStyleSheet(style)
+            self._row.addWidget(lbl)
+
+            if i < len(steps) - 1:
+                arrow = QLabel("→")
+                arrow.setStyleSheet("color: #555555;")
+                self._row.addWidget(arrow)
+
+        self._row.addStretch()
+
+
+class TimelineMixin:
+    """Mixed into every QWizardPage below. _init_timeline() inserts a
+    WizardTimeline as the first item in the page's own layout; Qt calls
+    initializePage() every time a page is shown (including via Back
+    navigation), which is what keeps the highlighted step correct if the
+    user goes back and changes the remote/local choice."""
+
+    def _init_timeline(self, layout: QVBoxLayout) -> None:
+        self._timeline = WizardTimeline()
+        layout.addWidget(self._timeline)
+
+    def initializePage(self) -> None:
+        wiz = self.wizard()
+        timeline = getattr(self, "_timeline", None)
+        if wiz is not None and timeline is not None:
+            timeline.refresh(wiz.state, wiz.currentId())
+        super().initializePage()
+
+
+class WelcomePage(TimelineMixin, QWizardPage):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setTitle("Welcome")
         layout = QVBoxLayout(self)
+        self._init_timeline(layout)
         label = QLabel(
             "This wizard creates/populates the .env files both compose "
             "projects need (openstack-work and openstack-siem-work), and "
@@ -45,12 +141,13 @@ class WelcomePage(QWizardPage):
         layout.addWidget(label)
 
 
-class RemotePage(QWizardPage):
+class RemotePage(TimelineMixin, QWizardPage):
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.state = state
         self.setTitle("Remote hosts (optional)")
         layout = QVBoxLayout(self)
+        self._init_timeline(layout)
         info = QLabel(
             "If either project runs on a separate host (the real two-host "
             "deployment this project is designed for -- see ARCHITECTURE.md), "
@@ -80,17 +177,18 @@ class RemotePage(QWizardPage):
     def nextId(self) -> int:
         if self.state.remote_edge.enabled:
             if self.state.remote_siem.enabled:
-                return SetupWizard.PAGE_CERTS
-            return SetupWizard.PAGE_SIEM_ENV
-        return SetupWizard.PAGE_EDGE_ENV
+                return PAGE_CERTS
+            return PAGE_SIEM_ENV
+        return PAGE_EDGE_ENV
 
 
-class EdgeEnvPage(QWizardPage):
+class EdgeEnvPage(TimelineMixin, QWizardPage):
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.state = state
         self.setTitle("openstack-work (edge honeypot) — .env")
         layout = QVBoxLayout(self)
+        self._init_timeline(layout)
         info = QLabel(
             f"Writes to {EDGE_ENV_FILE}. Password/secret fields have a "
             "Generate button for a random value -- recommended over the "
@@ -109,15 +207,16 @@ class EdgeEnvPage(QWizardPage):
 
     def nextId(self) -> int:
         if self.state.remote_siem.enabled:
-            return SetupWizard.PAGE_CERTS
-        return SetupWizard.PAGE_SIEM_ENV
+            return PAGE_CERTS
+        return PAGE_SIEM_ENV
 
 
-class SiemEnvPage(QWizardPage):
+class SiemEnvPage(TimelineMixin, QWizardPage):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setTitle("openstack-siem-work (SIEM) — .env")
         layout = QVBoxLayout(self)
+        self._init_timeline(layout)
         info = QLabel(
             f"Writes to {SIEM_ENV_FILE}. Password/secret fields have a "
             "Generate button for a random value -- recommended over the "
@@ -135,11 +234,12 @@ class SiemEnvPage(QWizardPage):
         return True
 
 
-class CertsPage(QWizardPage):
+class CertsPage(TimelineMixin, QWizardPage):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setTitle("Certificates (optional)")
         layout = QVBoxLayout(self)
+        self._init_timeline(layout)
         info = QLabel(
             "Generate the SIEM CA + service certs, and the edge nginx "
             "SSL cert, now. You can also do this later from the "
@@ -168,11 +268,12 @@ class CertsPage(QWizardPage):
             QMessageBox.warning(self, "Certificate generation failed", str(e))
 
 
-class FinishPage(QWizardPage):
+class FinishPage(TimelineMixin, QWizardPage):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setTitle("Done")
         layout = QVBoxLayout(self)
+        self._init_timeline(layout)
         layout.addWidget(QLabel(
             "Setup complete. Use the Services page to start the stacks, "
             "Health to watch container status, and Settings to change any "
@@ -181,30 +282,20 @@ class FinishPage(QWizardPage):
 
 
 class SetupWizard(QWizard):
-    # Explicit page IDs so nextId() overrides can skip a project's .env page
-    # when that project is configured as remote (its .env lives on the
-    # remote host, not here -- see RemotePage/EdgeEnvPage.nextId()).
-    PAGE_WELCOME = 0
-    PAGE_REMOTE = 1
-    PAGE_EDGE_ENV = 2
-    PAGE_SIEM_ENV = 3
-    PAGE_CERTS = 4
-    PAGE_FINISH = 5
-
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.state = state
         self.setWindowTitle("Honeypot Dashboard — Setup")
-        self.setMinimumSize(700, 560)
+        self.setMinimumSize(700, 620)
 
         # Remote/local choice comes first so the .env pages that follow
         # know which projects to skip.
-        self.setPage(self.PAGE_WELCOME, WelcomePage())
-        self.setPage(self.PAGE_REMOTE, RemotePage(state))
-        self.setPage(self.PAGE_EDGE_ENV, EdgeEnvPage(state))
-        self.setPage(self.PAGE_SIEM_ENV, SiemEnvPage())
-        self.setPage(self.PAGE_CERTS, CertsPage())
-        self.setPage(self.PAGE_FINISH, FinishPage())
+        self.setPage(PAGE_WELCOME, WelcomePage())
+        self.setPage(PAGE_REMOTE, RemotePage(state))
+        self.setPage(PAGE_EDGE_ENV, EdgeEnvPage(state))
+        self.setPage(PAGE_SIEM_ENV, SiemEnvPage())
+        self.setPage(PAGE_CERTS, CertsPage())
+        self.setPage(PAGE_FINISH, FinishPage())
 
     def accept(self) -> None:
         self.state.first_run_complete = True

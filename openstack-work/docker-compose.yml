@@ -1047,6 +1047,19 @@ services:
       - ./reverse_proxy_enhanced:/etc/nginx
       - ./ssl_certificates:/etc/ssl/certs:ro
       - ./nginx_logs:/var/log/nginx
+      # Read access to Suricata's eve.json -- init_worker.lua's
+      # parse_suricata_logs() tails this to feed threat_intel.threat_ips
+      # (see suricata_rules.lua). This mount was missing entirely before:
+      # the parser's io.open() silently returned nil every 30s (no log
+      # line either way, since a genuinely-absent file and "nothing new to
+      # process" look the same to that code path) -- Suricata alerts have
+      # never actually reached router.lua's IP-reputation gate, regardless
+      # of the eve.json-vs-fast.log parsing format. suricata_ids is not a
+      # hard startup dependency (commented out above) so this may not
+      # exist for the first few seconds after a fresh `docker compose up`;
+      # parse_suricata_logs() already tolerates that (io.open returns nil,
+      # skipped, tried again next timer tick).
+      - ./suricata_logs:/var/log/suricata:ro
     networks:
       - production_network
       - honeypot_network

@@ -82,9 +82,19 @@ class TargetPanel(QGroupBox):
         self.stop_btn.clicked.connect(self._stop)
         self.purge_btn.clicked.connect(self._purge)
 
+        log_label = QLabel("Logs (auto-tailing -- Start/Restart/Stop/Purge takes over this panel):")
+        log_label.setStyleSheet("color: #888888;")
+        layout.addWidget(log_label)
+
         self.log_panel = LogPanel()
         self.log_panel.setMinimumHeight(160)
         layout.addWidget(self.log_panel)
+
+        # Auto-show logs immediately rather than waiting for a button click
+        # -- for a remote target with bad SSH config this also surfaces the
+        # connectivity problem right away instead of only on the next
+        # manual action.
+        self._run("logs", "--tail=50", "-f")
 
     def update_status(self, containers: list[dict]) -> None:
         text, color = summarize_status(containers)

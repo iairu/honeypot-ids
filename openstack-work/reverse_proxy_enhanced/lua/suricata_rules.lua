@@ -26,6 +26,27 @@
 --   fields, not positionally inferred, so this entire bug class can't
 --   recur.
 --
+-- KNOWN CAVEAT -- src_ip attribution for same-host (loopback) testing:
+--   Suricata runs with network_mode: host and interface "any" (see
+--   docker-compose.yml's suricata_ids service), so it sees every hop of a
+--   request, not just the client->nginx leg. Verified live: curling
+--   127.0.0.1 from the docker host itself, nginx's own access log shows
+--   client 172.21.0.1 (the docker bridge gateway) for a request, while
+--   Suricata's eve.json alert for the SAME request reports src_ip as a
+--   different internal address (e.g. 172.21.0.6/.9 -- whichever
+--   container-to-container hop the matching content actually traversed).
+--   The two never correlate in this same-host test setup, so a
+--   Suricata-flagged score currently accumulates against an address
+--   router.lua's remote_ip never actually sees, and Stage 6 never fires
+--   from it locally. For genuine external attacker traffic (the real
+--   target use case -- see ARCHITECTURE.md's two-host deployment) this is
+--   expected to work correctly: Docker's DNAT-based port publishing
+--   preserves the source IP on the client->host leg, so Suricata should
+--   capture the real external IP there, matching what nginx logs as
+--   remote_addr -- but that has NOT been verified against genuine
+--   external traffic (not available in this dev environment). Flagged
+--   here rather than silently assumed fixed.
+--
 -- SEVERITY -> SCORE:
 --   Suricata's own severity field (lower number = more severe, standard
 --   Suricata/Snort convention: 1=high, 2=medium, 3=low) grades the score
