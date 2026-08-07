@@ -22,6 +22,7 @@ from core.paths import (
     EDGE_ENV_EXAMPLE, EDGE_ENV_FILE, SIEM_ENV_EXAMPLE, SIEM_ENV_FILE,
 )
 from core.state import AppState
+from ui.dependency_banner import DependencyBanner
 from ui.env_editor import EnvEditorWidget
 from ui.remote_config_widget import RemoteConfigWidget
 
@@ -143,6 +144,15 @@ class WelcomePage(TimelineMixin, QWizardPage):
         self.setTitle("Welcome")
         layout = QVBoxLayout(self)
         self._init_timeline(layout)
+
+        # Checked here first, before the user sinks time into filling out
+        # .env forms, since nothing past this page works without docker/
+        # docker compose -- also shown persistently in the main window
+        # (see MainWindow's own DependencyBanner) for anyone who skips or
+        # re-runs just part of the wizard.
+        self.dependency_banner = DependencyBanner()
+        layout.addWidget(self.dependency_banner)
+
         label = QLabel(
             "This wizard creates/populates the .env files both compose "
             "projects need (openstack-work and openstack-siem-work), and "

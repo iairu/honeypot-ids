@@ -11,12 +11,13 @@ from PyQt6.QtCore import QByteArray
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QMainWindow, QMenu, QMenuBar, QMessageBox,
-    QSplitter, QStackedWidget, QSystemTrayIcon, QWidget,
+    QSplitter, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
 from core.docker_ctl import all_targets
 from core.paths import DASHBOARD_DIR
 from core.state import AppState
+from ui.dependency_banner import DependencyBanner
 from ui.health_diagram import classify
 from ui.page_certs import CertsPage
 from ui.page_exploits import ExploitsPage
@@ -67,8 +68,20 @@ class MainWindow(QMainWindow):
 
         self._build_menu()
 
+        central = QWidget()
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        self.setCentralWidget(central)
+
+        # Persistent across every page (unlike a per-page banner, this
+        # can't be missed just because docker/docker compose happened to
+        # be fine when whichever page you're currently on was built).
+        self.dependency_banner = DependencyBanner()
+        central_layout.addWidget(self.dependency_banner)
+
         splitter = QSplitter()
-        self.setCentralWidget(splitter)
+        central_layout.addWidget(splitter, stretch=1)
 
         self.nav_list = QListWidget()
         self.nav_list.setMaximumWidth(180)
