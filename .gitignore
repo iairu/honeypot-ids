@@ -1,22 +1,12 @@
 *.tgz
 .DS_Store
-*.aux
+# *.log: NOT LaTeX-scoped (see master-thesis-latex/.gitignore for those --
+# LaTeX's own .log needs the exact-name form "*.log", not a subpath, since
+# it's written next to each .tex file). Deliberately still repo-wide too:
+# confirmed live it also (correctly) excludes runtime-generated PHP error
+# logs (wp-content/uploads/wc-logs/fatal-errors-*.log) -- same class of
+# "regenerated content, not source" as wflogs/ below.
 *.log
-*.out
-*.fls
-*.xml
-*.toc
-*.fdb_latexmk
-*.bbl-SAVE-ERROR
-*.bbl
-*.bcf-SAVE-ERROR
-*.bcf
-*-blx.bib
-_minted
-!_minted/default.style.minted
-*.crt
-*.key
-*.srl
 *.sql.gz
 *.tar.gz
 
