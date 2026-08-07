@@ -6,7 +6,7 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea,
-    QVBoxLayout, QWidget,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core.docker_ctl import PROJECT_LABELS, Target
@@ -103,7 +103,15 @@ class TargetPanel(QGroupBox):
         # No Stop button on this LogPanel -- Start/Restart/Stop/Purge above
         # already cover stopping/controlling this target, a second "Stop"
         # here would just be redundant (and ambiguous about what it stops).
-        self.log_panel = LogPanel(show_stop_button=False)
+        # reload_action overrides Reload to always switch to tailing logs
+        # rather than replaying whatever command last ran here -- that's
+        # frequently a mutating one (up -d/restart/down), and naively
+        # replaying it would re-trigger it instead of showing logs;
+        # confirmed live this could loop indefinitely if Reload was
+        # clicked again before the mutating command finished (each click
+        # kills the in-flight one and restarts it, so it never reaches
+        # the point where _on_log_finished would auto-resume the tail).
+        self.log_panel = LogPanel(show_stop_button=False, reload_action=self._reload_logs)
         self.log_panel.setMinimumHeight(160)
         self.log_panel.finished.connect(self._on_log_finished)
         layout.addWidget(self.log_panel)
@@ -140,6 +148,9 @@ class TargetPanel(QGroupBox):
             self._mutating_action = False
             self._run("logs", "--tail=50", "-f", mutating=False)
 
+    def _reload_logs(self) -> None:
+        self._run("logs", "--tail=50", "-f", mutating=False)
+
     def _download_logs(self) -> None:
         self._log_exporter.export(self.target, self.target.key, None, self.target.label)
 
@@ -171,32 +182,86 @@ class ServicesPage(QWidget):
         super().__init__(parent)
         self._get_targets = get_targets
         self.panels: dict[str, TargetPanel] = {}
+        self._tab_view = False
 
         outer = QVBoxLayout(self)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        outer.addWidget(scroll)
+
+        toggle_row = QHBoxLayout()
+        toggle_row.addStretch()
+        self.view_toggle_btn = QPushButton("Switch to tab view")
+        self.view_toggle_btn.clicked.connect(self._toggle_view)
+        toggle_row.addWidget(self.view_toggle_btn)
+        outer.addLayout(toggle_row)
+
+        # Stack view (default): every target's panel one below another in
+        # a scroll area -- see everything at once, scroll to find one.
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        outer.addWidget(self.scroll)
 
         inner = QWidget()
         self.inner_layout = QVBoxLayout(inner)
         self.inner_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        scroll.setWidget(inner)
+        self.scroll.setWidget(inner)
+
+        # Tab view (toggle): one tab per target -- only one panel's log
+        # tail/controls visible at a time, useful once there are enough
+        # targets (local + remote x2 projects) that the stack view means
+        # a lot of scrolling to reach the one you want.
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setVisible(False)
+        outer.addWidget(self.tab_widget)
 
         self.rebuild_panels()
+
+    def _toggle_view(self) -> None:
+        self._tab_view = not self._tab_view
+        self.view_toggle_btn.setText("Switch to stack view" if self._tab_view else "Switch to tab view")
+        self._populate_current_view()
 
     def rebuild_panels(self) -> None:
         """Call after remote settings change, so newly-configured remote
         targets get their own panel without restarting the app."""
-        while self.inner_layout.count():
-            item = self.inner_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        for panel in self.panels.values():
+            panel.deleteLater()
         self.panels.clear()
 
         for target in self._get_targets():
-            panel = TargetPanel(target)
-            self.panels[target.key] = panel
-            self.inner_layout.addWidget(panel)
+            self.panels[target.key] = TargetPanel(target)
+
+        self._populate_current_view()
+
+    def _populate_current_view(self) -> None:
+        # Detach every panel from whichever container currently holds it
+        # -- removeTab()/takeAt() detach the widget without deleting it,
+        # and addTab()/addWidget() below reparents it into the other
+        # container. Panels themselves are constructed once (rebuild_
+        # panels()) and just move between the two views on toggle, so
+        # each one's auto-tailing log process keeps running uninterrupted
+        # regardless of which view is currently shown.
+        while self.inner_layout.count():
+            self.inner_layout.takeAt(0)
+        while self.tab_widget.count():
+            self.tab_widget.removeTab(0)
+
+        for target in self._get_targets():
+            panel = self.panels.get(target.key)
+            if panel is None:
+                continue
+            if self._tab_view:
+                self.tab_widget.addTab(panel, target.label)
+            else:
+                self.inner_layout.addWidget(panel)
+                # QTabWidget hides every tab page except the currently
+                # selected one, and removeTab() doesn't restore visibility
+                # on the way out -- confirmed live: switching back to
+                # stack view left every panel that wasn't the active tab
+                # invisible (a blank-looking page), since addWidget()
+                # alone doesn't undo that hidden state.
+                panel.setVisible(True)
+
+        self.scroll.setVisible(not self._tab_view)
+        self.tab_widget.setVisible(self._tab_view)
 
     def any_mutating_action_running(self) -> bool:
         """True if any panel has an in-flight up/down/restart/purge --

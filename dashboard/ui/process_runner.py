@@ -23,7 +23,7 @@ _DEFAULT_TEXT_COLOR = "#d4d4d4"  # matches this panel's own stylesheet below
 class LogPanel(QWidget):
     finished = pyqtSignal(int)  # exit code
 
-    def __init__(self, parent=None, show_stop_button: bool = True):
+    def __init__(self, parent=None, show_stop_button: bool = True, reload_action=None):
         super().__init__(parent)
         self.process: QProcess | None = None
         self._paused = False
@@ -31,6 +31,18 @@ class LogPanel(QWidget):
         self._ansi = AnsiTextParser()
         self._last_argv: list[str] | None = None
         self._last_cwd: str | None = None
+        # Overrides what the Reload button does, instead of blindly
+        # replaying the last command run() was given. Needed by the
+        # Services page: its LogPanel's "last command" is often a
+        # mutating one (up -d/restart/down) that the panel only runs
+        # once before auto-resuming a `logs -f` tail (see
+        # page_services.py's TargetPanel) -- naively replaying THAT would
+        # re-trigger the mutating command instead of showing logs, and
+        # confirmed live this can loop indefinitely if Reload gets clicked
+        # again before the mutating command finishes (each click kills
+        # the in-flight one and starts a fresh one, so it can never reach
+        # the point where it would auto-resume tailing on its own).
+        self._reload_action = reload_action
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -136,7 +148,9 @@ class LogPanel(QWidget):
         self.stop_button.setEnabled(True)
 
     def _reload(self) -> None:
-        if self._last_argv is not None:
+        if self._reload_action is not None:
+            self._reload_action()
+        elif self._last_argv is not None:
             self.run(self._last_argv, self._last_cwd)
 
     def is_running(self) -> bool:
