@@ -1,3 +1,13 @@
+<p align="center">
+  <img src="dashboard/resources/app_icon.svg" alt="Honeypot IDS System logo" width="96" height="96">
+</p>
+
+<h1 align="center">Honeypot IDS System</h1>
+<p align="center">
+  <em>Zlepšenie efektivity honeypot nástroja pomocou zvýšenia úrovne interakcie</em><br>
+  <em>Improving Honeypot Tool Efficiency by Increasing Interaction Level</em>
+</p>
+
 ---
 Name:   Zlepšenie efektivity honeypot nástroja pomocou zvýšenia úrovne interakcie
 Eng:    Improving Honeypot Tool Efficiency by Increasing Interaction Level
