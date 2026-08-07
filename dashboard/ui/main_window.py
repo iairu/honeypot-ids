@@ -19,7 +19,10 @@ from core.paths import DASHBOARD_DIR
 from core.state import AppState
 from ui.health_diagram import classify
 from ui.page_certs import CertsPage
+from ui.page_exploits import ExploitsPage
 from ui.page_health import HealthPage
+from ui.page_kibana import KibanaPage
+from ui.page_redis import RedisPage
 from ui.page_services import ServicesPage
 from ui.page_settings import SettingsPage
 from ui.status_poller import StatusPoller
@@ -40,11 +43,14 @@ _APP_ICON_PATH = DASHBOARD_DIR / "resources" / "app_icon.svg"
 # finishing cleanly is success, not something to alarm about).
 _NOTIFY_ON_STATUSES = {"unhealthy", "exited_bad"}
 
-PAGES = ["services", "health", "certificates", "settings"]
+PAGES = ["services", "health", "certificates", "redis", "kibana", "exploits", "settings"]
 PAGE_LABELS = {
     "services": "Services",
     "health": "Health",
     "certificates": "Certificates",
+    "redis": "Redis",
+    "kibana": "Kibana",
+    "exploits": "Exploits",
     "settings": "Settings",
 }
 
@@ -80,12 +86,18 @@ class MainWindow(QMainWindow):
         self.services_page = ServicesPage(self._get_targets)
         self.health_page = HealthPage(self._get_targets)
         self.certs_page = CertsPage()
+        self.redis_page = RedisPage(state)
+        self.kibana_page = KibanaPage(state)
+        self.exploits_page = ExploitsPage(state)
         self.settings_page = SettingsPage(state, self._on_remote_settings_changed, self.set_poll_interval)
 
         for page_id, widget in [
             ("services", self.services_page),
             ("health", self.health_page),
             ("certificates", self.certs_page),
+            ("redis", self.redis_page),
+            ("kibana", self.kibana_page),
+            ("exploits", self.exploits_page),
             ("settings", self.settings_page),
         ]:
             self.stack.addWidget(widget)
@@ -120,6 +132,8 @@ class MainWindow(QMainWindow):
         self.services_page.rebuild_panels()
         # Health page rebuilds its diagram automatically on the next poll
         # tick (it always calls _get_targets() fresh in apply_status()).
+        self.redis_page.rebuild_targets()
+        self.exploits_page.rebuild_targets()
 
     def set_poll_interval(self, interval_ms: int) -> None:
         self.state.poll_interval_ms = interval_ms
@@ -224,6 +238,8 @@ class MainWindow(QMainWindow):
         # the wizard just wrote, instead of showing stale pre-wizard values.
         self._reload_settings_page()
         self.services_page.rebuild_panels()
+        self.redis_page.rebuild_targets()
+        self.exploits_page.rebuild_targets()
 
     def _reload_settings_page(self) -> None:
         index = self.stack.indexOf(self.settings_page)

@@ -7,6 +7,13 @@ yourself -- see requirements.txt.
 """
 import sys
 
+# Must be imported before the QApplication instance is constructed below --
+# PyQt6 raises ImportError otherwise ("QtWebEngineWidgets must be imported
+# or Qt.AA_ShareOpenGLContexts must be set before a QCoreApplication
+# instance is created"). Only main.py's import order matters here; every
+# other module that touches QWebEngineView (ui/browser_widget.py etc.) can
+# import it normally since by the time those run, this has already fired.
+from PyQt6 import QtWebEngineWidgets  # noqa: F401
 from PyQt6.QtWidgets import QApplication
 
 from core.state import AppState
