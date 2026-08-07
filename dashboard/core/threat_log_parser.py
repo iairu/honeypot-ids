@@ -28,7 +28,7 @@ not shown in the diagram).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 # Diagram/badge color palette -- reused across both.
 COLOR_LOW = "#5cb85c"    # green: benign / production / small score delta
@@ -44,7 +44,21 @@ class ThreatEvent:
     detail: str
     color: str
     score: int | None = None  # populated for "outcome"/"final_score" events
+    # Original log timestamp (RFC3339, e.g. "2026-08-07T10:32:37.684747138Z"),
+    # populated only when the tailing command was run with `docker compose
+    # logs --timestamps` (ui/page_exploits.py's threat_log tail; NOT
+    # ui/security_feed.py's, which doesn't need per-event timestamps for its
+    # own purposes) -- None otherwise. See _DOCKER_TIMESTAMP_RE below.
+    timestamp: str | None = None
 
+
+# `docker compose logs --timestamps` prefixes EVERY line with
+# "<service-name>  | <RFC3339-nano timestamp>Z " regardless of whether the
+# underlying app prints its own timestamp -- confirmed live against this
+# repo's own reverse_proxy container. Stripped off (and captured) before the
+# rest of parse_line's matching, which all runs against the ORIGINAL nginx
+# log message shape either way.
+_DOCKER_TIMESTAMP_RE = re.compile(r"^\S+\s*\|\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s*")
 
 _HEADER_SUMMARY_RE = re.compile(r"\[LOCATION / HEADER\] route_decision='(\w+)' threat_score='(-?\d+)'")
 _FINAL_DECISION_RE = re.compile(
@@ -78,6 +92,20 @@ def parse_line(line: str) -> ThreatEvent | None:
     line = line.strip()
     if not line:
         return None
+
+    timestamp = None
+    m_ts = _DOCKER_TIMESTAMP_RE.match(line)
+    if m_ts:
+        timestamp = m_ts.group(1)
+        line = line[m_ts.end():]
+
+    event = _parse_line_body(line)
+    if event is None:
+        return None
+    return replace(event, timestamp=timestamp) if timestamp else event
+
+
+def _parse_line_body(line: str) -> ThreatEvent | None:
     # nginx appends ", client: <ip>, server: ..., request: ...\" ..." to
     # EVERY log line (its own context, not part of the Lua message) --
     # strip it before matching so extracted "detail" text doesn't carry it.

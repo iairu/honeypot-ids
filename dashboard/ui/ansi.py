@@ -21,16 +21,29 @@ from dataclasses import dataclass, replace
 ESC = "\x1b"
 
 # Standard 16-color ANSI palette (foreground codes 30-37/90-97, background
-# 40-47/100-107 reuse the same base colors). Matches VS Code's default
-# terminal scheme -- a reasonably familiar, neutral choice, not tied to any
-# one dark/light theme.
-_BASE_COLORS = {
+# 40-47/100-107 reuse the same base colors). Matches VS Code's default DARK
+# terminal scheme -- a reasonably familiar, neutral choice for a dark
+# background. The light variants below are NOT just "the same hues, dimmer"
+# -- codes 3/7 and their bright equivalents (yellow, white/light-gray) are
+# specifically unreadable-to-invisible on a white background at their dark-
+# theme brightness, so those are darkened significantly rather than kept
+# close to the original; the rest are nudged just enough to hold reasonable
+# contrast against white.
+DARK_BASE_COLORS = {
     0: "#000000", 1: "#cd3131", 2: "#0dbc79", 3: "#e5e510",
     4: "#2472c8", 5: "#bc3fbc", 6: "#11a8cd", 7: "#e5e5e5",
 }
-_BRIGHT_COLORS = {
+DARK_BRIGHT_COLORS = {
     0: "#666666", 1: "#f14c4c", 2: "#23d18b", 3: "#f5f543",
     4: "#3b8eea", 5: "#d670d6", 6: "#29b8db", 7: "#e5e5e5",
+}
+LIGHT_BASE_COLORS = {
+    0: "#000000", 1: "#c91b1b", 2: "#0b7a3d", 3: "#8a6d00",
+    4: "#1a56b0", 5: "#8f2f8f", 6: "#0e7490", 7: "#3a3a3a",
+}
+LIGHT_BRIGHT_COLORS = {
+    0: "#5a5a5a", 1: "#c9302c", 2: "#12833f", 3: "#a68b00",
+    4: "#2a6fc9", 5: "#a83fa8", 6: "#0f8fae", 7: "#1a1a1a",
 }
 
 
@@ -46,7 +59,10 @@ class AnsiStyle:
 _DEFAULT_STYLE = AnsiStyle()
 
 
-def _apply_sgr(style: AnsiStyle, params: list[int]) -> AnsiStyle:
+def _apply_sgr(
+    style: AnsiStyle, params: list[int],
+    base_colors: dict[int, str], bright_colors: dict[int, str],
+) -> AnsiStyle:
     """One SGR escape's parameter list (already split on ';') applied on
     top of the current style. Unrecognized codes are ignored, not fatal --
     a genuinely unknown/malformed code shouldn't take down log rendering."""
@@ -71,17 +87,17 @@ def _apply_sgr(style: AnsiStyle, params: list[int]) -> AnsiStyle:
         elif code == 24:
             style = replace(style, underline=False)
         elif 30 <= code <= 37:
-            style = replace(style, fg=_BASE_COLORS[code - 30])
+            style = replace(style, fg=base_colors[code - 30])
         elif code == 39:
             style = replace(style, fg=None)
         elif 40 <= code <= 47:
-            style = replace(style, bg=_BASE_COLORS[code - 40])
+            style = replace(style, bg=base_colors[code - 40])
         elif code == 49:
             style = replace(style, bg=None)
         elif 90 <= code <= 97:
-            style = replace(style, fg=_BRIGHT_COLORS[code - 90])
+            style = replace(style, fg=bright_colors[code - 90])
         elif 100 <= code <= 107:
-            style = replace(style, bg=_BRIGHT_COLORS[code - 100])
+            style = replace(style, bg=bright_colors[code - 100])
         elif code == 38 and i + 1 < len(params) and params[i + 1] == 5 and i + 2 < len(params):
             # 256-color foreground (ESC[38;5;<n>m) -- only handle it enough
             # not to misparse the parameter list; map the 16 "standard"
@@ -89,16 +105,16 @@ def _apply_sgr(style: AnsiStyle, params: list[int]) -> AnsiStyle:
             # rather than implementing the full cube for a log viewer.
             n = params[i + 2]
             if 0 <= n <= 7:
-                style = replace(style, fg=_BASE_COLORS[n])
+                style = replace(style, fg=base_colors[n])
             elif 8 <= n <= 15:
-                style = replace(style, fg=_BRIGHT_COLORS[n - 8])
+                style = replace(style, fg=bright_colors[n - 8])
             i += 2
         elif code == 48 and i + 1 < len(params) and params[i + 1] == 5 and i + 2 < len(params):
             n = params[i + 2]
             if 0 <= n <= 7:
-                style = replace(style, bg=_BASE_COLORS[n])
+                style = replace(style, bg=base_colors[n])
             elif 8 <= n <= 15:
-                style = replace(style, bg=_BRIGHT_COLORS[n - 8])
+                style = replace(style, bg=bright_colors[n - 8])
             i += 2
         i += 1
 
@@ -108,11 +124,24 @@ def _apply_sgr(style: AnsiStyle, params: list[int]) -> AnsiStyle:
 class AnsiTextParser:
     """Stateful: carries the current SGR style AND any incomplete escape
     sequence across feed() calls, since QProcess delivers output in
-    arbitrary-sized chunks that can split `ESC [ 3 2 m` at any byte."""
+    arbitrary-sized chunks that can split `ESC [ 3 2 m` at any byte.
 
-    def __init__(self) -> None:
+    base_colors/bright_colors default to the dark-background palette
+    (unchanged behavior for any existing caller) -- pass LIGHT_BASE_COLORS/
+    LIGHT_BRIGHT_COLORS for a parser feeding a light-background widget. See
+    ui/theme.py; the Qt-aware caller (ui/process_runner.LogPanel) is the
+    one that actually decides which to use, not this module -- this file
+    stays free of any Qt/theme-detection import by design (see module
+    docstring)."""
+
+    def __init__(
+        self, base_colors: dict[int, str] = DARK_BASE_COLORS,
+        bright_colors: dict[int, str] = DARK_BRIGHT_COLORS,
+    ) -> None:
         self._style = _DEFAULT_STYLE
         self._pending = ""  # an incomplete "ESC[...." not yet terminated by 'm'
+        self._base_colors = base_colors
+        self._bright_colors = bright_colors
 
     def feed(self, chunk: str) -> list[tuple[str, AnsiStyle]]:
         """Returns a list of (plain_text, style) segments ready to render,
@@ -162,7 +191,7 @@ class AnsiTextParser:
             params_str = text[i + 2:end]
             if final_byte == "m":
                 params = [int(p) if p else 0 for p in params_str.split(";")] if params_str else [0]
-                self._style = _apply_sgr(self._style, params)
+                self._style = _apply_sgr(self._style, params, self._base_colors, self._bright_colors)
             # Any other final byte (cursor movement etc.) is silently
             # consumed and ignored -- see module docstring.
 

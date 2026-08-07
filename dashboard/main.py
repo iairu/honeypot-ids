@@ -17,6 +17,7 @@ from PyQt6 import QtWebEngineWidgets  # noqa: F401
 from PyQt6.QtWidgets import QApplication
 
 from core.state import AppState
+from ui import theme
 from ui.main_window import MainWindow
 from ui.wizard import SetupWizard
 
@@ -27,6 +28,7 @@ def main() -> int:
     app.setOrganizationName("DP_Repository")
 
     state = AppState.load()
+    theme.apply_theme(state.theme)
 
     if not state.first_run_complete:
         wizard = SetupWizard(state)

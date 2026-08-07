@@ -52,6 +52,14 @@ class AppState:
     # behavior, unlike the Exploits page's eshop browser, where an
     # ephemeral session is the whole point.
     kibana_remember_credentials: bool = True
+    # "system" (follow the OS), "light", or "dark" -- see ui/theme.py.
+    theme: str = "system"
+    # Cross-session history of notable security events (honeypot
+    # diversions, CVE/high-severity signals, missing required
+    # dependencies), capped at security_feed.MAX_EVENTS -- see
+    # ui/security_feed.py. Each entry: {timestamp, kind, label, detail,
+    # color, score}.
+    security_events: list = field(default_factory=list)
 
     @classmethod
     def load(cls) -> "AppState":
@@ -72,6 +80,8 @@ class AppState:
         state.poll_interval_ms = raw.get("poll_interval_ms", 5000)
         state.tray_notifications_enabled = raw.get("tray_notifications_enabled", True)
         state.kibana_remember_credentials = raw.get("kibana_remember_credentials", True)
+        state.theme = raw.get("theme", "system")
+        state.security_events = raw.get("security_events", [])
         return state
 
     def save(self) -> None:
@@ -85,5 +95,7 @@ class AppState:
             "poll_interval_ms": self.poll_interval_ms,
             "tray_notifications_enabled": self.tray_notifications_enabled,
             "kibana_remember_credentials": self.kibana_remember_credentials,
+            "theme": self.theme,
+            "security_events": self.security_events,
         }
         STATE_FILE.write_text(json.dumps(data, indent=2))

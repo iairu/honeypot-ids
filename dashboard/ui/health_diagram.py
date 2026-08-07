@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.web_links import build_url, web_ui_for
+from ui import theme
 
 NODE_W, NODE_H = 150, 44
 WEB_UI_ICON_SIZE = 16
@@ -22,6 +23,14 @@ EXPORT_ICON_MARGIN = 3
 COL_GAP, ROW_GAP = 24, 18
 GROUP_PADDING = 30
 GROUP_GAP_Y = 60
+
+# Canvas background / group title / group border -- unlike STATUS_COLORS
+# (self-contained, saturated node fills with white text, readable on either
+# theme), these paint the diagram's own surrounding chrome and looked
+# broken (a big dark rectangle) once light theme support existed.
+_CANVAS_BG = {False: QColor("#f4f4f4"), True: QColor("#181818")}
+_TITLE_COLOR = {False: QColor("#202020"), True: QColor("#e0e0e0")}
+_BORDER_COLOR = {False: QColor("#c8c8c8"), True: QColor("#3a3a3a")}
 
 STATUS_COLORS = {
     "healthy": QColor("#3fa34d"),        # running + healthy
@@ -201,13 +210,27 @@ class HealthDiagram(QGraphicsView):
         self.scene_ = QGraphicsScene(self)
         self.setScene(self.scene_)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.setBackgroundBrush(QBrush(QColor("#181818")))
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
 
         self.nodes: dict[tuple[str, str], ServiceNode] = {}
         self._selected_key: tuple[str, str] | None = None
+        self._last_rebuild_args: tuple | None = None
+
+        self._apply_theme_colors()
+        theme.on_change(self._on_theme_changed)
+
+    def _apply_theme_colors(self) -> None:
+        dark = theme.is_dark()
+        self.setBackgroundBrush(QBrush(_CANVAS_BG[dark]))
+
+    def _on_theme_changed(self) -> None:
+        self._apply_theme_colors()
+        if self._last_rebuild_args is not None:
+            targets, results = self._last_rebuild_args
+            self.rebuild(targets, results)
 
     def rebuild(self, targets, results: dict[str, list[dict]]) -> None:
+        self._last_rebuild_args = (targets, results)
         """targets: list[Target]; results: target_key -> list of container dicts."""
         self.scene_.clear()
         self.nodes.clear()
@@ -228,7 +251,7 @@ class HealthDiagram(QGraphicsView):
             group_h = n_rows * NODE_H + (n_rows - 1) * ROW_GAP + 2 * GROUP_PADDING + 24
 
             title = QGraphicsSimpleTextItem(target.label)
-            title.setBrush(QBrush(QColor("#e0e0e0")))
+            title.setBrush(QBrush(_TITLE_COLOR[theme.is_dark()]))
             font = title.font()
             font.setPointSize(11)
             font.setBold(True)
@@ -255,7 +278,7 @@ class HealthDiagram(QGraphicsView):
 
             border = self.scene_.addRect(
                 0, group_top, group_w, group_h - 24,
-                QPen(QColor("#3a3a3a")), QBrush(Qt.BrushStyle.NoBrush),
+                QPen(_BORDER_COLOR[theme.is_dark()]), QBrush(Qt.BrushStyle.NoBrush),
             )
             border.setZValue(-10)
 

@@ -9,8 +9,8 @@ from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
-    QCheckBox, QFileDialog, QFormLayout, QLabel, QMessageBox, QPushButton,
-    QSpinBox, QTabWidget, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QFormLayout, QLabel, QMessageBox,
+    QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core.paths import (
@@ -18,6 +18,7 @@ from core.paths import (
 )
 from core.settings_bundle import BundleError, apply_bundle, export_bundle, read_bundle, write_bundle
 from core.state import AppState
+from ui import theme
 from ui.env_source_tab import EnvSourceTab
 from ui.remote_config_widget import RemoteConfigWidget
 
@@ -72,6 +73,13 @@ class SettingsPage(QWidget):
         container = QWidget()
         form = QFormLayout(container)
 
+        self.theme_combo = QComboBox()
+        for value in theme.THEMES:
+            self.theme_combo.addItem(theme.THEME_LABELS[value], value)
+        self.theme_combo.setCurrentIndex(max(0, theme.THEMES.index(self.state.theme)))
+        self.theme_combo.currentIndexChanged.connect(self._on_theme_combo_changed)
+        form.addRow("Theme:", self.theme_combo)
+
         self.poll_interval_spin = QSpinBox()
         self.poll_interval_spin.setRange(1, 300)
         self.poll_interval_spin.setSuffix(" s")
@@ -105,6 +113,12 @@ class SettingsPage(QWidget):
     def _on_tray_notif_toggled(self, checked: bool) -> None:
         self.state.tray_notifications_enabled = checked
         self.state.save()
+
+    def _on_theme_combo_changed(self, index: int) -> None:
+        value = self.theme_combo.itemData(index)
+        self.state.theme = value
+        self.state.save()
+        theme.apply_theme(value)
 
     def _wrap_with_save(self, widget: QWidget, save_fn) -> QWidget:
         container = QWidget()

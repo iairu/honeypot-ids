@@ -10,14 +10,11 @@ from this app).
 from __future__ import annotations
 
 from PyQt6.QtCore import QProcess, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (
     QHBoxLayout, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ui.ansi import AnsiStyle, AnsiTextParser
-
-_DEFAULT_TEXT_COLOR = "#d4d4d4"  # matches this panel's own stylesheet below
+from ui import ansi_render, theme
 
 
 class LogPanel(QWidget):
@@ -34,7 +31,8 @@ class LogPanel(QWidget):
         self.process: QProcess | None = None
         self._paused = False
         self._pending: list[str] = []
-        self._ansi = AnsiTextParser()
+        self._default_text_color = ansi_render.panel_colors()[1]
+        self._ansi = ansi_render.make_parser()
         self._last_argv: list[str] | None = None
         self._last_cwd: str | None = None
         # Overrides what the Reload button does, instead of blindly
@@ -55,11 +53,9 @@ class LogPanel(QWidget):
 
         self.text = QPlainTextEdit(readOnly=True)
         self.text.setMaximumBlockCount(5000)
-        self.text.setStyleSheet(
-            "QPlainTextEdit { background-color: #1e1e1e; color: #d4d4d4; "
-            "font-family: monospace; font-size: 11px; }"
-        )
         layout.addWidget(self.text)
+        self._apply_theme_colors()
+        theme.on_change(self._apply_theme_colors)
 
         button_row = QHBoxLayout()
 
@@ -95,19 +91,14 @@ class LogPanel(QWidget):
 
         layout.addLayout(button_row)
 
-    @staticmethod
-    def _format_for(style: AnsiStyle) -> QTextCharFormat:
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(style.fg or _DEFAULT_TEXT_COLOR))
-        if style.bg:
-            fmt.setBackground(QColor(style.bg))
-        if style.bold:
-            fmt.setFontWeight(QFont.Weight.Bold)
-        if style.italic:
-            fmt.setFontItalic(True)
-        if style.underline:
-            fmt.setFontUnderline(True)
-        return fmt
+    def _apply_theme_colors(self) -> None:
+        self._default_text_color = ansi_render.panel_colors()[1]
+        self.text.setStyleSheet(ansi_render.panel_stylesheet())
+        # Only the parser's DEFAULT palette (used for un-styled text and
+        # future ESC[...m codes) needs to change -- already-rendered
+        # scrollback keeps whatever explicit colors it was drawn with,
+        # same as any terminal emulator's own theme switch.
+        self._ansi = ansi_render.make_parser()
 
     def append(self, text: str) -> None:
         """text may contain raw ANSI SGR escape codes (e.g. from `docker
@@ -116,17 +107,11 @@ class LogPanel(QWidget):
         codes in it (worker-thread lines, the "$ ..." command echo below,
         "[process exited...]" banners) just comes back as one segment in
         the default color, unchanged from before."""
-        cursor = self.text.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        for segment, style in self._ansi.feed(text):
-            if segment:
-                cursor.insertText(segment, self._format_for(style))
-        self.text.setTextCursor(cursor)
-        self.text.moveCursor(QTextCursor.MoveOperation.End)
+        ansi_render.append(self.text, self._ansi, text, self._default_text_color)
 
     def clear(self) -> None:
         self.text.clear()
-        self._ansi = AnsiTextParser()
+        self._ansi = ansi_render.make_parser()
 
     def run(self, argv: list[str], cwd: str | None = None) -> None:
         self.stop()

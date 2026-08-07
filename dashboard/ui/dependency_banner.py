@@ -6,19 +6,27 @@ time with a raw "command not found" the first time it's actually used.
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from core.dependency_check import check_dependencies, install_command
 
 
 class DependencyBanner(QWidget):
+    # Emitted only on a transition INTO a required tool being missing (not
+    # re-emitted on every refresh() while it stays missing, and not for
+    # optional-only gaps) -- ui/security_feed.py's recent-events list is
+    # meant to surface "something changed", not repeat the same standing
+    # warning this banner already shows persistently on its own.
+    required_missing_detected = pyqtSignal(str)  # human-readable detail text
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(10, 8, 10, 8)
         self._layout.setSpacing(4)
         self.setVisible(False)
+        self._last_required_missing: frozenset[str] = frozenset()
         self.refresh()
 
     def refresh(self) -> None:
@@ -31,11 +39,18 @@ class DependencyBanner(QWidget):
         missing = [s for s in statuses if not s.ok]
 
         if not missing:
+            self._last_required_missing = frozenset()
             self.setVisible(False)
             self.setStyleSheet("")
             return
 
         required_missing = [s for s in missing if s.required]
+        current_required = frozenset(s.name for s in required_missing)
+        if current_required and current_required != self._last_required_missing:
+            self.required_missing_detected.emit(
+                "Required tool(s) not found: " + ", ".join(sorted(current_required))
+            )
+        self._last_required_missing = current_required
         color = "#d9534f" if required_missing else "#f0ad4e"  # red if core tools missing, orange if only optional
         self.setStyleSheet(
             f"DependencyBanner {{ background-color: {color}; border-radius: 4px; }} QLabel {{ color: white; }}"
