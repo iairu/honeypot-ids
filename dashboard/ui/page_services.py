@@ -182,19 +182,19 @@ class ServicesPage(QWidget):
         super().__init__(parent)
         self._get_targets = get_targets
         self.panels: dict[str, TargetPanel] = {}
-        self._tab_view = False
+        self._tab_view = True
 
         outer = QVBoxLayout(self)
 
         toggle_row = QHBoxLayout()
         toggle_row.addStretch()
-        self.view_toggle_btn = QPushButton("Switch to tab view")
+        self.view_toggle_btn = QPushButton("Switch to stack view")
         self.view_toggle_btn.clicked.connect(self._toggle_view)
         toggle_row.addWidget(self.view_toggle_btn)
         outer.addLayout(toggle_row)
 
-        # Stack view (default): every target's panel one below another in
-        # a scroll area -- see everything at once, scroll to find one.
+        # Stack view (toggle): every target's panel one below another in a
+        # scroll area -- see everything at once, scroll to find one.
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         outer.addWidget(self.scroll)
@@ -204,12 +204,12 @@ class ServicesPage(QWidget):
         self.inner_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.scroll.setWidget(inner)
 
-        # Tab view (toggle): one tab per target -- only one panel's log
+        # Tab view (default): one tab per target -- only one panel's log
         # tail/controls visible at a time, useful once there are enough
         # targets (local + remote x2 projects) that the stack view means
         # a lot of scrolling to reach the one you want.
         self.tab_widget = QTabWidget()
-        self.tab_widget.setVisible(False)
+        self.tab_widget.setVisible(True)
         outer.addWidget(self.tab_widget)
 
         self.rebuild_panels()

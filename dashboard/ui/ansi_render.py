@@ -14,20 +14,28 @@ from PyQt6.QtWidgets import QPlainTextEdit
 from ui import theme
 from ui.ansi import (
     AnsiStyle, AnsiTextParser, DARK_BASE_COLORS, DARK_BRIGHT_COLORS,
-    LIGHT_BASE_COLORS, LIGHT_BRIGHT_COLORS,
+    HC_DARK_BASE_COLORS, HC_DARK_BRIGHT_COLORS, HC_LIGHT_BASE_COLORS,
+    HC_LIGHT_BRIGHT_COLORS, LIGHT_BASE_COLORS, LIGHT_BRIGHT_COLORS,
 )
 
-# (background, default-text) for a terminal-style panel -- this is what the
-# user called "the shell": a fixed dark background regardless of the app's
-# own theme looked broken once light theme support existed (bright ANSI
-# colors meant for a dark background go low-contrast-to-invisible on it
-# too -- see ui/ansi.py's LIGHT_* palettes).
-DARK_PANEL_COLORS = ("#1e1e1e", "#d4d4d4")
-LIGHT_PANEL_COLORS = ("#fafafa", "#1e1e1e")
+# This is what the user called "the shell": a fixed dark background
+# regardless of the app's own theme looked broken once light theme support
+# existed (bright ANSI colors meant for a dark background go
+# low-contrast-to-invisible on it too -- see ui/ansi.py's palettes). Uses
+# ui/theme.py's scheme_colors() so the panel matches whichever theme
+# (Solarized or High Contrast, light or dark) is actually active, instead
+# of making its own separate light/dark choice.
+_ANSI_PALETTES = {
+    theme.THEME_DARK: (DARK_BASE_COLORS, DARK_BRIGHT_COLORS),
+    theme.THEME_LIGHT: (LIGHT_BASE_COLORS, LIGHT_BRIGHT_COLORS),
+    theme.THEME_HC_DARK: (HC_DARK_BASE_COLORS, HC_DARK_BRIGHT_COLORS),
+    theme.THEME_HC_LIGHT: (HC_LIGHT_BASE_COLORS, HC_LIGHT_BRIGHT_COLORS),
+}
 
 
 def panel_colors() -> tuple[str, str]:
-    return DARK_PANEL_COLORS if theme.is_dark() else LIGHT_PANEL_COLORS
+    colors = theme.scheme_colors()
+    return colors["bg"], colors["fg"]
 
 
 def panel_stylesheet(widget_selector: str = "QPlainTextEdit") -> str:
@@ -39,9 +47,8 @@ def panel_stylesheet(widget_selector: str = "QPlainTextEdit") -> str:
 
 
 def make_parser() -> AnsiTextParser:
-    if theme.is_dark():
-        return AnsiTextParser(DARK_BASE_COLORS, DARK_BRIGHT_COLORS)
-    return AnsiTextParser(LIGHT_BASE_COLORS, LIGHT_BRIGHT_COLORS)
+    base, bright = _ANSI_PALETTES[theme.effective_theme()]
+    return AnsiTextParser(base, bright)
 
 
 def format_for(style: AnsiStyle, default_color: str) -> QTextCharFormat:

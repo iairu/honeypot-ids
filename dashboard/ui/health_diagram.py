@@ -28,9 +28,16 @@ GROUP_GAP_Y = 60
 # (self-contained, saturated node fills with white text, readable on either
 # theme), these paint the diagram's own surrounding chrome and looked
 # broken (a big dark rectangle) once light theme support existed.
-_CANVAS_BG = {False: QColor("#f4f4f4"), True: QColor("#181818")}
-_TITLE_COLOR = {False: QColor("#202020"), True: QColor("#e0e0e0")}
-_BORDER_COLOR = {False: QColor("#c8c8c8"), True: QColor("#3a3a3a")}
+def _canvas_bg() -> QColor:
+    return QColor(theme.scheme_colors()["bg"])
+
+
+def _title_color() -> QColor:
+    return QColor(theme.scheme_colors()["fg"])
+
+
+def _border_color() -> QColor:
+    return QColor(theme.scheme_colors()["border"])
 
 STATUS_COLORS = {
     "healthy": QColor("#3fa34d"),        # running + healthy
@@ -220,8 +227,7 @@ class HealthDiagram(QGraphicsView):
         theme.on_change(self._on_theme_changed)
 
     def _apply_theme_colors(self) -> None:
-        dark = theme.is_dark()
-        self.setBackgroundBrush(QBrush(_CANVAS_BG[dark]))
+        self.setBackgroundBrush(QBrush(_canvas_bg()))
 
     def _on_theme_changed(self) -> None:
         self._apply_theme_colors()
@@ -251,7 +257,7 @@ class HealthDiagram(QGraphicsView):
             group_h = n_rows * NODE_H + (n_rows - 1) * ROW_GAP + 2 * GROUP_PADDING + 24
 
             title = QGraphicsSimpleTextItem(target.label)
-            title.setBrush(QBrush(_TITLE_COLOR[theme.is_dark()]))
+            title.setBrush(QBrush(_title_color()))
             font = title.font()
             font.setPointSize(11)
             font.setBold(True)
@@ -278,7 +284,7 @@ class HealthDiagram(QGraphicsView):
 
             border = self.scene_.addRect(
                 0, group_top, group_w, group_h - 24,
-                QPen(_BORDER_COLOR[theme.is_dark()]), QBrush(Qt.BrushStyle.NoBrush),
+                QPen(_border_color()), QBrush(Qt.BrushStyle.NoBrush),
             )
             border.setZValue(-10)
 

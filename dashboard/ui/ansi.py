@@ -21,29 +21,53 @@ from dataclasses import dataclass, replace
 ESC = "\x1b"
 
 # Standard 16-color ANSI palette (foreground codes 30-37/90-97, background
-# 40-47/100-107 reuse the same base colors). Matches VS Code's default DARK
-# terminal scheme -- a reasonably familiar, neutral choice for a dark
-# background. The light variants below are NOT just "the same hues, dimmer"
-# -- codes 3/7 and their bright equivalents (yellow, white/light-gray) are
-# specifically unreadable-to-invisible on a white background at their dark-
-# theme brightness, so those are darkened significantly rather than kept
-# close to the original; the rest are nudged just enough to hold reasonable
-# contrast against white.
+# 40-47/100-107 reuse the same base colors) -- Ethan Schoonover's published
+# Solarized terminal color values (https://ethanschoonover.com/solarized/),
+# matching ui/theme.py's SOLARIZED dict so the log panel's colors agree with
+# the rest of the app's theme instead of being a separate, arbitrary
+# palette. Deliberately duplicated here as literal hex rather than
+# importing ui.theme -- this module has no Qt/theme dependency by design
+# (see module docstring), and Solarized's whole celebrated design point is
+# that these SAME 16 ANSI values are legible on both a dark and a light
+# background (unlike a conventional terminal palette, which needs two
+# genuinely different sets) -- confirmed against the published spec, so
+# DARK_*/LIGHT_* intentionally hold identical values here, kept as
+# separate names for API stability (callers already select between them
+# by theme; a future divergence would be a one-line change here, not a
+# call-site change).
 DARK_BASE_COLORS = {
-    0: "#000000", 1: "#cd3131", 2: "#0dbc79", 3: "#e5e510",
-    4: "#2472c8", 5: "#bc3fbc", 6: "#11a8cd", 7: "#e5e5e5",
+    0: "#073642", 1: "#dc322f", 2: "#859900", 3: "#b58900",
+    4: "#268bd2", 5: "#d33682", 6: "#2aa198", 7: "#eee8d5",
 }
 DARK_BRIGHT_COLORS = {
-    0: "#666666", 1: "#f14c4c", 2: "#23d18b", 3: "#f5f543",
-    4: "#3b8eea", 5: "#d670d6", 6: "#29b8db", 7: "#e5e5e5",
+    0: "#002b36", 1: "#cb4b16", 2: "#586e75", 3: "#657b83",
+    4: "#839496", 5: "#6c71c4", 6: "#93a1a1", 7: "#fdf6e3",
 }
-LIGHT_BASE_COLORS = {
-    0: "#000000", 1: "#c91b1b", 2: "#0b7a3d", 3: "#8a6d00",
-    4: "#1a56b0", 5: "#8f2f8f", 6: "#0e7490", 7: "#3a3a3a",
+LIGHT_BASE_COLORS = dict(DARK_BASE_COLORS)
+LIGHT_BRIGHT_COLORS = dict(DARK_BRIGHT_COLORS)
+
+# High Contrast palettes -- near-maximally saturated primaries rather than
+# Solarized's more moderate tones, for anyone who specifically wants that
+# over Solarized's ~4.7:1 body-text contrast. Genuinely different between
+# dark/light here (unlike the Solarized sets above): a color bright enough
+# to read on black (e.g. pure green #00ff00) is often too washed-out or
+# low-contrast on white and vice versa, so max-contrast necessarily means
+# two real palettes, not one shared one.
+HC_DARK_BASE_COLORS = {
+    0: "#000000", 1: "#ff0000", 2: "#00ff00", 3: "#ffff00",
+    4: "#5599ff", 5: "#ff00ff", 6: "#00ffff", 7: "#ffffff",
 }
-LIGHT_BRIGHT_COLORS = {
-    0: "#5a5a5a", 1: "#c9302c", 2: "#12833f", 3: "#a68b00",
-    4: "#2a6fc9", 5: "#a83fa8", 6: "#0f8fae", 7: "#1a1a1a",
+HC_DARK_BRIGHT_COLORS = {
+    0: "#808080", 1: "#ff5555", 2: "#55ff55", 3: "#ffff55",
+    4: "#77aaff", 5: "#ff55ff", 6: "#55ffff", 7: "#ffffff",
+}
+HC_LIGHT_BASE_COLORS = {
+    0: "#000000", 1: "#cc0000", 2: "#007700", 3: "#806600",
+    4: "#0000ee", 5: "#aa00aa", 6: "#007777", 7: "#444444",
+}
+HC_LIGHT_BRIGHT_COLORS = {
+    0: "#222222", 1: "#ff0000", 2: "#00aa00", 3: "#aa8800",
+    4: "#3333ff", 5: "#cc00cc", 6: "#00aaaa", 7: "#000000",
 }
 
 
