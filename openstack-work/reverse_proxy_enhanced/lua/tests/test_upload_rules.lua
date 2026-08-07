@@ -88,6 +88,16 @@ do
     check("clean endpoint scores zero", clean.score == 0)
 
     check("nil uri returns zero score", rules.analyze_upload_endpoint(nil).score == 0)
+
+    -- Regression test: a plain admin-ajax.php hit with no known-vulnerable
+    -- action name must score zero. This used to score +20 unconditionally
+    -- (the "admin_ajax_upload" blanket rule) -- confirmed live it fired on
+    -- a normal WooCommerce product-page visit, since every admin-ajax.php
+    -- request matches the URI by definition, real signal or not.
+    local plain_ajax = rules.analyze_upload_endpoint("/wp-admin/admin-ajax.php")
+    check("plain admin-ajax.php with no known-vulnerable action scores zero", plain_ajax.score == 0)
+    check("plain admin-ajax.php with no known-vulnerable action has no risk factors",
+          #plain_ajax.risk_factors == 0)
 end
 
 print("== analyze_upload_user_agent() ==")

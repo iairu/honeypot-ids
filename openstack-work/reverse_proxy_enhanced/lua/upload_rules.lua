@@ -201,7 +201,17 @@ function _M.analyze_upload_endpoint(uri)
         { pattern = "dnd_codedropz_upload", score = 50, factor = "cve_2025_4403_endpoint" },
         { pattern = "mwb_wgm_preview_mail", score = 50, factor = "cve_2025_47577_endpoint" },
         { pattern = "pc_added_uploaded_image", score = 45, factor = "cve_2025_10142_endpoint" },
-        { pattern = "wp%-admin/admin%-ajax%.php", score = 20, factor = "admin_ajax_upload" },
+        -- Deliberately NOT a blanket "wp-admin/admin-ajax.php" rule: that's
+        -- WordPress's central AJAX router, used constantly by legitimate
+        -- frontend JS (WooCommerce cart updates, product-page addons,
+        -- wishlists, ...) -- some of which submits multipart/form-data even
+        -- without an actual file attached (a common FormData-based fetch()
+        -- pattern). Confirmed live: a plain product-page visit tripped this
+        -- for +20 with zero real signal behind it, since every request to
+        -- this endpoint matches the URI by definition. The CVE-specific
+        -- action-name patterns above (and analyze_upload_parameters'
+        -- extension/traversal checks) already carry their own scores for
+        -- genuinely suspicious admin-ajax.php requests.
         { pattern = "theme%-editor%.php", score = 40, factor = "theme_editor_access" },
         { pattern = "plugin%-editor%.php", score = 40, factor = "plugin_editor_access" },
         { pattern = "file%-manager", score = 30, factor = "file_manager_access" },

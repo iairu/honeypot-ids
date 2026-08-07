@@ -98,7 +98,24 @@ function _M.analyze_request(uri, headers, remote_ip)
     end
 
     -- Stage 1: URI pattern analysis (WSTG-INPV, WSTG-CONF, WSTG-INFO)
-    local uri_score = _M.analyze_uri_patterns(uri)
+    --
+    -- admin-ajax.php is scanned on its query string only, not its full
+    -- path. Its fixed path ("/wp-admin/admin-ajax.php") itself trips the
+    -- generic "/admin" and "/wp-admin/" reconnaissance-probe patterns on
+    -- every single request regardless of content, since this is
+    -- WordPress's public AJAX gateway that legitimate frontend JS hits
+    -- constantly (WooCommerce cart updates, coupon apply, ...) -- not a
+    -- probed/discovered admin path. Confirmed live this pipeline previously
+    -- never ran for admin-ajax.php at all (see Stage 6b below), so this
+    -- false-positive path was latent until that bypass was fixed.
+    -- SQLi/XSS/traversal/CVE-action-name signals still fire normally since
+    -- those live in the query string, and Stage 3/Stage 6b give this
+    -- endpoint its own dedicated, appropriately-scoped analysis.
+    local uri_for_pattern_scan = uri
+    if uri and uri:find("admin%-ajax%.php") then
+        uri_for_pattern_scan = "/" .. (ngx.var.args or "")
+    end
+    local uri_score = _M.analyze_uri_patterns(uri_for_pattern_scan)
     threat_result.score = threat_result.score + uri_score.score
 
     if uri_score.score > 0 then
@@ -178,6 +195,29 @@ function _M.analyze_request(uri, headers, remote_ip)
         table.insert(threat_result.details, "automation_detected: " .. automation_score.tool)
         ngx.log(ngx.WARN, "[THREAT ANALYZER] 🤖 Automation detected (+", automation_score.score, ") | Tool: ",
                 automation_score.tool or "unknown")
+    end
+
+    -- Stage 6b: WordPress AJAX upload-specific analysis (WSTG-INPV-10).
+    -- Scoped to POST /wp-admin/admin-ajax.php, mirroring upload_handler.lua's
+    -- original intent. This used to run from its own dedicated nginx
+    -- location with its own proxy_pass, entirely bypassing this pipeline
+    -- and session_handler's accumulation -- a detection there never
+    -- survived past the single request it fired on and never reached the
+    -- dashboard's displayed score. Folding it in here fixes both: it now
+    -- accumulates like every other signal, and benefits from
+    -- upload_rules.lua's endpoint check no longer blanket-flagging every
+    -- admin-ajax.php request regardless of actual signal (see that file's
+    -- comment -- confirmed live this misfired on a plain product-page visit).
+    if ngx.var.request_method == "POST" and uri and uri:find("admin%-ajax%.php") then
+        local upload_handler = require "upload_handler"
+        local upload_analysis = upload_handler.analyze_upload(headers, ngx.var.args)
+        threat_result.score = threat_result.score + upload_analysis.threat_score
+
+        if upload_analysis.threat_score > 0 then
+            table.insert(threat_result.details, "upload_analysis: " .. table.concat(upload_analysis.risk_factors, ","))
+            ngx.log(ngx.WARN, "[THREAT ANALYZER] 📤 Upload analysis (+", upload_analysis.threat_score,
+                    ") | Factors: ", table.concat(upload_analysis.risk_factors, ", "))
+        end
     end
 
     -- Stage 7: Prompt-injection pattern probe (forward-looking LLM-abuse

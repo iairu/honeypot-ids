@@ -8,7 +8,17 @@ local upload_rules = require "upload_rules"
 
 local _M = {}
 
--- Analyze upload requests for suspicious activity
+-- Analyze upload requests for suspicious activity.
+--
+-- Returns the full analysis table (not just is_suspicious) -- the caller
+-- (threat_analyzer.lua) folds analysis.threat_score into the same
+-- accumulated session score every other signal contributes to, instead of
+-- this module making its own standalone routing decision. It previously
+-- ran from its own dedicated nginx location with its own proxy_pass,
+-- completely bypassing threat_analyzer/router.lua and session_handler's
+-- accumulation -- confirmed live: a detection here never survived past the
+-- single request it fired on and never showed up in the dashboard's
+-- displayed score.
 function _M.analyze_upload(headers, args)
     local analysis = {
         is_suspicious = false,
@@ -78,11 +88,11 @@ function _M.analyze_upload(headers, args)
                 " | Risk Factors: ", #analysis.risk_factors, " | Factors: ", table.concat(analysis.risk_factors, ", "))
         _M.log_suspicious_upload(analysis, headers, args)
     else
-        ngx.log(ngx.INFO, "[UPLOAD] ✅ Upload appears clean | Score: ", analysis.threat_score, 
+        ngx.log(ngx.INFO, "[UPLOAD] ✅ Upload appears clean | Score: ", analysis.threat_score,
                 " | Risk Factors: ", #analysis.risk_factors)
     end
-    
-    return analysis.is_suspicious
+
+    return analysis
 end
 
 -- Thin delegating wrappers over upload_rules.lua's pure functions -- see
