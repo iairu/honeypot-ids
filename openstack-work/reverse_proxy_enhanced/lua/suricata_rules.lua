@@ -56,6 +56,19 @@
 --   honeypot-diversion threshold on its own; a low-priority scan/recon
 --   signature contributes much less, so noisy background scanning doesn't
 --   force honeypot diversion as readily as a real exploit attempt does.
+--
+-- DECAY:
+--   next_score() (the WRITE path, called from init_worker.lua/admin_
+--   handler.lua) only ever raises the stored score -- it has no notion of
+--   time passing. decayed_score() (the READ path, called from threat_
+--   analyzer.check_ip_reputation()) is where a stale alert's contribution
+--   actually fades: an IP's reputation score decays exponentially based
+--   on elapsed time since its `updated` timestamp, using the same
+--   score_decay_half_life_seconds config knob session-level scoring
+--   decays against (router_rules.decayed_score(), router.lua). Added
+--   after confirming live that a one-off/false-positive alert otherwise
+--   permanently poisoned an IP's reputation with no way to age out short
+--   of manually clearing Redis.
 
 -- No cjson dependency here, deliberately -- matches this codebase's
 -- pool_router_rules.lua/pool_router.lua split: the impure glue file
@@ -136,8 +149,9 @@ function _M.severity_to_score(severity)
 end
 
 --- Apply an alert's score delta to a previous running score, capped at
---- MAX_SCORE. Never decreases -- alerts only ever raise suspicion here;
---- decay/expiry (if ever added) is a separate concern.
+--- MAX_SCORE. Never decreases on its own -- alerts only ever raise this
+--- stored value; decay is applied separately, at READ time, by
+--- decayed_score() below (see that function's comment for why).
 ---
 --- @param  previous_score  number|nil
 --- @param  severity        number|nil
@@ -145,6 +159,50 @@ end
 function _M.next_score(previous_score, severity)
     local delta = _M.severity_to_score(severity)
     return math.min((previous_score or 0) + delta, MAX_SCORE)
+end
+
+--- Time-decayed view of a threat_ips[ip] entry's stored score.
+---
+--- Added after confirming live that a stale/false-positive Suricata alert
+--- permanently poisoned an IP's reputation contribution: check_ip_
+--- reputation() (threat_analyzer.lua) used the raw stored score forever,
+--- with no way for an IP to "age out" of a bad reputation short of
+--- manually clearing Redis. That's the same class of bug already fixed
+--- for session-level scoring (router_rules.decayed_score()) -- this is
+--- its IP-reputation-side counterpart, same shape: decay is computed at
+--- READ time from the stored (score, updated) pair rather than mutating
+--- the stored value on every read (which would compound incorrectly
+--- across repeated evaluations) or requiring next_score() itself to know
+--- about wall-clock time on the WRITE path.
+---
+--- @param  entry               table|nil  threat_ips[ip], i.e.
+---                              { score, reason, updated, alert_count }.
+--- @param  current_time        number     e.g. ngx.time()
+--- @param  half_life_seconds   number     e.g.
+---                              _G.config.threat.score_decay_half_life_seconds
+--- @return number  the decayed score (0 if entry is nil or has no score)
+function _M.decayed_score(entry, current_time, half_life_seconds)
+    if not entry then
+        return 0
+    end
+
+    local stored = entry.score or 0
+    if stored <= 0 then
+        return 0
+    end
+
+    local anchor = entry.updated
+    if not anchor or not half_life_seconds or half_life_seconds <= 0 then
+        return stored
+    end
+
+    local elapsed = current_time - anchor
+    if elapsed <= 0 then
+        return stored
+    end
+
+    local half_lives_elapsed = elapsed / half_life_seconds
+    return stored * (0.5 ^ half_lives_elapsed)
 end
 
 --- Human-readable reason string for threat_ips[ip].reason, surfaced all the

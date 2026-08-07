@@ -140,6 +140,35 @@ do
           rules.next_score(25, 1) > 50)
 end
 
+print("== decayed_score() ==")
+do
+    local now = 1000000
+    local HALF_LIFE = 300
+
+    check("nil entry returns zero", rules.decayed_score(nil, now, HALF_LIFE) == 0)
+    check("entry with zero score stays zero",
+          rules.decayed_score({ score = 0, updated = now }, now + 10000, HALF_LIFE) == 0)
+
+    local fresh = { score = 100, updated = now }
+    check("no time elapsed -> no decay", rules.decayed_score(fresh, now, HALF_LIFE) == 100)
+
+    -- The specific bug this exists to fix: a stale alert (or a one-off
+    -- false positive, e.g. this project's own known same-host Suricata
+    -- IP-attribution caveat) must not permanently poison an IP's
+    -- reputation with no way to age out short of manually clearing Redis.
+    local one_half_life = rules.decayed_score(fresh, now + HALF_LIFE, HALF_LIFE)
+    check("one half-life elapsed -> decayed to ~half", math.abs(one_half_life - 50) < 0.01)
+
+    local four_half_lives = rules.decayed_score(fresh, now + 4 * HALF_LIFE, HALF_LIFE)
+    check("four half-lives elapsed -> well below the Stage 6 >50 gate", four_half_lives < 10)
+
+    local missing_anchor = rules.decayed_score({ score = 100 }, now + 10000, HALF_LIFE)
+    check("missing updated timestamp -> no decay (treated as still-fresh)", missing_anchor == 100)
+
+    check("nil half_life -> no decay",
+          rules.decayed_score(fresh, now + 10000, nil) == 100)
+end
+
 print("== build_reason() ==")
 do
     local alert = rules.extract_alert(CVE_ALERT)
