@@ -13,15 +13,8 @@ Name:   Zlepšenie efektivity honeypot nástroja pomocou zvýšenia úrovne inte
 Eng:    Improving Honeypot Tool Efficiency by Increasing Interaction Level
 Place:  Ústav počítačového inžinierstva a aplikovanej informatiky, FIIT STU
 Oblasť: Kombinované bezpečnostné riešenia
----
 
-# Honeypot IDS System — Technical & Operational Manual
-
-**Zlepšenie efektivity honeypot nástroja pomocou zvýšenia úrovne interakcie**
-**Improving Honeypot Tool Efficiency by Increasing Interaction Level**
-Master's thesis, Ústav počítačového inžinierstva a aplikovanej informatiky, FIIT STU
-
-
+# Technical & Operational Manual
 
 This file is the single technical/functional manual for the project: what it is, how to run it, how it works in detail, what's known-broken, and what's left to do. It supersedes and merges the following (now removed) files: `CHECKLIST.md`, `CHECKLIST-MANUAL.md`, `PROMPT_TODO.md`, `walkthrough.md` (both the root and `openstack-work/` copies), `refactoring-plan.md`, `summary-for-claude.md`, `openstack-work/README.md`, `openstack-work/ELK_INTEGRATION.md`, `openstack-work/SQL_PROXY_ROUTING.md`, and `openstack-work/reverse_proxy_enhanced/HONEYPOT_ROUTING_TEST_CASES.md`. Thesis-scoped material (the LaTeX thesis under `master-thesis-latex/`) stays separate — see [§12](#12-thesis--academic-material). `COUNTERARGUMENTS.md`, `PLAN_DP1-3.md`, and `master-thesis-rewrite-plan/` are cited a few times below for historical context but no longer exist in the repository (removed in a later cleanup pass — see §12's note).
 
