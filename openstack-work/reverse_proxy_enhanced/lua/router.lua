@@ -97,6 +97,14 @@ local function assign_honeypot_pool(routing_decision, extra_session_data, remote
     sd.honeypot_bound    = true
     sd.route_preference  = "honeypot"
     sd.honeypot_pool     = pool_num
+    -- Anchors Stage 2's decayed_score() re-check (router_rules.lua) on
+    -- future requests -- without this, a session's very FIRST flagging
+    -- event (the common case: this function's caller already returns
+    -- right after calling it) would leave last_threat_time nil, and
+    -- decayed_score() treats a missing anchor as "no decay possible",
+    -- i.e. this session would never be able to earn its way back to
+    -- production at all.
+    sd.last_threat_time  = ngx.time()
     routing_decision.session_data = sd
 
     -- Keep the assignment alive in Redis while the attacker is still active.
@@ -170,6 +178,47 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         ngx.log(ngx.INFO, "[ROUTING] New session created for IP: ", remote_ip, " | Session ID: ", session_data.id)
     end
     
+    -- Score accumulation: fold the session's own decaying suspicion
+    -- history into THIS request's fresh score, before ANY stage below
+    -- compares threat_result.score against a threshold. From here on,
+    -- threat_result.score IS the accumulated/decayed effective score --
+    -- every stage that reads it (Stage 2's re-check, Stage 3's
+    -- honeypot_threshold gate, the suspicious-activity logging at the
+    -- bottom of this function) automatically benefits without needing
+    -- its own copy of this logic.
+    --
+    -- Confirmed live this was the real gap behind escalating-but-
+    -- individually-below-threshold probing going undetected: a session
+    -- that had already triggered two separate exploits (scoring, say, 20
+    -- then 55 in isolation) went right back to a raw "20" the third time
+    -- the FIRST exploit was retried -- every stage only ever saw
+    -- threat_result.score in isolation, with the session's own history
+    -- completely inert outside of the honeypot_bound sticky-routing
+    -- re-check this block replaces.
+    --
+    -- A new signal (this request's OWN fresh score > 10 -- the same
+    -- "worth remembering" bar this file already used elsewhere before
+    -- this change) ACCUMULATES onto the session's decayed base rather
+    -- than being judged alone, capped at max_threat_score so it can't
+    -- grow unbounded. A negligible/clean request (fresh score <= 10,
+    -- e.g. loading a plain page) neither adds to nor resets the running
+    -- total -- it just sees whatever the currently-decayed base already
+    -- is, so one benign click can no longer make an already-elevated
+    -- session look clean (the original bug report), but also doesn't
+    -- itself ratchet anything up or reset the decay clock.
+    local new_signal_fired
+    do
+        local decayed_base = router_rules.decayed_score(
+            session_data, ngx.time(), _G.config.threat.score_decay_half_life_seconds)
+        local fresh_score = threat_result.score
+        new_signal_fired = fresh_score > 10
+        if new_signal_fired then
+            threat_result.score = math.min(_G.config.threat.max_threat_score, decayed_base + fresh_score)
+        else
+            threat_result.score = math.max(fresh_score, decayed_base)
+        end
+    end
+
     -- Stage 2: Sticky honeypot routing.
     -- Once a session is marked honeypot_bound (by any routing stage on a prior
     -- request), all subsequent requests from the same session are locked to the
@@ -177,11 +226,20 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
     -- a single persistent target: WordPress state changes they made in earlier
     -- requests (cookies, wp-login tokens, uploaded files) are still visible.
     if session_data.honeypot_bound then
-        -- Re-evaluate: if current threat score is low, allow production access
+        -- threat_result.score already folds in the session's own
+        -- decayed/accumulated history (see above), so this is just the
+        -- plain threshold check. Previously this checked the CURRENT
+        -- request's isolated score, which meant a single clean request
+        -- (e.g. just loading "/") fully reset a session that had
+        -- triggered a CVE match moments earlier -- confirmed live this
+        -- let an attacker freely alternate "run exploit" / "visit
+        -- homepage" to re-run every exploit against production from a
+        -- clean slate each time.
         if threat_result.score < 30 then
             routing_decision.target = "production"
             routing_decision.upstream = "production_backend"
-            ngx.log(ngx.INFO, "[ROUTING] Session bound but low threat - allowing production | Score: ", threat_result.score)
+            ngx.log(ngx.INFO, "[ROUTING] Session bound but accumulated/decayed score below threshold - "
+                    .. "allowing production | Score: ", threat_result.score)
             return routing_decision
         end
         -- Re-use the pool number that was stored when the session was first
@@ -197,6 +255,21 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         end
         -- Always refresh the TTL so an active attack session is never evicted.
         pool_router.refresh_assignment_ttl(remote_ip)
+
+        -- Only persist the new accumulated peak / refresh the decay
+        -- anchor when THIS request itself carried a genuinely new signal
+        -- (new_signal_fired) -- NOT on every request that merely stays
+        -- routed to honeypot because the decayed base is still above 30.
+        -- Unconditionally refreshing last_threat_time here would reset
+        -- the decay clock on every single click regardless of whether
+        -- anything new happened, defeating the whole point of decay.
+        if new_signal_fired then
+            routing_decision.update_session = true
+            local sd = routing_decision.session_data or {}
+            sd.threat_score = threat_result.score
+            sd.last_threat_time = ngx.time()
+            routing_decision.session_data = sd
+        end
 
         routing_decision.target   = "honeypot"
         routing_decision.upstream = pool_router.get_upstream_for_pool(pool_num)
@@ -432,8 +505,14 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
     -- end
     -- Removed probabilistic routing to prevent false positives on legitimate traffic
     
-    -- Update session with current threat information if staying on production
-    if threat_result.suspicious or threat_result.score > 10 then
+    -- Update session with current threat information if staying on production.
+    -- Uses new_signal_fired (THIS request's own fresh score > 10, computed
+    -- before the accumulation block above overwrote threat_result.score)
+    -- rather than threat_result.score itself -- that's now the accumulated/
+    -- decayed value, and using it here would treat a totally clean request
+    -- riding on residual decayed suspicion as if something new had
+    -- happened, refreshing last_threat_time and defeating decay.
+    if threat_result.suspicious or new_signal_fired then
         routing_decision.update_session = true
         routing_decision.session_data = {
             threat_score = math.max(session_data.threat_score or 0, threat_result.score),

@@ -97,6 +97,22 @@ _G.config = {
     --                        Raised from 50 to 80 after tuning to eliminate
     --                        false-positives on aggressive but legitimate REST
     --                        API clients (WooCommerce mobile app, Stripe webhooks).
+    --   score_decay_half_life_seconds – How long a honeypot-bound session's
+    --                        stored peak threat_score takes to decay to half
+    --                        its value once no new suspicious signal has
+    --                        occurred (router.lua Stage 2's "allow production
+    --                        again" re-check, router_rules.decayed_score()).
+    --                        Added after confirming live that the un-stick
+    --                        check previously used only the CURRENT request's
+    --                        own score -- a single clean request (e.g. just
+    --                        loading "/") fully reset a session that had JUST
+    --                        triggered a CVE match moments earlier, letting an
+    --                        attacker freely alternate "run exploit" / "visit
+    --                        homepage" to re-run every exploit against
+    --                        production from a clean slate every time. 300s (5
+    --                        min) means a session can't be un-stuck by one
+    --                        click, but a genuinely-reformed/false-positived
+    --                        session isn't bound forever either.
     -- -----------------------------------------------------------------------
     threat = {
         ip_whitelist = {
@@ -106,6 +122,7 @@ _G.config = {
         },
         max_threat_score = 100,
         honeypot_threshold = 80,  -- Raised from 50 to prevent false positives
+        score_decay_half_life_seconds = tonumber(os.getenv("SCORE_DECAY_HALF_LIFE_SECONDS")) or 300,
         static_asset_patterns = {
             "robots%.txt",
             "sitemap%.xml",

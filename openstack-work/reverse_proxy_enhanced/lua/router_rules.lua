@@ -175,6 +175,54 @@ function _M.is_rapid_automation(session_data, threat_result, current_time)
 end
 
 -- ---------------------------------------------------------------------------
+-- decayed_score(session_data, current_time, half_life_seconds)
+--
+-- A honeypot-bound session's stored peak threat_score (session_data.
+-- threat_score, set via math.max() elsewhere in router.lua so it only ever
+-- ratchets UP on a new suspicious signal), exponentially decayed based on
+-- how long it's been since the LAST suspicious signal
+-- (session_data.last_threat_time, only touched when a signal actually
+-- fires -- a genuinely clean request never moves it). Used by router.lua's
+-- Stage 2 to decide whether a previously-flagged session has earned its
+-- way back to production: a single clean request barely moves this (the
+-- elapsed time since last_threat_time is ~0), but sustained clean behavior
+-- over multiple half-lives brings it down.
+--
+-- Deliberately does NOT get called on every request to progressively
+-- shrink the STORED value -- that would compound incorrectly across
+-- repeated evaluations. The stored peak stays fixed; only this computed,
+-- never-persisted view of it decays.
+--
+-- @param session_data      table|nil
+-- @param current_time      number  e.g. ngx.time()
+-- @param half_life_seconds number  e.g. _G.config.threat.score_decay_half_life_seconds
+-- @return number  the decayed score (never negative, never above the stored peak)
+-- ---------------------------------------------------------------------------
+function _M.decayed_score(session_data, current_time, half_life_seconds)
+    if not session_data then
+        return 0
+    end
+
+    local peak = session_data.threat_score or 0
+    if peak <= 0 then
+        return 0
+    end
+
+    local anchor = session_data.last_threat_time or session_data.updated_at or session_data.created_at
+    if not anchor or not half_life_seconds or half_life_seconds <= 0 then
+        return peak
+    end
+
+    local elapsed = current_time - anchor
+    if elapsed <= 0 then
+        return peak
+    end
+
+    local half_lives_elapsed = elapsed / half_life_seconds
+    return peak * (0.5 ^ half_lives_elapsed)
+end
+
+-- ---------------------------------------------------------------------------
 -- is_suspicious_upload(method, uri, content_type, args)
 --
 -- @param method        string|nil  e.g. ngx.var.request_method

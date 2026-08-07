@@ -131,6 +131,38 @@ do
     check("nil session_data returns zero score", nil_session.score == 0)
 end
 
+print("== decayed_score() ==")
+do
+    local now = 1000000
+    local HALF_LIFE = 300
+
+    local fresh = { threat_score = 90, last_threat_time = now }
+    check("no time elapsed -> no decay", rules.decayed_score(fresh, now, HALF_LIFE) == 90)
+
+    -- The specific bug this function exists to fix: a session flagged
+    -- moments ago (e.g. by a CVE match) must NOT be back near-zero after
+    -- one immediate follow-up request -- confirmed live this was
+    -- previously possible by checking only the fresh per-request score.
+    local one_second_later = rules.decayed_score(fresh, now + 1, HALF_LIFE)
+    check("1s elapsed -> still clearly above the 30 release threshold", one_second_later > 89)
+
+    local one_half_life = rules.decayed_score(fresh, now + HALF_LIFE, HALF_LIFE)
+    check("one half-life elapsed -> decayed to ~half", math.abs(one_half_life - 45) < 0.01)
+
+    local two_half_lives = rules.decayed_score(fresh, now + 2 * HALF_LIFE, HALF_LIFE)
+    check("two half-lives elapsed -> below the 30 release threshold", two_half_lives < 30)
+
+    local zero_score = rules.decayed_score({ threat_score = 0, last_threat_time = now }, now + 10000, HALF_LIFE)
+    check("zero stored score stays zero", zero_score == 0)
+
+    local no_anchor = rules.decayed_score({ threat_score = 90 }, now + 10000, HALF_LIFE)
+    check("missing last_threat_time -> no decay (treated as still-fresh)", no_anchor == 90)
+
+    check("nil session_data returns zero", rules.decayed_score(nil, now, HALF_LIFE) == 0)
+    check("nil half_life returns undecayed peak",
+          rules.decayed_score(fresh, now + 10000, nil) == 90)
+end
+
 print()
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)
