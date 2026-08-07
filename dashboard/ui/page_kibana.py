@@ -3,12 +3,23 @@ host's Kibana -- https://<remote_siem.host or localhost>:5601/. The address
 bar is fully editable regardless (e.g. to navigate straight to a specific
 saved dashboard's URL), this is only the starting point.
 
-Two things beyond a bare embedded browser:
+Beyond a bare embedded browser:
   - "Remember credentials" (default on): toggles between a persistent
     (named) QWebEngineProfile and the off-the-record default every other
     embedded browser in this app uses -- see browser_widget.py. Kibana is
     the one place in this app where staying logged in across restarts is
     obviously wanted, unlike the Exploits page's eshop browser.
+  - Autologin: whenever Kibana's own login page loads, its username/
+    password fields are filled in and submitted automatically using the
+    SIEM stack's own ELASTIC_USERNAME/ELASTIC_PASSWORD (core/
+    kibana_credentials.py) -- the elk_dockerized .env already documents
+    these as "also used for dashboard login". Silently does nothing if the
+    credentials can't be read (missing .env, unreachable remote) --
+    Kibana's own login form is still right there either way.
+  - Bookmarks: one-click buttons to the SIEM's saved dashboards and the
+    Discover page, laid out in a FlowLayout (ui/flow_layout.py) alongside
+    the "Remember credentials" checkbox so an arbitrary number of them
+    wraps onto additional rows instead of forcing the window wider.
   - A causality banner on load failure: QWebEngineView's own error page
     just says something generic like "can't reach this page", with no way
     for the user to tell "is the SIEM stack down, or something else" --
@@ -18,14 +29,75 @@ Two things beyond a bare embedded browser:
 """
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+import json
+
+from PyQt6.QtWidgets import QCheckBox, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from core.docker_ctl import Target
+from core.kibana_credentials import get_elastic_credentials
 from core.state import AppState
 from ui.browser_widget import BrowserWidget
+from ui.flow_layout import FlowLayout
 
 KIBANA_PORT = 5601
 _PROFILE_NAME = "kibana_dashboard"
+
+# (button label, path relative to the Kibana root) -- verified live against
+# this repo's own SIEM stack via `GET /api/saved_objects/_find?type=dashboard`
+# and `type=index-pattern` (2 dashboards, 1 data view "honeypot-*" -- both
+# dashboards and the single data view are all covered here).
+_BOOKMARKS = [
+    ("Home", "/app/home"),
+    ("Web Traffic & Threat Overview", "/app/dashboards#/view/dashboard-web-threat-overview"),
+    ("IDS Alerts (Suricata)", "/app/dashboards#/view/dashboard-ids-alerts"),
+    ("Discover", "/app/discover"),
+]
+
+# Kibana's login form (x-pack security plugin, stable across 7.x/8.x) uses
+# these data-test-subj attributes on its username/password inputs and
+# submit button -- confirmed live against this repo's own Kibana 8.17.3.
+# React controls these inputs, so a plain `input.value = x` doesn't stick
+# (React's onChange never fires) -- setNativeValue() below is the standard
+# workaround: call the native <input> value setter (bypassing React's
+# instance-level override) and then dispatch an 'input' event so React's
+# change handler actually observes the new value.
+#
+# The login page is a React SPA: loadFinished fires on the initial (near-
+# empty) HTML shell, well before the form actually renders -- confirmed
+# live the fields don't exist yet at that point. Polls for up to ~10s
+# instead of injecting once immediately, since guessing a fixed delay from
+# the Python side is exactly the kind of timing assumption that's fragile
+# across machines/first-run-vs-cached-bundle load times.
+_AUTOLOGIN_JS_TEMPLATE = """
+(function() {
+    function setNativeValue(element, value) {
+        var valueSetter = Object.getOwnPropertyDescriptor(element, 'value').set;
+        var prototype = Object.getPrototypeOf(element);
+        var prototypeValueSetter = Object.getOwnPropertyDescriptor(prototype, 'value').set;
+        if (valueSetter && valueSetter !== prototypeValueSetter) {
+            prototypeValueSetter.call(element, value);
+        } else {
+            valueSetter.call(element, value);
+        }
+        element.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    var attempts = 0;
+    var timer = setInterval(function() {
+        attempts += 1;
+        var u = document.querySelector('[data-test-subj="loginUsername"]');
+        var p = document.querySelector('[data-test-subj="loginPassword"]');
+        var btn = document.querySelector('[data-test-subj="loginSubmit"]');
+        if (u && p && btn) {
+            clearInterval(timer);
+            setNativeValue(u, %(username)s);
+            setNativeValue(p, %(password)s);
+            btn.click();
+        } else if (attempts > 40) {
+            clearInterval(timer);
+        }
+    }, 250);
+})();
+"""
 
 
 def _default_kibana_url(state: AppState) -> str:
@@ -37,18 +109,30 @@ class KibanaPage(QWidget):
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.state = state
+        self._credentials: tuple[str, str] | None = None
+        self._autologin_attempted_for_url: str | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        toolbar = QHBoxLayout()
-        toolbar.setContentsMargins(6, 6, 6, 0)
+        # "Remember credentials" and the dashboard bookmarks share one
+        # FlowLayout so they wrap together as a unit -- the bookmark list
+        # can grow (more saved dashboards later) without ever forcing the
+        # window wider than the screen.
+        toolbar = FlowLayout(margin=6, h_spacing=8, v_spacing=6)
         self.remember_check = QCheckBox("Remember credentials (keep me logged in across restarts)")
         self.remember_check.setChecked(state.kibana_remember_credentials)
         self.remember_check.toggled.connect(self._on_remember_toggled)
         toolbar.addWidget(self.remember_check)
-        toolbar.addStretch()
-        layout.addLayout(toolbar)
+
+        for label, path in _BOOKMARKS:
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda _checked, p=path: self._navigate_to(p))
+            toolbar.addWidget(btn)
+
+        toolbar_widget = QWidget()
+        toolbar_widget.setLayout(toolbar)
+        layout.addWidget(toolbar_widget)
 
         self.banner = QLabel("")
         self.banner.setWordWrap(True)
@@ -71,6 +155,16 @@ class KibanaPage(QWidget):
         self.browser.view.loadFinished.connect(self._on_load_finished)
         self._browser_layout.addWidget(self.browser)
 
+        # Read once per browser build (not per page load) -- a remote SIEM
+        # fetches this over SSH (core/kibana_credentials.py), no need to
+        # repeat that round-trip on every navigation.
+        self._credentials = get_elastic_credentials(self.state)
+        self._autologin_attempted_for_url = None
+
+    def _navigate_to(self, path: str) -> None:
+        base = _default_kibana_url(self.state).rstrip("/")
+        self.browser.navigate(base + path)
+
     def _on_remember_toggled(self, checked: bool) -> None:
         self.state.kibana_remember_credentials = checked
         self.state.save()
@@ -89,6 +183,7 @@ class KibanaPage(QWidget):
     def _on_load_finished(self, ok: bool) -> None:
         if ok:
             self.banner.setVisible(False)
+            self._maybe_autologin()
             return
 
         remote = self.state.remote_siem if self.state.remote_siem.is_configured() else None
@@ -115,3 +210,25 @@ class KibanaPage(QWidget):
                 "(startup can take a minute; a cert/network issue would also show here)."
             )
         self.banner.setVisible(True)
+
+    def _maybe_autologin(self) -> None:
+        if not self._credentials:
+            return
+
+        url = self.browser.view.url()
+        if url.path() != "/login":
+            return
+
+        url_str = url.toString()
+        if self._autologin_attempted_for_url == url_str:
+            # Duplicate loadFinished(True) for the same /login URL (e.g. a
+            # hash-only navigation) -- already submitted once, don't resubmit.
+            return
+        self._autologin_attempted_for_url = url_str
+
+        username, password = self._credentials
+        script = _AUTOLOGIN_JS_TEMPLATE % {
+            "username": json.dumps(username),
+            "password": json.dumps(password),
+        }
+        self.browser.page.runJavaScript(script)
