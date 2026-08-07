@@ -303,7 +303,22 @@ alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Login Brute Force"; 
 #--------------------------------------------------------------------------
 # Honeypot Specific Rules
 #--------------------------------------------------------------------------
-alert http any any -> $HOME_NET $HTTP_PORTS (msg:"Honeypot Trigger - Multiple Vulnerability Attempts"; flow:established,to_server; content:"wp-content/plugins/"; http_uri; detection_filter:track by_src, count 3, seconds 300; classtype:web-application-attack; priority:1; sid:1000058; rev:1;)
+# rev:2 -- was `content:"wp-content/plugins/"` alone, which matches every
+# CSS/JS/image/font a browser loads from ANY plugin's assets directory on
+# an ordinary page view (confirmed live: a single WooCommerce/Elementor
+# page load easily hits 10+ such URIs), not just vulnerability probes --
+# false-positived on a real customer's normal browsing of production_eshop,
+# poisoning threat_ips for reverse_proxy's own IP (172.21.0.9, per
+# Suricata's network_mode:host visibility -- see suricata_rules.lua's
+# module docstring on that attribution caveat) well past the >50
+# honeypot-diversion threshold from nothing but ordinary traffic. Static
+# assets (css/js/png/svg/woff/...) never end in .php -- direct .php access
+# under a plugin directory is what actually indicates someone trying to
+# reach/exploit plugin code, not just load its stylesheet, so requiring
+# both substrings keeps the rule's original intent (repeated hits across
+# multiple plugin endpoints in a short window) without matching normal
+# asset loading.
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"Honeypot Trigger - Multiple Vulnerability Attempts"; flow:established,to_server; content:"wp-content/plugins/"; http_uri; content:".php"; http_uri; detection_filter:track by_src, count 3, seconds 300; classtype:web-application-attack; priority:1; sid:1000058; rev:2;)
 
 alert http any any -> $HOME_NET $HTTP_PORTS (msg:"Honeypot Trigger - Automated Tool Detection"; flow:established,to_server; pcre:"/(sqlmap|nikto|nmap|wpscan|gobuster|dirb|burpsuite|nuclei|whatweb)/i"; classtype:web-application-attack; priority:1; sid:1000059; rev:1;)
 
