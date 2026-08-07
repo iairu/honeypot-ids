@@ -22,6 +22,12 @@ _DEFAULT_TEXT_COLOR = "#d4d4d4"  # matches this panel's own stylesheet below
 
 class LogPanel(QWidget):
     finished = pyqtSignal(int)  # exit code
+    # Raw stdout chunks, emitted independent of pause state -- unlike
+    # append()/_emit(), this never buffers or holds anything back, so a
+    # consumer that wants to react to output as it happens (e.g.
+    # page_exploits.py's threat-event parser) isn't at the mercy of the
+    # log tail's own Pause button.
+    line_received = pyqtSignal(str)
 
     def __init__(self, parent=None, show_stop_button: bool = True, reload_action=None):
         super().__init__(parent)
@@ -206,6 +212,7 @@ class LogPanel(QWidget):
         if self.process is None:
             return
         data = self.process.readAllStandardOutput().data().decode(errors="replace")
+        self.line_received.emit(data)
         self._emit(data)
 
     def _on_finished(self, exit_code: int, _exit_status) -> None:

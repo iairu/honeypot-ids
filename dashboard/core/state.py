@@ -43,6 +43,15 @@ class AppState:
     # environment without a tray isn't surprised by anything; the tray
     # icon itself only appears when the platform actually supports one.
     tray_notifications_enabled: bool = True
+    # Whether the Kibana page's embedded browser uses a persistent (named)
+    # QWebEngineProfile -- cookies survive app restarts, so logging into
+    # Kibana once doesn't mean doing it again on every dashboard launch --
+    # vs. the off-the-record default every other embedded browser in this
+    # app uses (see browser_widget.py). On by default: Kibana is the one
+    # place in this app where staying logged in is the obviously-wanted
+    # behavior, unlike the Exploits page's eshop browser, where an
+    # ephemeral session is the whole point.
+    kibana_remember_credentials: bool = True
 
     @classmethod
     def load(cls) -> "AppState":
@@ -62,6 +71,7 @@ class AppState:
             state.remote_siem = RemoteConfig(**raw["remote_siem"])
         state.poll_interval_ms = raw.get("poll_interval_ms", 5000)
         state.tray_notifications_enabled = raw.get("tray_notifications_enabled", True)
+        state.kibana_remember_credentials = raw.get("kibana_remember_credentials", True)
         return state
 
     def save(self) -> None:
@@ -74,5 +84,6 @@ class AppState:
             "remote_siem": asdict(self.remote_siem),
             "poll_interval_ms": self.poll_interval_ms,
             "tray_notifications_enabled": self.tray_notifications_enabled,
+            "kibana_remember_credentials": self.kibana_remember_credentials,
         }
         STATE_FILE.write_text(json.dumps(data, indent=2))

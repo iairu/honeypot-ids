@@ -1,13 +1,20 @@
 """Embedded browser widget with an address bar -- shared by the Kibana page
 and the Exploits page's production-eshop view.
 
-Uses a dedicated off-the-record (in-memory, unnamed) QWebEngineProfile per
-widget instance rather than the shared default profile: every site this app
-points a browser at (Kibana, the eshop) uses a self-signed certificate, and
-keeping cookies/site-data isolated per-widget is what makes "reset local
-score" (page_exploits.py) actually mean something -- clearing cookies here
-can't accidentally also log the user out of Kibana or anything else running
-in the same process.
+Uses a dedicated QWebEngineProfile per widget instance rather than the
+shared default profile: every site this app points a browser at (Kibana,
+the eshop) uses a self-signed certificate, and keeping cookies/site-data
+isolated per-widget is what makes "reset local score + cookies"
+(page_exploits.py) actually mean something -- clearing cookies here can't
+accidentally also log the user out of Kibana or anything else running in
+the same process.
+
+By default that profile is off-the-record (in-memory, unnamed) -- this is
+a testing tool, not something that should accumulate browsing history/
+cache between runs. Pass profile_name to get a NAMED profile instead,
+which Qt persists to disk (cookies survive app restarts) -- see the Kibana
+page's "Remember credentials" toggle, the one place in this app where
+staying logged in across restarts is actually wanted.
 """
 from __future__ import annotations
 
@@ -20,15 +27,15 @@ from PyQt6.QtWidgets import (
 
 
 class BrowserWidget(QWidget):
-    def __init__(self, home_url: str = "about:blank", parent=None):
+    def __init__(self, home_url: str = "about:blank", profile_name: str | None = None, parent=None):
         super().__init__(parent)
         self._home_url = home_url
 
-        # Off-the-record: no profile name given, so QWebEngineProfile keeps
-        # everything in memory rather than writing a persistent profile
-        # directory to disk -- this is a testing tool, not something that
-        # should accumulate browsing history/cache between runs.
-        self.profile = QWebEngineProfile(self)
+        # A named profile gets Qt's own on-disk storage (cookies/cache
+        # persisted, survives app restarts, AllowPersistentCookies by
+        # default); no name keeps everything off-the-record/in-memory,
+        # same as before.
+        self.profile = QWebEngineProfile(profile_name, self) if profile_name else QWebEngineProfile(self)
         self.page = QWebEnginePage(self.profile, self)
         self.page.certificateError.connect(self._on_certificate_error)
 
