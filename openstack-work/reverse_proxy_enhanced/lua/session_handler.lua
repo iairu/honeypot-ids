@@ -65,6 +65,92 @@ function _M.get_session(session_id)
     return nil
 end
 
+-- ---------------------------------------------------------------------------
+-- IP -> session_id binding.
+--
+-- A session cookie is trivial for a client to discard (clear cookies,
+-- private window, localStorage wipe) -- without a server-side fallback,
+-- that alone used to be enough to walk away from an elevated threat_score
+-- or a honeypot_bound=true session and come back in as a brand-new,
+-- zero-score visitor: nginx.conf's session lookup only ever knew about the
+-- cookie, so no cookie meant session_handler.create_session() ran again
+-- from scratch (see router.lua's "Session bootstrap" comment). Pool
+-- assignment (pool_router.lua) was already IP-sticky, but the SESSION's
+-- own accumulated score/honeypot_bound flag was not, so Stage 2's sticky-
+-- honeypot re-check silently never fired for a cookie-cleared return
+-- visit even though the attacker landed on the exact same honeypot pool.
+--
+-- get_session_id_for_ip()/bind_ip_to_session() close that gap: every
+-- session creation and update refreshes an "ip_session:<ip>" Redis
+-- pointer at the session's own TTL, so nginx.conf's session lookup can
+-- recover the SAME session_id for a returning IP even with zero cookie
+-- state, before ever falling back to generating a fresh one.
+-- ---------------------------------------------------------------------------
+
+function _M.get_session_id_for_ip(ip)
+    if not ip then
+        return nil
+    end
+
+    local red, err = _G.redis_pool.get_connection()
+    if not red then
+        ngx.log(ngx.ERR, "[SESSION] Failed to connect to Redis for IP->session lookup: ", err)
+        return nil
+    end
+
+    local session_id, get_err = red:get("ip_session:" .. ip)
+    _G.redis_pool.close_connection(red)
+
+    if get_err then
+        ngx.log(ngx.ERR, "[SESSION] Redis error during IP->session lookup: ", get_err)
+        return nil
+    end
+    if session_id and session_id ~= ngx.null then
+        return session_id
+    end
+    return nil
+end
+
+function _M.bind_ip_to_session(ip, session_id)
+    if not ip or not session_id then
+        return
+    end
+
+    local red, err = _G.redis_pool.get_connection()
+    if not red then
+        ngx.log(ngx.ERR, "[SESSION] Failed to connect to Redis for IP->session bind: ", err)
+        return
+    end
+
+    red:setex("ip_session:" .. ip, _G.config.session.max_idle_time, session_id)
+    _G.redis_pool.close_connection(red)
+end
+
+-- Sanity check, not a gate, for a session recovered via IP rather than
+-- cookie: does the current request's browser fingerprint still look like
+-- the same client the session was created for? The SAME browser clearing
+-- its own cookies keeps an identical User-Agent/Accept-* fingerprint, so
+-- this passes for the exact scenario this feature exists to catch
+-- (attacker clears cookies, comes right back on the same IP/browser).
+-- A mismatch merely gets logged for investigation -- deliberately not used
+-- to block/deny the IP-based recovery, since two distinct low-value users
+-- sharing one honeypot session (false negative) is far cheaper than an
+-- attacker escaping detection by spoofing headers to dodge a fingerprint
+-- check (false positive). IP is the authoritative signal; fingerprinting
+-- is enrichment only, used here strictly as a secondary corroboration
+-- signal, not a primary identity mechanism.
+function _M.fingerprint_matches(session_data, user_agent)
+    if not session_data or not session_data.metadata then
+        return true
+    end
+    local stored_fp = session_data.metadata.browser_fingerprint
+    local current_fp = _M.generate_browser_fingerprint(user_agent)
+    if not stored_fp or not current_fp then
+        return true
+    end
+    return stored_fp == current_fp
+end
+
 -- Create a new session
 function _M.create_session(ip_address, user_agent, initial_route, provided_session_id)
     -- Use provided session_id or generate new one
@@ -105,8 +191,13 @@ function _M.create_session(ip_address, user_agent, initial_route, provided_sessi
         -- Cache locally
         local sessions_dict = ngx.shared.sessions
         sessions_dict:set("session:" .. session_id, session_json, 300)
-        
-        ngx.log(ngx.INFO, "[SESSION] ✅ Created new session: ", session_id, " for IP: ", ip_address, 
+
+        -- So a later cookie-clear from this same IP can recover this exact
+        -- session instead of starting over at threat_score=0 -- see the
+        -- "IP -> session_id binding" comment above.
+        _M.bind_ip_to_session(ip_address, session_id)
+
+        ngx.log(ngx.INFO, "[SESSION] ✅ Created new session: ", session_id, " for IP: ", ip_address,
                 " | User-Agent: ", (user_agent or "none"):sub(1, 50), " | Initial Route: ", initial_route or "production")
     else
         ngx.log(ngx.ERR, "[SESSION] ❌ Failed to store session in Redis: ", err)
@@ -169,8 +260,16 @@ function _M.update_session(session_id, updates)
         -- Update local cache
         local sessions_dict = ngx.shared.sessions
         sessions_dict:set("session:" .. session_id, session_json, 300)
-        
-        ngx.log(ngx.INFO, "[SESSION] ✅ Session updated successfully | ID: ", session_id, 
+
+        -- Refresh the IP->session TTL alongside the session's own, so the
+        -- binding stays alive exactly as long as the session does rather
+        -- than expiring independently on its own fixed schedule from
+        -- creation time.
+        if session_data.ip_address then
+            _M.bind_ip_to_session(session_data.ip_address, session_id)
+        end
+
+        ngx.log(ngx.INFO, "[SESSION] ✅ Session updated successfully | ID: ", session_id,
                 " | Request Count: ", session_data.request_count or 0, 
                 " | Threat Score: ", session_data.threat_score or 0,
                 " | Route: ", session_data.route_preference or "production")
