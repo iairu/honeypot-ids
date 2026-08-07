@@ -28,6 +28,12 @@
 --   - A missing or placeholder ABUSEIPDB_API_KEY disables every function
 --     here (is_enabled() returns false); callers are expected to check it
 --     or simply call the async wrappers, which no-op safely when disabled.
+--   - fetch_blacklist() additionally requires config.abuseipdb.
+--     blacklist_enabled (is_blacklist_enabled()), off by default -- the
+--     bulk pull is the single biggest quota consumer of the three
+--     integrations here, and is cached in Redis (see fetch_blacklist()'s
+--     own comment) so a fresh-enough cache is reused across restarts
+--     instead of triggering a real API call every time.
 --   - The daily on-demand check quota (ABUSEIPDB_DAILY_CHECK_LIMIT) is
 --     tracked in the threat_intel shared dict so it is shared across all
 --     Nginx worker processes, not just the worker that happens to run it.
@@ -56,6 +62,17 @@ local PLACEHOLDER_KEY = "change_this_abuseipdb_api_key"
 function _M.is_enabled()
     local key = _G.config and _G.config.abuseipdb and _G.config.abuseipdb.api_key
     return http_ok and key ~= nil and key ~= "" and key ~= PLACEHOLDER_KEY
+end
+
+--- Whether the bulk /blacklist pull specifically is enabled -- a separate
+--- opt-in from is_enabled(), off by default (see init.lua's
+--- config.abuseipdb.blacklist_enabled comment for why: it's the biggest
+--- quota consumer of the three integrations, and free-tier accounts can
+--- have a real daily cap as low as single digits). On-demand check/
+--- report-back only ever consult is_enabled(), not this.
+--- @return boolean
+function _M.is_blacklist_enabled()
+    return _M.is_enabled() and _G.config.abuseipdb.blacklist_enabled == true
 end
 
 -- ---------------------------------------------------------------------------
@@ -116,18 +133,78 @@ local function increment_quota()
 end
 
 -- ---------------------------------------------------------------------------
+-- Redis-backed cache for the bulk blacklist pull -- survives worker/
+-- container restarts, unlike merge_threat_ips()'s target (the in-memory
+-- threat_intel shared dict, which starts empty on every restart). Without
+-- this, EVERY restart of reverse_proxy re-triggered a fresh /blacklist call
+-- 15s after startup (see init_worker.lua's scheduling) regardless of how
+-- recently the last one ran -- confirmed this alone can burn through a
+-- free-tier account's real daily quota (as low as single digits on some
+-- accounts) within a handful of dev-session restarts, long before the
+-- periodic timer.every() interval would have fired again on its own.
+-- ---------------------------------------------------------------------------
+local BLACKLIST_CACHE_KEY = "abuseipdb_blacklist_cache"
+
+local function load_cached_blacklist()
+    local red, err = _G.redis_pool.get_connection()
+    if not red then
+        ngx.log(ngx.WARN, "[ABUSEIPDB] Redis unavailable for blacklist cache read: ", err)
+        return nil
+    end
+    local cached_json = red:get(BLACKLIST_CACHE_KEY)
+    _G.redis_pool.close_connection(red)
+
+    if not cached_json or cached_json == ngx.null then
+        return nil
+    end
+    local ok, decoded = pcall(cjson.decode, cached_json)
+    if not ok or not decoded.fetched_at or not decoded.data then
+        return nil
+    end
+    return decoded
+end
+
+local function save_cached_blacklist(updates)
+    local red, err = _G.redis_pool.get_connection()
+    if not red then
+        ngx.log(ngx.WARN, "[ABUSEIPDB] Redis unavailable for blacklist cache write: ", err)
+        return
+    end
+    local payload = cjson.encode({ fetched_at = ngx.time(), data = updates })
+    -- Expire well after the next scheduled refresh would naturally occur,
+    -- so a stale key can never quietly outlive its own freshness check.
+    local ttl = (_G.config.abuseipdb.blacklist_refresh_hours or 24) * 3600 * 3
+    red:setex(BLACKLIST_CACHE_KEY, ttl, payload)
+    _G.redis_pool.close_connection(red)
+end
+
+-- ---------------------------------------------------------------------------
 -- fetch_blacklist()
 --
 -- Pulls the AbuseIPDB /blacklist endpoint (IPs at or above
--- config.abuseipdb.confidence_minimum) and merges them into threat_intel.
--- Intended to run on a long interval (hours) from init_worker.lua worker 0 –
--- the free tier allows this endpoint to be called sparingly.
+-- config.abuseipdb.confidence_minimum) and merges them into threat_intel --
+-- but only if config.abuseipdb.blacklist_enabled is on AND the Redis-backed
+-- cache is older than config.abuseipdb.blacklist_refresh_hours (or missing).
+-- A fresh-enough cache is re-merged into threat_intel with no API call at
+-- all -- this is what actually protects a small daily quota, not just the
+-- long timer.every() interval init_worker.lua schedules this on.
 --
--- Blocking call: must only be invoked from inside an ngx.timer callback,
--- never from the request-processing (access_by_lua) phase.
+-- Blocking call (on an actual cache miss): must only be invoked from inside
+-- an ngx.timer callback, never from the request-processing (access_by_lua)
+-- phase.
 -- ---------------------------------------------------------------------------
 function _M.fetch_blacklist()
-    if not _M.is_enabled() then
+    if not _M.is_blacklist_enabled() then
+        return
+    end
+
+    local refresh_seconds = (_G.config.abuseipdb.blacklist_refresh_hours or 24) * 3600
+    local cached = load_cached_blacklist()
+    if cached and (ngx.time() - cached.fetched_at) < refresh_seconds then
+        merge_threat_ips(cached.data)
+        ngx.log(ngx.INFO, "[ABUSEIPDB] Blacklist served from cache (age=",
+                ngx.time() - cached.fetched_at, "s, refresh interval=", refresh_seconds,
+                "s) -- no API call made")
         return
     end
 
@@ -175,8 +252,10 @@ function _M.fetch_blacklist()
     end
 
     merge_threat_ips(updates)
+    save_cached_blacklist(updates)
     ngx.log(ngx.INFO, "[ABUSEIPDB] Blacklist feed merged ", #decoded.data, " IPs (confidenceMinimum=",
-            _G.config.abuseipdb.confidence_minimum, ")")
+            _G.config.abuseipdb.confidence_minimum, ") -- refreshed from API, cached for ",
+            _G.config.abuseipdb.blacklist_refresh_hours, "h")
 end
 
 -- ---------------------------------------------------------------------------

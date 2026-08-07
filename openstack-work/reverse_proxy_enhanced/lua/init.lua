@@ -309,7 +309,23 @@ _G.config = {
     abuseipdb = {
         api_key = os.getenv("ABUSEIPDB_API_KEY"),
         confidence_minimum = tonumber(os.getenv("ABUSEIPDB_CONFIDENCE_MINIMUM")) or 90,
-        daily_check_limit = tonumber(os.getenv("ABUSEIPDB_DAILY_CHECK_LIMIT")) or 1000
+        daily_check_limit = tonumber(os.getenv("ABUSEIPDB_DAILY_CHECK_LIMIT")) or 1000,
+        -- blacklist_enabled: separate opt-in from just "is an API key
+        -- configured" (abuseipdb_client.is_enabled()) -- the bulk
+        -- /blacklist pull is the single biggest quota consumer of the
+        -- three AbuseIPDB integrations (bulk pull vs. one-IP-at-a-time
+        -- check/report), and free-tier accounts can have a real daily cap
+        -- as low as single digits. Defaults OFF: on-demand check/report
+        -- stay available (their own, much cheaper, per-IP quota already
+        -- tracked via daily_check_limit) even when this is off.
+        blacklist_enabled = (os.getenv("ABUSEIPDB_BLACKLIST_ENABLED") or "false") == "true",
+        -- blacklist_refresh_hours: minimum age (in the Redis-backed cache,
+        -- see abuseipdb_client.lua's load_cached_blacklist()) before a
+        -- fresh /blacklist call is allowed at all -- restarting
+        -- reverse_proxy no longer forces a fresh API call by itself.
+        -- Default 24h keeps this to at most 1 call/day even under
+        -- frequent restarts, leaving headroom under a small daily quota.
+        blacklist_refresh_hours = tonumber(os.getenv("ABUSEIPDB_BLACKLIST_REFRESH_HOURS")) or 24
     },
 
     -- internal_test_secret: shared secret gating the X-Route-Target /

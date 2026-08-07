@@ -363,10 +363,18 @@ local function init_worker()
         
         -- Schedule periodic tasks
 
-        -- AbuseIPDB bulk blacklist feed: one delayed run shortly after startup
-        -- (so it doesn't compete with connection pre-warming), then every 6h.
-        -- The free tier is not meant to be polled more often than that.
-        if abuseipdb_ok and abuseipdb_client.is_enabled() then
+        -- AbuseIPDB bulk blacklist feed: opt-in (config.abuseipdb.
+        -- blacklist_enabled, off by default -- see init.lua/.env.example),
+        -- separate from the API key alone being configured. One delayed
+        -- run shortly after startup (so it doesn't compete with connection
+        -- pre-warming), then every blacklist_refresh_hours -- but
+        -- fetch_blacklist() itself is Redis-cache-aware (abuseipdb_client.
+        -- lua) and skips the actual API call whenever the cache is still
+        -- fresh, so neither this initial call NOR a reverse_proxy restart
+        -- forces a real request against a possibly tiny daily quota.
+        if abuseipdb_ok and abuseipdb_client.is_blacklist_enabled() then
+            local refresh_seconds = (_G.config.abuseipdb.blacklist_refresh_hours or 24) * 3600
+
             local ok, err = ngx.timer.at(15, function(premature)
                 if premature then return end
                 pcall(abuseipdb_client.fetch_blacklist)
@@ -375,12 +383,15 @@ local function init_worker()
                 ngx.log(ngx.ERR, "Failed to schedule initial AbuseIPDB blacklist fetch: ", err)
             end
 
-            local ok, err = ngx.timer.every(21600, function() -- Every 6 hours
+            local ok, err = ngx.timer.every(refresh_seconds, function()
                 pcall(abuseipdb_client.fetch_blacklist)
             end)
             if not ok then
                 ngx.log(ngx.ERR, "Failed to create AbuseIPDB blacklist timer: ", err)
             end
+        elseif abuseipdb_ok and abuseipdb_client.is_enabled() then
+            ngx.log(ngx.INFO, "[ABUSEIPDB] Blacklist pull disabled (ABUSEIPDB_BLACKLIST_ENABLED=false) -- "
+                    .. "on-demand check/report-back remain active")
         else
             ngx.log(ngx.INFO, "[ABUSEIPDB] Integration disabled (no API key configured)")
         end
