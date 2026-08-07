@@ -296,7 +296,20 @@ alert http any any -> $HOME_NET $HTTP_PORTS (msg:"Script File Upload Attempt"; f
 #--------------------------------------------------------------------------
 # Rate Limiting and DoS Detection
 #--------------------------------------------------------------------------
-alert http any any -> $HOME_NET $HTTP_PORTS (msg:"High Rate HTTP Requests"; flow:established,to_server; detection_filter:track by_src, count 50, seconds 60; classtype:attempted-dos; sid:1000056; rev:1;)
+# rev:2 -- was unconditional (every HTTP request counted, including
+# static assets), which false-positived on ordinary page loads: confirmed
+# live a single production_eshop homepage view references 79 static
+# assets (55 of them product images) -- easily enough on its own, spread
+# across a normal multi-page visit, to cross 50 requests/60s from nothing
+# but a real customer browsing. nginx itself already treats these same
+# extensions as "no attack surface" (see nginx.conf's static-asset
+# location block and router.lua's Stage 1 fast-path, both bypassing ALL
+# threat scoring for them) -- this rule just didn't share that judgment,
+# so it's now excluded here too, using the identical extension list.
+# What's left genuinely is a rate check on dynamic/page requests, which is
+# what "High Rate HTTP Requests" as a DoS signal is actually meant to
+# catch.
+alert http any any -> $HOME_NET $HTTP_PORTS (msg:"High Rate HTTP Requests"; flow:established,to_server; pcre:!"/\.(css|js|jpe?g|png|gif|svg|webp|webm|mp4|mp3|pdf|woff2?|ttf|eot|otf|ico)(\?.*)?$/Ui"; detection_filter:track by_src, count 50, seconds 60; classtype:attempted-dos; sid:1000056; rev:2;)
 
 alert http any any -> $HOME_NET $HTTP_PORTS (msg:"WordPress Login Brute Force"; flow:established,to_server; content:"wp-login.php"; http_uri; detection_filter:track by_src, count 10, seconds 60; classtype:web-application-attack; sid:1000057; rev:1;)
 
