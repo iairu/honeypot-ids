@@ -61,6 +61,21 @@ do
     check("wp-login matches", rules.is_admin_access("/wp-login.php") == true)
     check("shop page does not match", rules.is_admin_access("/shop/") == false)
     check("nil uri returns false", rules.is_admin_access(nil) == false)
+
+    -- Regression test: admin-ajax.php must NOT count as admin-area access,
+    -- even though it lives under /wp-admin/. It's the public AJAX gateway
+    -- ordinary frontend JS hits on every WooCommerce product-page load --
+    -- confirmed live this was escalating a normal shopper straight to the
+    -- honeypot after their third product view (router.lua Stage 7 counts
+    -- is_admin_access() hits per session and diverts at the third one).
+    check("admin-ajax.php does not count as admin access",
+          rules.is_admin_access("/wp-admin/admin-ajax.php") == false)
+    check("admin-ajax.php with query args does not count as admin access",
+          rules.is_admin_access("/wp-admin/admin-ajax.php?action=add_to_cart") == false)
+    check("other wp-admin PHP files still count as admin access",
+          rules.is_admin_access("/wp-admin/admin-post.php") == true)
+    check("wp-admin dashboard still counts as admin access",
+          rules.is_admin_access("/wp-admin/edit.php") == true)
 end
 
 print("== is_rapid_automation() ==")

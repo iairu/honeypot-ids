@@ -103,6 +103,25 @@ end
 -- ---------------------------------------------------------------------------
 -- is_admin_access(uri)
 --
+-- Detects requests to the actual WordPress/generic admin PANEL -- pages
+-- that only make sense for an authenticated admin or someone probing for
+-- one (WSTG-ATHN-04's basis for router.lua's Stage 7 repeated-probing
+-- escalation, and session_rules.lua's "direct_admin_access" first-request
+-- signal).
+--
+-- Deliberately excludes admin-ajax.php even though it lives under
+-- /wp-admin/: it's WordPress's public, unauthenticated AJAX gateway, hit
+-- automatically by ordinary frontend JS on essentially every WooCommerce
+-- page load (cart fragments, stock/price sync, "recently viewed", ...) --
+-- not a signal that someone is trying to reach the admin panel. Confirmed
+-- live this was escalating an entirely normal shopper straight to the
+-- honeypot after their third product-page view, since each page load
+-- fires its own admin-ajax.php call and Stage 7 escalates at the third
+-- occurrence within a session. admin-ajax.php gets its own dedicated,
+-- appropriately-scoped analysis elsewhere (threat_analyzer.lua's Stage 6b,
+-- upload_handler.lua, the CVE action-name checks in Stage 3) -- it doesn't
+-- need (and must not get) blanket treatment as "admin area access" here.
+--
 -- @param uri  string|nil
 -- @return boolean
 -- ---------------------------------------------------------------------------
@@ -112,6 +131,10 @@ function _M.is_admin_access(uri)
     end
 
     local uri_lower = string.lower(uri)
+
+    if string.find(uri_lower, "/wp%-admin/admin%-ajax%.php") then
+        return false
+    end
 
     local admin_patterns = {
         "/wp%-admin/",
