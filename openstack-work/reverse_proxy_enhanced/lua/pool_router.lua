@@ -110,9 +110,26 @@ end
 -- status recorded by health_check.lua in ngx.shared.threat_intel.
 -- Returns true when the status is unknown (assume healthy to avoid blocking traffic).
 -- Staleness/default rules are pure logic in pool_router_rules.is_health_status_healthy.
+--
+-- Also folds in the pool's REPLICATION state: while
+-- scripts/replicate_content_to_honeypot.sh is applying its sync to this
+-- pool's database, the pool is treated exactly like a temporarily unhealthy
+-- backend -- NOT because it's actually down, but so that find_healthy_pool()
+-- transparently steers both new attacker assignments and existing
+-- session lookups to a different, ready pool for the few seconds the sync
+-- takes, then automatically resumes on this pool once its flag clears. This
+-- reuses the existing failover mechanism rather than adding new blocking
+-- logic; see that script's header comment for the other half of this.
+-- init_worker.lua mirrors the Redis-side honeypot_pool_replicating:<N> flag
+-- into this same shared dict on a short timer, so this check itself stays
+-- Redis-free on the hot path.
 local function is_pool_healthy(pool_num)
     local health_dict = ngx.shared.threat_intel
     if not health_dict then return true end -- no data → optimistic
+
+    if health_dict:get("replicating:honeypot_backend_" .. pool_num) == "1" then
+        return false
+    end
 
     local status_json = health_dict:get("health:honeypot_backend_" .. pool_num)
     if not status_json then

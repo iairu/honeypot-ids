@@ -7,6 +7,8 @@
 --
 -- DECISION PIPELINE (evaluated in order; first match wins):
 --   1. Static asset  → always production (CSS/JS/images, no attack surface)
+--   1b. install.php on a not-yet-installed WordPress (and not already
+--       honeypot_bound) → always production (legitimate setup wizard)
 --   2. Session already honeypot_bound → sticky honeypot (same pool via Redis)
 --   3. Threat score ≥ honeypot_threshold → honeypot (high threat, WSTG-INPV)
 --   4. CVE pattern matched → honeypot (exploit attempt detected)
@@ -49,6 +51,7 @@
 
 local cjson = require "cjson"
 local router_rules = require "router_rules"
+local wp_install_state = require "wp_install_state"
 
 local _M = {}
 
@@ -178,6 +181,31 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         ngx.log(ngx.INFO, "[ROUTING] New session created for IP: ", remote_ip, " | Session ID: ", session_data.id)
     end
     
+    -- Stage 1b: WordPress installer wizard fast path (uninstalled instance).
+    -- install.php is normally treated as a strong attack signal (Stage 3's
+    -- threshold check, and Stage 7's admin-attempts counter below both fire
+    -- on it) -- correct for an already-running site, wrong during the
+    -- legitimate first-run setup wizard a never-installed WordPress needs
+    -- install.php for. See wp_install_state.lua's header comment for how
+    -- "not installed yet" is determined.
+    --
+    -- Guarded on "not already honeypot_bound": a session already flagged as
+    -- hostile must not be able to launder itself back to production just by
+    -- requesting install.php. This has to run here, BEFORE Stage 7, not just
+    -- as a scoring fast path in threat_analyzer.lua -- Stage 7 diverts after
+    -- 3 /wp-admin/* hits purely on request COUNT, independent of score, which
+    -- would still break the wizard's multi-step flow (step=1, step=2, ...)
+    -- even with threat_result.score forced to 0.
+    if not session_data.honeypot_bound
+        and router_rules.is_install_wizard_uri(ngx.var.request_uri)
+        and not wp_install_state.is_installed("production_backend") then
+        routing_decision.target = "production"
+        routing_decision.upstream = "production_backend"
+        ngx.log(ngx.INFO, "[ROUTING] 🛠️  WordPress not yet installed -> PRODUCTION (install.php allowed) | IP: ",
+                remote_ip, " | URI: ", ngx.var.request_uri)
+        return routing_decision
+    end
+
     -- Score accumulation: fold the session's own decaying suspicion
     -- history into THIS request's fresh score, before ANY stage below
     -- compares threat_result.score against a threshold. From here on,

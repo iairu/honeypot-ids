@@ -53,4 +53,28 @@ function _M.escape_pattern(s)
     return (s:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1"))
 end
 
+-- ---------------------------------------------------------------------------
+-- is_install_wizard_uri(uri)
+--
+-- True only for WordPress's actual installer endpoint, /wp-admin/install.php
+-- (query string ignored, e.g. "?step=1"). Shared by threat_rules.lua (skips
+-- scoring) and router_rules.lua (skips honeypot diversion) so a WordPress
+-- instance that hasn't been installed yet can still be set up through the
+-- browser -- see wp_install_state.lua for how "not installed yet" itself is
+-- determined. Deliberately an exact path match, not a substring match like
+-- threat_rules.lua's "install%.php" scoring pattern: that broader pattern is
+-- meant to catch things like "wp-config-install.php.bak" probes, which this
+-- helper must NOT bypass.
+-- ---------------------------------------------------------------------------
+function _M.is_install_wizard_uri(uri)
+    if not uri then
+        return false
+    end
+
+    local uri_lower = string.lower(uri)
+    local uri_path = uri_lower:match("^([^?]+)") or uri_lower
+
+    return uri_path == "/wp-admin/install.php"
+end
+
 return _M

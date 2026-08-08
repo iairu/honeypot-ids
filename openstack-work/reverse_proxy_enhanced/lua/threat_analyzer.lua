@@ -51,6 +51,7 @@
 local cjson = require "cjson"
 local threat_rules = require "threat_rules"
 local suricata_rules = require "suricata_rules"
+local wp_install_state = require "wp_install_state"
 
 local _M = {}
 
@@ -94,6 +95,18 @@ function _M.analyze_request(uri, headers, remote_ip)
     -- Static assets (CSS, JS, images, fonts) carry no attack surface.
     if _M.is_static_asset(uri) then
         ngx.log(ngx.INFO, "[THREAT ANALYZER] ✅ Static asset - threat analysis skipped")
+        return threat_result
+    end
+
+    -- WordPress installer fast path: install.php is only ever this
+    -- aggressively scored (see the wp_install_access/install_php checks in
+    -- Stage 1 below) because a legitimately-installed site has no reason for
+    -- anyone to hit it. Before production has completed its first-run setup
+    -- wizard, hitting it IS the legitimate flow -- see wp_install_state.lua's
+    -- header comment for how "not installed yet" is determined and why
+    -- checking production's state alone is sufficient for honeypot pools too.
+    if threat_rules.is_install_wizard_uri(uri) and not wp_install_state.is_installed("production_backend") then
+        ngx.log(ngx.INFO, "[THREAT ANALYZER] ✅ WordPress not yet installed - install.php allowed, analysis skipped")
         return threat_result
     end
 

@@ -50,6 +50,19 @@ do
     check("dot escaped", dot_escaped == "a%.b")
 end
 
+print("== is_install_wizard_uri() ==")
+do
+    check("matches bare install.php", utils.is_install_wizard_uri("/wp-admin/install.php") == true)
+    check("matches with query string", utils.is_install_wizard_uri("/wp-admin/install.php?step=1") == true)
+    check("case-insensitive", utils.is_install_wizard_uri("/WP-ADMIN/INSTALL.PHP?step=2") == true)
+    check("nil returns false", utils.is_install_wizard_uri(nil) == false)
+    check("unrelated uri returns false", utils.is_install_wizard_uri("/wp-admin/") == false)
+    check("does not match a substring probe (regression)",
+          utils.is_install_wizard_uri("/wp-content/uploads/wp-config-install.php.bak") == false)
+    check("does not match install.php outside wp-admin",
+          utils.is_install_wizard_uri("/install.php") == false)
+end
+
 print()
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

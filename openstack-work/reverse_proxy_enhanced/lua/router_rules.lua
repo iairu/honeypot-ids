@@ -40,6 +40,14 @@ local _M = {}
 local escape_pattern = pattern_utils.escape_pattern
 _M.escape_pattern = escape_pattern
 
+-- Re-exported for the same reason: decide_route()'s install.php
+-- not-yet-installed fast path needs the exact same matcher
+-- threat_analyzer.lua uses, so the two can never quietly disagree (see
+-- lua_pattern_utils.lua's own comment on this function, and this file's
+-- NOTE ON is_static_asset above for the exact bug class that already
+-- happened once from independently-maintained copies).
+_M.is_install_wizard_uri = pattern_utils.is_install_wizard_uri
+
 -- ---------------------------------------------------------------------------
 -- is_static_asset(uri, static_asset_patterns)
 --

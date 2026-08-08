@@ -151,6 +151,28 @@ local function init_worker()
             end
         end
 
+        -- WordPress install-state probe. Feeds wp_install_state.lua's cache,
+        -- which threat_analyzer.lua/router.lua consult so that
+        -- /wp-admin/install.php is treated as legitimate traffic (not an
+        -- attack) until production has actually completed its first-run
+        -- setup wizard -- see wp_install_state.lua's header comment. 30s is
+        -- frequent enough to notice a freshly-completed install promptly,
+        -- infrequent enough that this is a negligible amount of extra load
+        -- (one GET, same cost class as the HEAD health check just above).
+        local wp_install_state_ok, wp_install_state = pcall(require, "wp_install_state")
+        if wp_install_state_ok then
+            local ok, err = ngx.timer.every(30, function()
+                pcall(function()
+                    wp_install_state.refresh("production_backend", "http://production_eshop")
+                end)
+            end)
+            if not ok then
+                ngx.log(ngx.ERR, "Failed to schedule WordPress install-state probe: ", err)
+            end
+        else
+            ngx.log(ngx.WARN, "wp_install_state module not available, install.php fast path disabled")
+        end
+
         -- AbuseIPDB bulk blacklist feed. Populates threat_intel.threat_ips
         -- with high-confidence IPs from the free-tier /blacklist endpoint.
         local abuseipdb_ok, abuseipdb_client = pcall(require, "abuseipdb_client")
@@ -360,7 +382,41 @@ local function init_worker()
                 ngx.log(ngx.DEBUG, "Cleaned up ", cleaned, " expired rate limit entries")
             end
         end
-        
+
+        -- Mirror honeypot content-replication state from Redis into the
+        -- shared dict pool_router.lua's is_pool_healthy() actually reads on
+        -- the hot path. scripts/replicate_content_to_honeypot.sh sets/clears
+        -- honeypot_pool_replicating:<N> in Redis (the only thing an external
+        -- container can reach -- ngx.shared dicts are per-worker-process,
+        -- not writable from outside Nginx); this timer is what turns that
+        -- into a value is_pool_healthy() can read without a Redis round-trip
+        -- per request, same "no Redis on the hot path" convention as every
+        -- other shared-dict cache in this codebase (health_check.lua,
+        -- pool_router.lua's own LOCAL_CACHE_TTL). 5s keeps the window where
+        -- a pool is treated as healthy-but-actually-replicating short.
+        local function mirror_replication_flags()
+            local red, err = _G.redis_pool.get_connection()
+            if not red then
+                ngx.log(ngx.WARN, "Failed to connect to Redis for replication-flag mirroring: ", err)
+                return
+            end
+
+            -- Number of honeypot pool instances -- keep in sync with
+            -- pool_router.lua's POOL_COUNT and docker-compose.yml.
+            local POOL_COUNT_REPL = 3
+            local threat_intel_shared = ngx.shared.threat_intel
+
+            for i = 1, POOL_COUNT_REPL do
+                local replicating = red:get("honeypot_pool_replicating:" .. i)
+                local flag = (replicating and replicating ~= ngx.null) and "1" or "0"
+                if threat_intel_shared then
+                    threat_intel_shared:set("replicating:honeypot_backend_" .. i, flag)
+                end
+            end
+
+            _G.redis_pool.close_connection(red)
+        end
+
         -- Schedule periodic tasks
 
         -- AbuseIPDB bulk blacklist feed: opt-in (config.abuseipdb.
@@ -416,7 +472,14 @@ local function init_worker()
         if not ok then
             ngx.log(ngx.ERR, "Failed to create rate limit cleanup timer: ", err)
         end
-        
+
+        local ok, err = ngx.timer.every(5, function() -- Every 5 seconds
+            pcall(mirror_replication_flags)
+        end)
+        if not ok then
+            ngx.log(ngx.ERR, "Failed to create replication-flag mirror timer: ", err)
+        end
+
         ngx.log(ngx.INFO, "Background tasks initialized in worker 0")
     end
     

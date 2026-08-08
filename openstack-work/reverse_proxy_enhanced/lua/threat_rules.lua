@@ -35,6 +35,12 @@ local _M = {}
 local url_decode = pattern_utils.url_decode
 _M.url_decode = url_decode
 
+-- Re-exported for the same reason: threat_analyzer.lua's install.php
+-- not-yet-installed fast path needs the exact same matcher router_rules.lua
+-- uses, so the two can never quietly disagree (see lua_pattern_utils.lua's
+-- own comment on this function).
+_M.is_install_wizard_uri = pattern_utils.is_install_wizard_uri
+
 -- ---------------------------------------------------------------------------
 -- is_static_asset(uri, static_asset_patterns)
 --
