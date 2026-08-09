@@ -20,7 +20,9 @@ if [ ! -f "docker-compose.yml" ]; then
     exit 1
 fi
 
-# Start services in detached mode
+# Deliberately plain `docker compose up -d`, no --profile -- see
+# docker-compose-up.sh's comment: vector (profiles: [elk]) is meant to
+# stay opt-in, not force-started here.
 echo "Starting services with docker compose in background..."
 docker compose up -d
 
@@ -30,5 +32,4 @@ echo ""
 echo "Useful commands:"
 echo "  docker compose ps          - View running containers"
 echo "  docker compose logs -f     - Follow all logs"
-echo "  docker compose down        - Stop all services"
-echo "  ./docker-compose-down.sh   - Stop all services (using script)"
+echo "  ./docker-compose-down.sh   - Stop all services, including any profiled ones (e.g. vector)"

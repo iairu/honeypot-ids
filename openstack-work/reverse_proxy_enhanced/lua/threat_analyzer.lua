@@ -448,21 +448,52 @@ function _M.detect_automation(headers, uri)
     local user_agent = headers["User-Agent"] or headers["user-agent"] or ""
     local result = threat_rules.score_automation_user_agent(user_agent)
 
-    -- Check for automation patterns in request timing
+    -- Check for automation patterns in request timing.
+    --
+    -- Two things were wrong with the original version of this check, both
+    -- confirmed live: navigating to /my-account via the homepage's own
+    -- login button -- ONE normal click -- was enough to trip it.
+    --
+    -- 1. ngx.time() has whole-SECOND resolution. Two requests at
+    --    12:00:00.99 and 12:00:01.98 (nearly 1 full second apart) read as
+    --    time_diff = 1; two requests at 12:00:00.01 and 12:00:00.99
+    --    (nearly a full second apart the OTHER way) read as time_diff = 0.
+    --    Either can trip "< 1 second" regardless of the REAL gap, purely
+    --    depending on where the two requests happen to fall relative to a
+    --    second boundary. ngx.now() (a float, sub-second precision) fixes
+    --    the measurement itself.
+    -- 2. Firing on a single close pair at all is too sensitive: a real
+    --    browser's ordinary page load routinely fires more than one
+    --    non-static request within a fraction of a second of each other
+    --    (WordPress's own wp-cron.php async self-trigger fires on nearly
+    --    every front-end pageview, landing right alongside the page's own
+    --    HTML request) -- that's one legitimate burst, not automation.
+    --    A genuine rapid-fire tool keeps up a STREAK of closely-spaced
+    --    requests; a real page load's one-off burst never does. Requiring
+    --    several in a row is what actually tells the two apart.
     local sessions_dict = ngx.shared.sessions
     local timing_key = "timing:" .. (ngx.var.remote_addr or "unknown")
-    local last_request = sessions_dict:get(timing_key)
+    local now = ngx.now()
+    local RAPID_GAP_SECONDS = 0.5
+    local MIN_STREAK_FOR_AUTOMATION = 3
 
-    if last_request then
-        local time_diff = ngx.time() - tonumber(last_request)
-        if time_diff < 1 then  -- Less than 1 second between requests
-            result.score = result.score + 15
-            result.detected = true
-            result.tool = (result.tool or "unknown") .. "-rapid-requests"
+    local streak = 0
+    local state_json = sessions_dict:get(timing_key)
+    if state_json then
+        local ok, state = pcall(cjson.decode, state_json)
+        if ok and type(state) == "table" and type(state.last_time) == "number"
+                and (now - state.last_time) < RAPID_GAP_SECONDS then
+            streak = (state.streak or 0) + 1
         end
     end
 
-    sessions_dict:set(timing_key, ngx.time(), 10)  -- Keep for 10 seconds
+    if streak >= MIN_STREAK_FOR_AUTOMATION then
+        result.score = result.score + 15
+        result.detected = true
+        result.tool = (result.tool or "unknown") .. "-rapid-requests"
+    end
+
+    sessions_dict:set(timing_key, cjson.encode({ last_time = now, streak = streak }), 10)  -- Keep for 10 seconds
 
     return result
 end

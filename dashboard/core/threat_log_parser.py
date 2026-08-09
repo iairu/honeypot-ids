@@ -58,7 +58,21 @@ class ThreatEvent:
 # repo's own reverse_proxy container. Stripped off (and captured) before the
 # rest of parse_line's matching, which all runs against the ORIGINAL nginx
 # log message shape either way.
-_DOCKER_TIMESTAMP_RE = re.compile(r"^\S+\s*\|\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s*")
+#
+# The (?:\x1b\[[0-9;]*m)* right before the timestamp digits matters: every
+# `docker compose logs` call in this app goes through Target.build(), which
+# always adds --ansi always (see core/docker_ctl.py's _global_flags -- needed
+# so colorized log output survives QProcess's non-TTY pipe). Confirmed live
+# (piped through `cat -v`) that this wraps the "<service> | " prefix in a
+# color escape and puts a SEPARATE reset escape (\x1b[0m) directly in front
+# of the timestamp itself: "...reverse_proxy-1  | \x1b[0m2026-08-09T...".
+# Without skipping that reset code here, the regex never matched at all --
+# every single event's timestamp came back None, not just some -- which is
+# why "Copy selected" on the Threat analyzer tab always showed "unknown
+# time" instead of the real log timestamp.
+_DOCKER_TIMESTAMP_RE = re.compile(
+    r"^\S+\s*\|\s*(?:\x1b\[[0-9;]*m)*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s*"
+)
 
 _HEADER_SUMMARY_RE = re.compile(r"\[LOCATION / HEADER\] route_decision='(\w+)' threat_score='(-?\d+)'")
 _FINAL_DECISION_RE = re.compile(

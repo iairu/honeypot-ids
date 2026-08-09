@@ -20,7 +20,16 @@ if [ ! -f "docker-compose.yml" ]; then
     exit 1
 fi
 
-# Start services
+# Deliberately plain `docker compose up`, no --profile: vector
+# (profiles: [elk]) is meant to stay opt-in here -- it always tries to
+# connect out to VECTOR_HOST (vector/vector.yaml has no ELK_ENABLED gate
+# of its own; that env var isn't referenced there at all), so blanket-
+# starting it for everyone running this script would mean real outbound
+# connection attempts nobody asked for. Use
+# `docker compose --profile elk up` (or the dashboard's Services page)
+# to include it. docker-purge.sh/docker-compose-down.sh, by contrast, DO
+# use --profile '*' -- tearing down must always cover everything that
+# might be running, regardless of which profile started it.
 echo "Starting services with docker compose..."
 docker compose up
 

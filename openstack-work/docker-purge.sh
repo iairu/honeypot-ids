@@ -18,16 +18,20 @@ if [ "$confirm" != "yes" ]; then
 fi
 
 echo ""
-echo "Stopping and removing all containers..."
-docker compose down
-
-echo ""
-echo "Removing all volumes..."
-docker compose down -v
-
-echo ""
-echo "Removing orphaned containers..."
-docker compose down --remove-orphans
+echo "Stopping and removing all containers, networks, and volumes..."
+# --profile '*': without this, `docker compose down` silently excludes any
+# service gated behind a Compose profile (e.g. vector, profiles: [elk]) from
+# its scope entirely -- confirmed live, the same issue dashboard/core/
+# docker_ctl.py's Target.build() already works around for every compose
+# command the dashboard itself runs. Without it here, a profiled service
+# that happened to be running (`docker compose --profile elk up -d`) is left
+# orphaned: not stopped, not removed, and its volumes untouched -- exactly
+# the kind of leftover state a "purge everything" script exists to prevent.
+# One combined `down -v --remove-orphans` instead of three separate `down`
+# calls -- the second and third calls were redundant repeats of the first
+# (which already stops+removes containers/networks) doing nothing extra
+# except finally passing -v/--remove-orphans on their own separate pass.
+docker compose --profile '*' down -v --remove-orphans
 
 echo ""
 echo "Cleaning up Docker system..."
