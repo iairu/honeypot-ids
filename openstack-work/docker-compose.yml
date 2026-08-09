@@ -1088,6 +1088,7 @@ services:
       - ./production_eshop_files:/source_wp:ro
       - ./backups:/backups
       - ./backups/backup.sh:/backup.sh:ro
+      - ./backups/restore_db.sh:/restore_db.sh:ro
     networks:
       - production_network
     environment:

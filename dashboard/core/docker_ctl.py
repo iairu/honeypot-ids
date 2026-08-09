@@ -125,7 +125,27 @@ class Target:
             f"{' '.join(shlex.quote(a) for a in global_flags)} "
             f"{' '.join(shlex.quote(a) for a in compose_args)}"
         )
-        argv = [
+        return self._ssh_argv(remote_cmd), None
+
+    def build_shell(self, command: str) -> tuple[list[str], str | None]:
+        """Like build(), but for callers that need more than one `docker
+        compose` invocation chained together in one shell line (e.g.
+        piping one container's stdout into another's stdin -- see
+        core/backup_ctl.py's WP-file restore, which streams an archive
+        straight from backup_service into production_eshop rather than
+        via any new mount). `command` is a raw POSIX shell one-liner the
+        caller has already assembled (its own `docker compose --profile
+        '*' ...` invocations, arguments already shlex.quote'd), run as-is
+        rather than built up from compose_args."""
+        if not self.is_remote:
+            return ["sh", "-c", command], self._local_dir()
+
+        remote_dir = self.remote_compose_dir()
+        remote_cmd = f"cd {shlex.quote(remote_dir)} && {command}"
+        return self._ssh_argv(remote_cmd), None
+
+    def _ssh_argv(self, remote_cmd: str) -> list[str]:
+        return [
             "ssh",
             "-i", self.remote.key_path,
             "-p", str(self.remote.port),
@@ -135,7 +155,6 @@ class Target:
             f"{self.remote.user}@{self.remote.host}",
             remote_cmd,
         ]
-        return argv, None
 
     # ---- one-shot synchronous helpers (call from a background thread) ----
 

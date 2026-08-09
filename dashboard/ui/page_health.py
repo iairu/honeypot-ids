@@ -5,6 +5,8 @@ quick "export logs to a file" icon (see ui/health_diagram.py) handled here
 via export_logs_requested."""
 from __future__ import annotations
 
+import html
+
 from PyQt6.QtCore import QProcess, QUrl, Qt
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
@@ -12,11 +14,27 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from core.content_sync_status import parse_content_sync_log
 from core.shell_ctl import build_shell_command
 from core.web_links import build_url, web_ui_for
 from ui.health_diagram import HealthDiagram, STATUS_COLORS, classify, status_detail
 from ui.log_export import LogExporter
 from ui.process_runner import LogPanel
+
+CONTENT_SYNC_SERVICE = "honeypot_content_sync"
+
+# Bound on how much of the live log tail we keep re-parsing on every
+# chunk (see _on_log_line) -- a handful of lines per replication cycle
+# (default every 300s) means this easily covers many hours of history
+# without needing to grow unbounded for a panel that's only ever shown
+# while this one node is selected.
+_SYNC_LOG_BUFFER_MAX_CHARS = 20_000
+
+_POOL_STATUS_COLORS = {
+    "starting": "#3f9fd9",
+    "complete": "#5cb85c",
+    "failed": "#d9534f",
+}
 
 
 class LegendWidget(QWidget):
@@ -91,7 +109,24 @@ class HealthPage(QWidget):
         btn_row2.addWidget(self.shell_btn)
         detail_layout.addLayout(btn_row2)
 
+        # Only shown for honeypot_content_sync (see _on_node_selected) --
+        # that service has no Docker healthcheck and writes no
+        # host-readable state file, so "container running" alone can't
+        # tell you whether a replication cycle is actually succeeding.
+        # This parses that signal out of the very log tail already
+        # streaming into log_panel below, rather than adding a second
+        # docker-exec round trip.
+        self.sync_activity_label = QLabel("")
+        self.sync_activity_label.setWordWrap(True)
+        self.sync_activity_label.setVisible(False)
+        self.sync_activity_label.setStyleSheet(
+            "QLabel { background-color: rgba(128, 128, 128, 30); padding: 6px; border-radius: 4px; }"
+        )
+        detail_layout.addWidget(self.sync_activity_label)
+        self._sync_log_buffer = ""
+
         self.log_panel = LogPanel()
+        self.log_panel.line_received.connect(self._on_log_line)
         detail_layout.addWidget(self.log_panel, stretch=1)
 
         detail_panel.setMinimumWidth(320)
@@ -121,6 +156,12 @@ class HealthPage(QWidget):
         self.restart_btn.setEnabled(True)
         self.logs_btn.setEnabled(True)
         self._refresh_detail_label()
+
+        self._sync_log_buffer = ""
+        self.sync_activity_label.setVisible(service == CONTENT_SYNC_SERVICE)
+        if service == CONTENT_SYNC_SERVICE:
+            self.sync_activity_label.setText("Content sync activity: waiting for log output…")
+
         # Auto-start the live tail immediately -- no need to click "View
         # logs" separately just to see what a newly-selected node is doing.
         self._view_logs_selected()
@@ -163,6 +204,32 @@ class HealthPage(QWidget):
             return
         argv, cwd = target.build("logs", "--tail=300", "-f", service)
         self.log_panel.run(argv, cwd)
+
+    def _on_log_line(self, text: str) -> None:
+        if not self._selected or self._selected[1] != CONTENT_SYNC_SERVICE:
+            return
+        self._sync_log_buffer = (self._sync_log_buffer + text)[-_SYNC_LOG_BUFFER_MAX_CHARS:]
+        activity = parse_content_sync_log(self._sync_log_buffer)
+
+        if not activity.per_pool and not activity.last_message:
+            self.sync_activity_label.setText("Content sync activity: no log output parsed yet.")
+            return
+
+        lines = ["<b>Content sync activity</b> (parsed from the log tail below):"]
+        for pool_num in (1, 2, 3):
+            pool = activity.per_pool.get(pool_num)
+            if pool is None:
+                lines.append(f"Pool {pool_num}: no data yet")
+            else:
+                color = _POOL_STATUS_COLORS.get(pool.status, "#888888")
+                lines.append(
+                    f"Pool {pool_num}: <span style='color:{color};'>{pool.status}</span> @ {pool.timestamp}"
+                )
+        if activity.last_message:
+            lines.append(
+                f"Last log line ({activity.last_timestamp}): {html.escape(activity.last_message)}"
+            )
+        self.sync_activity_label.setText("<br>".join(lines))
 
     def _open_web_ui_selected(self) -> None:
         if not self._selected:

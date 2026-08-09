@@ -19,6 +19,7 @@ from core.paths import DASHBOARD_DIR
 from core.state import AppState
 from ui.dependency_banner import DependencyBanner
 from ui.health_diagram import classify
+from ui.page_backups import BackupsPage
 from ui.page_certs import CertsPage
 from ui.page_exploits import ExploitsPage
 from ui.page_health import HealthPage
@@ -47,7 +48,7 @@ _APP_ICON_PATH = DASHBOARD_DIR / "resources" / "app_icon.svg"
 _NOTIFY_ON_STATUSES = {"unhealthy", "exited_bad"}
 
 PAGES = [
-    "services", "health", "certificates", "redis", "kibana",
+    "services", "health", "certificates", "redis", "backups", "kibana",
     "exploits", "log_search", "settings",
 ]
 PAGE_LABELS = {
@@ -55,6 +56,7 @@ PAGE_LABELS = {
     "health": "Health",
     "certificates": "Certificates",
     "redis": "Redis",
+    "backups": "Backups",
     "kibana": "Kibana",
     "exploits": "Exploits",
     "log_search": "Log Search",
@@ -116,6 +118,7 @@ class MainWindow(QMainWindow):
         self.health_page = HealthPage(self._get_targets)
         self.certs_page = CertsPage()
         self.redis_page = RedisPage(state)
+        self.backups_page = BackupsPage(state)
         self.kibana_page = KibanaPage(state)
         self.exploits_page = ExploitsPage(state)
         self.log_search_page = LogSearchPage(state)
@@ -126,6 +129,7 @@ class MainWindow(QMainWindow):
             ("health", self.health_page),
             ("certificates", self.certs_page),
             ("redis", self.redis_page),
+            ("backups", self.backups_page),
             ("kibana", self.kibana_page),
             ("exploits", self.exploits_page),
             ("log_search", self.log_search_page),
@@ -178,6 +182,7 @@ class MainWindow(QMainWindow):
         # Health page rebuilds its diagram automatically on the next poll
         # tick (it always calls _get_targets() fresh in apply_status()).
         self.redis_page.rebuild_targets()
+        self.backups_page.rebuild_targets()
         self.exploits_page.rebuild_targets()
         self.log_search_page.rebuild_targets()
         self.security_feed.start(self._edge_target())
@@ -309,6 +314,8 @@ class MainWindow(QMainWindow):
             current.run_search()
         elif current is self.redis_page:
             current.refresh()
+        elif current is self.backups_page:
+            current.refresh()
         elif current is self.certs_page and hasattr(current, "refresh"):
             current.refresh()
 
@@ -327,6 +334,7 @@ class MainWindow(QMainWindow):
         self._reload_settings_page()
         self.services_page.rebuild_panels()
         self.redis_page.rebuild_targets()
+        self.backups_page.rebuild_targets()
         self.exploits_page.rebuild_targets()
         self.log_search_page.rebuild_targets()
         self.security_feed.start(self._edge_target())
