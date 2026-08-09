@@ -283,6 +283,32 @@ services:
         condition: service_completed_successfully
       session_store:
         condition: service_healthy
+      # Without this, this service's very first sync_cycle (it runs one
+      # immediately on startup, not just on the REPLICATION_INTERVAL_SECONDS
+      # timer) can race production_db_seed on a fresh `docker compose up`:
+      # production_database would still be schemaless/empty at that
+      # instant, so build_sync_sql() correctly takes its "production has
+      # no content yet -- skipping this cycle" early-return (see
+      # scripts/replicate_content_to_honeypot.sh) -- but that means the
+      # honeypot pools would then sit on stale/no content for a full
+      # REPLICATION_INTERVAL_SECONDS (default 300s) before the next cycle
+      # picks up what production_db_seed just created. Waiting on this
+      # completing first means the FIRST cycle already sees the real seeded
+      # catalog, not an empty one. Same reasoning applies to each honeypot
+      # pool's OWN schema (honeypot_database_1/2/3 never had wp_* tables
+      # either, confirmed live -- only the pool_router bookkeeping ones) --
+      # this service's replication is a scoped DELETE/INSERT into EXISTING
+      # tables, never schema creation, so without honeypot_db_seed_1/2/3
+      # having run first, every cycle would fail against all three pools
+      # regardless of production's own state.
+      production_db_seed:
+        condition: service_completed_successfully
+      honeypot_db_seed_1:
+        condition: service_completed_successfully
+      honeypot_db_seed_2:
+        condition: service_completed_successfully
+      honeypot_db_seed_3:
+        condition: service_completed_successfully
     volumes:
       - ./scripts/replicate_content_to_honeypot.sh:/replicate_content_to_honeypot.sh:ro
     environment:
@@ -341,7 +367,7 @@ services:
       # says nothing about whether WordPress's own schema exists yet.
       # Waiting on this completing successfully is what guarantees
       # production_eshop (and wp_install_state.lua's 30s health probe)
-      # never sees a schemaless database -- see scripts/seed_production_db.sh
+      # never sees a schemaless database -- see scripts/seed_wordpress_db.sh
       # and production_db_seed below for the full story (this was the root
       # cause of the recurring "Table 'production_database.wp_options'
       # doesn't exist" error).
@@ -455,7 +481,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # One-shot WordPress + WooCommerce + Elementor bootstrap for
-  # production_eshop -- see scripts/seed_production_db.sh for the full
+  # production_eshop -- see scripts/seed_wordpress_db.sh for the full
   # rationale. A freshly-cloned repo already ships the entire WordPress
   # codebase (core/plugins/themes/uploads, all git-tracked under
   # production_eshop_files/), but production_database starts with ZERO
@@ -466,6 +492,16 @@ services:
   # wp_install_state.lua's own 30s health probe). production_eshop now
   # depends on this completing successfully (not just on
   # production_database being reachable) so that can never happen again.
+  #
+  # honeypot_db_seed_1/2/3 below are the exact same idea applied to each
+  # honeypot pool's own database -- those had NEVER had WordPress schema
+  # either (confirmed live: honeypot_database_1/2/3 only ever had the
+  # pool_router bookkeeping tables -- honeypot_ip_assignments/
+  # honeypot_pool_events/honeypot_pool_registry -- never any wp_* table),
+  # which meant honeypot_content_sync's own scoped DELETE/INSERT
+  # replication (it creates content ROWS into EXISTING tables, never
+  # schema) had nothing to write into either. Same root cause, same fix,
+  # applied four times over -- once per WordPress database this stack has.
   #
   # Deliberately a plain-text WP-CLI script, not a committed SQL dump /
   # git-lfs binary: a few KB, reviewable in a normal `git diff`,
@@ -499,9 +535,12 @@ services:
       # see the dashboard's Backups page "Reset demo store" action /
       # manage_backups.sh, or export it in the shell before `up`.
       - FORCE_RESEED=${FORCE_RESEED:-0}
+      # Production is the one real source of content -- see
+      # scripts/seed_wordpress_db.sh's IMPORT_SAMPLE_CONTENT note.
+      - IMPORT_SAMPLE_CONTENT=1
     volumes:
       - ./production_eshop_files:/var/www/html
-      - ./scripts/seed_production_db.sh:/seed_production_db.sh:ro
+      - ./scripts/seed_wordpress_db.sh:/seed_wordpress_db.sh:ro
       - ./scripts/seed_elementor_pages.sh:/seed_elementor_pages.sh:ro
     networks:
       - production_network
@@ -512,7 +551,7 @@ services:
     # git -- it holds live DB credentials/salts). Bypassing the
     # entrypoint entirely would skip that and leave wp-cli with no DB
     # config to run against on a genuinely first-ever boot.
-    command: ["sh", "/seed_production_db.sh"]
+    command: ["sh", "/seed_wordpress_db.sh"]
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -520,6 +559,134 @@ services:
     # Same DAC_OVERRIDE reasoning as backup_service: this bind mount is
     # host-owned, and root here still needs to bypass that ownership to
     # write wp-config.php/wp-content/the database schema on first boot.
+    cap_add:
+      - DAC_OVERRIDE
+      - CHOWN
+      - FOWNER
+      - SETGID
+      - SETUID
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 100
+
+  honeypot_db_seed_1:
+    image: wordpress:cli-php8.1
+    user: root
+    depends_on:
+      honeypot_database_1:
+        condition: service_healthy
+      # honeypot_eshop_files needs init_setup's rsync to have actually put
+      # the WooCommerce/Elementor/theme files there first -- otherwise
+      # `wp plugin activate` below has nothing to activate.
+      init_setup:
+        condition: service_completed_successfully
+    environment:
+      - WORDPRESS_DB_HOST=honeypot_database_1:3306
+      - WORDPRESS_DB_NAME=production_database
+      - WORDPRESS_DB_USER=production_user
+      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
+      - WP_ADMIN_USER=${WP_ADMIN_USER:-admin}
+      - WP_ADMIN_PASSWORD=${WP_ADMIN_PASSWORD:-change_this_wp_admin_password}
+      - WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-admin@example.com}
+      # Deliberately identical to production_db_seed's WP_SITE_URL, not a
+      # pool-specific one -- pool_router.lua's whole premise is that an
+      # attacker transparently lands on the same public fingerprint
+      # (theme/plugins/site identity) regardless of which pool they're
+      # routed to, so this must match production exactly.
+      - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
+      - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
+      - FORCE_RESEED=${FORCE_RESEED:-0}
+      - IMPORT_SAMPLE_CONTENT=0
+    volumes:
+      - honeypot_eshop_files:/var/www/html
+      - ./scripts/seed_wordpress_db.sh:/seed_wordpress_db.sh:ro
+    networks:
+      - honeypot_network
+    command: ["sh", "/seed_wordpress_db.sh"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - CHOWN
+      - FOWNER
+      - SETGID
+      - SETUID
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 100
+
+  honeypot_db_seed_2:
+    image: wordpress:cli-php8.1
+    user: root
+    depends_on:
+      honeypot_database_2:
+        condition: service_healthy
+      init_setup:
+        condition: service_completed_successfully
+    environment:
+      - WORDPRESS_DB_HOST=honeypot_database_2:3306
+      - WORDPRESS_DB_NAME=production_database
+      - WORDPRESS_DB_USER=production_user
+      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD_POOL_2}
+      - WP_ADMIN_USER=${WP_ADMIN_USER:-admin}
+      - WP_ADMIN_PASSWORD=${WP_ADMIN_PASSWORD:-change_this_wp_admin_password}
+      - WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-admin@example.com}
+      - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
+      - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
+      - FORCE_RESEED=${FORCE_RESEED:-0}
+      - IMPORT_SAMPLE_CONTENT=0
+    volumes:
+      - honeypot_eshop_files_2:/var/www/html
+      - ./scripts/seed_wordpress_db.sh:/seed_wordpress_db.sh:ro
+    networks:
+      - honeypot_network
+    command: ["sh", "/seed_wordpress_db.sh"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - CHOWN
+      - FOWNER
+      - SETGID
+      - SETUID
+    mem_limit: 512m
+    cpus: "0.5"
+    pids_limit: 100
+
+  honeypot_db_seed_3:
+    image: wordpress:cli-php8.1
+    user: root
+    depends_on:
+      honeypot_database_3:
+        condition: service_healthy
+      init_setup:
+        condition: service_completed_successfully
+    environment:
+      - WORDPRESS_DB_HOST=honeypot_database_3:3306
+      - WORDPRESS_DB_NAME=production_database
+      - WORDPRESS_DB_USER=production_user
+      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD_POOL_3}
+      - WP_ADMIN_USER=${WP_ADMIN_USER:-admin}
+      - WP_ADMIN_PASSWORD=${WP_ADMIN_PASSWORD:-change_this_wp_admin_password}
+      - WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-admin@example.com}
+      - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
+      - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
+      - FORCE_RESEED=${FORCE_RESEED:-0}
+      - IMPORT_SAMPLE_CONTENT=0
+    volumes:
+      - honeypot_eshop_files_3:/var/www/html
+      - ./scripts/seed_wordpress_db.sh:/seed_wordpress_db.sh:ro
+    networks:
+      - honeypot_network
+    command: ["sh", "/seed_wordpress_db.sh"]
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     cap_add:
       - DAC_OVERRIDE
       - CHOWN
@@ -711,6 +878,11 @@ services:
         condition: service_healthy
       honeypot_db_migration:
         condition: service_completed_successfully
+      # Same reasoning as production_eshop's own production_db_seed
+      # dependency -- see honeypot_db_seed_1 above and
+      # scripts/seed_wordpress_db.sh.
+      honeypot_db_seed_1:
+        condition: service_completed_successfully
     environment:
       - WORDPRESS_DB_HOST=honeypot_database_1:3306
       - WORDPRESS_DB_NAME=production_database
@@ -820,6 +992,8 @@ services:
         condition: service_healthy
       honeypot_db_migration:
         condition: service_completed_successfully
+      honeypot_db_seed_2:
+        condition: service_completed_successfully
     environment:
       - WORDPRESS_DB_HOST=honeypot_database_2:3306
       - WORDPRESS_DB_NAME=production_database
@@ -901,6 +1075,8 @@ services:
       honeypot_database_3:
         condition: service_healthy
       honeypot_db_migration:
+        condition: service_completed_successfully
+      honeypot_db_seed_3:
         condition: service_completed_successfully
     environment:
       - WORDPRESS_DB_HOST=honeypot_database_3:3306

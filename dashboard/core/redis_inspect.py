@@ -293,3 +293,19 @@ def dbsize(remote: RemoteConfig | None, timeout: float = 10.0) -> int:
         return int(_run_redis_cli(remote, "DBSIZE", timeout=timeout).strip())
     except (RedisInspectError, ValueError):
         return 0
+
+
+def flush_all(remote: RemoteConfig | None, timeout: float = 15.0) -> None:
+    """Wipes EVERY key in session_store's Redis -- equivalent to `redis-cli
+    FLUSHALL` (same command this project's own README documents as the
+    "flush all Redis state" one-liner). Used by page_redis.py's "Reset
+    Redis KV store" button: this is where router.lua's session-level
+    scoring lives (session:*), threat_analyzer.lua's IP-reputation
+    classification (threat_ips, fed by Suricata/admin/vulnerability/
+    AbuseIPDB detections), pool_router.lua's sticky pool assignments
+    (honeypot_pool_ip:*), and rate limiting -- unlike
+    clear_local_threat_state()'s targeted un-poisoning of just this
+    host's own local/test IP, this clears every IP's state, real or
+    test. No coming back from this short of the state rebuilding itself
+    from live traffic."""
+    _run_redis_cli(remote, "FLUSHALL", timeout=timeout)

@@ -43,6 +43,28 @@ from core.state import RemoteConfig
 
 BACKUP_SERVICE = "backup_service"
 WP_RESTORE_TARGET_SERVICE = "production_eshop"
+CONTENT_SYNC_SERVICE = "honeypot_content_sync"
+
+# Appended (via `&&`) after any command that changes production_database's
+# *content* (a DB restore, a reseed) so the honeypot pools don't sit on
+# stale/no content for up to REPLICATION_INTERVAL_SECONDS (default 300s)
+# waiting for honeypot_content_sync's own periodic timer -- `docker compose
+# restart` makes its script re-exec from the top (see
+# scripts/replicate_content_to_honeypot.sh), which runs one sync_cycle
+# immediately rather than waiting out whatever's left of the current
+# interval. Status is visible two ways after this runs: this command's own
+# echoed messages (streamed live into whichever LogPanel ran it), and the
+# Health page's "Content sync activity" panel (ui/page_health.py), which
+# parses honeypot_content_sync's own per-pool starting/complete/failed log
+# lines out of the same restart's live log tail.
+_RESYNC_SUFFIX = (
+    " && echo '[dashboard] Production content changed -- restarting "
+    f"{CONTENT_SYNC_SERVICE} to replicate it into the honeypot pools now "
+    "(see the Health page for per-pool progress) instead of waiting up to "
+    "REPLICATION_INTERVAL_SECONDS for the next scheduled cycle...' "
+    f"&& docker compose --profile '*' restart {CONTENT_SYNC_SERVICE} "
+    "&& echo '[dashboard] Replication triggered.'"
+)
 
 # A flat {filename: {"label": ..., "updated": ...}} JSON manifest living at
 # /backups/labels.json (i.e. openstack-work/backups/labels.json on the
@@ -163,9 +185,23 @@ def list_backups(
     # busybox `stat -c` (alpine's own, not GNU coreutils) supports the
     # %n/%s/%Y directives used here -- confirmed against alpine:latest's
     # base image, the same one backup_service itself runs.
+    #
+    # Trailing `; true` matters: when a glob matches nothing, the shell
+    # leaves it unexpanded (literal "*.tar.gz"), so `[ -e "$f" ]` is
+    # false and -- since `&&` short-circuits, skipping `stat` -- that
+    # failed test becomes the exit status of the whole `for` iteration.
+    # With zero files of one kind (e.g. every WP archive deleted via the
+    # dashboard/manage_backups.sh), that failed test is also the LAST
+    # command the script runs, so `sh -c` itself would exit 1 -- which
+    # _run() treats as a real failure ("backup_service unreachable")
+    # despite the command having succeeded perfectly (there just aren't
+    # any files of that kind, which is a normal state, not an error).
+    # `; true` pins the script's own exit status to 0 whenever it ran at
+    # all, regardless of how many files either loop actually found.
     script = (
         "for f in /backups/db/*.sql.gz; do [ -e \"$f\" ] && stat -c 'DB|%n|%s|%Y' \"$f\"; done; "
-        "for f in /backups/wp/*.tar.gz; do [ -e \"$f\" ] && stat -c 'WP|%n|%s|%Y' \"$f\"; done"
+        "for f in /backups/wp/*.tar.gz; do [ -e \"$f\" ] && stat -c 'WP|%n|%s|%Y' \"$f\"; done; "
+        "true"
     )
     out = _run(target, "exec", "-T", BACKUP_SERVICE, "sh", "-c", script, timeout=timeout)
     labels = _read_labels(target, timeout=timeout)
@@ -232,13 +268,19 @@ def read_backup_log(
 def restore_db_command(remote: RemoteConfig | None, filename: str) -> tuple[list[str], str | None]:
     """(argv, cwd) that restores `filename` (must be a name as returned
     by list_backups()) into the live production database via
-    restore_db.sh. Run this through LogPanel.run(), never subprocess.run()
-    directly -- it's slow and mutating, and should stream its own
-    progress rather than block the UI thread."""
+    restore_db.sh, then restarts honeypot_content_sync so the honeypot
+    pools pick up the restored content promptly (see _RESYNC_SUFFIX).
+    Run this through LogPanel.run(), never subprocess.run() directly --
+    it's slow and mutating, and should stream its own progress rather
+    than block the UI thread."""
     if not _DB_FILENAME_RE.match(filename):
         raise BackupCtlError(f"Not a valid DB dump filename: {filename!r}")
     target = Target(project="edge", remote=remote)
-    return target.build("exec", "-T", BACKUP_SERVICE, "/restore_db.sh", filename)
+    command = (
+        f"docker compose --profile '*' exec -T {BACKUP_SERVICE} /restore_db.sh {shlex.quote(filename)}"
+        + _RESYNC_SUFFIX
+    )
+    return target.build_shell(command)
 
 
 def restore_wp_command(remote: RemoteConfig | None, filename: str) -> tuple[list[str], str | None]:
@@ -331,15 +373,22 @@ def reseed_command(
     remote: RemoteConfig | None, force: bool = True,
 ) -> tuple[list[str], str | None]:
     """(argv, cwd) that (re)runs production_db_seed -- see
-    scripts/seed_production_db.sh. force=True passes FORCE_RESEED=1 so an
-    already-installed WordPress gets wiped and rebuilt from scratch
-    (used by the dashboard's "Reset demo store" action, e.g. to restore a
-    clean storefront after running exploits against it); force=False
-    just replays the normal idempotent no-op-if-already-installed
-    behavior every `docker compose up` already gets for free, useful only
-    to watch it happen / confirm it's a no-op. Meant for LogPanel.run(),
-    same reasoning as the restore_*_command() functions above."""
+    scripts/seed_production_db.sh -- then restarts honeypot_content_sync
+    so the honeypot pools promptly mirror whatever the seed just built
+    (see _RESYNC_SUFFIX) rather than only catching up on the pools'
+    normal fresh-boot dependency ordering (docker-compose.yml's
+    production_db_seed -> honeypot_content_sync depends_on chain, which
+    only ever applies to a service's FIRST start, not a later `up` of an
+    already-running one -- this is what covers that case). force=True
+    passes FORCE_RESEED=1 so an already-installed WordPress gets wiped
+    and rebuilt from scratch (used by the dashboard's "Reset demo store"
+    action, e.g. to restore a clean storefront after running exploits
+    against it); force=False just replays the normal idempotent
+    no-op-if-already-installed behavior every `docker compose up`
+    already gets for free, useful only to watch it happen / confirm it's
+    a no-op. Meant for LogPanel.run(), same reasoning as the
+    restore_*_command() functions above."""
     target = Target(project="edge", remote=remote)
     env_prefix = "FORCE_RESEED=1 " if force else ""
-    command = f"{env_prefix}docker compose --profile '*' up production_db_seed"
+    command = f"{env_prefix}docker compose --profile '*' up production_db_seed" + _RESYNC_SUFFIX
     return target.build_shell(command)

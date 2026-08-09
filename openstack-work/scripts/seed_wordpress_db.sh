@@ -1,22 +1,31 @@
 #!/bin/sh
-# seed_production_db.sh - One-time WordPress + WooCommerce + Elementor
-# bootstrap for production_eshop, run by the production_db_seed service
-# (wordpress:cli image, see docker-compose.yml).
+# seed_wordpress_db.sh - One-time WordPress + WooCommerce + Elementor
+# bootstrap, run by production_db_seed (production_database) and
+# honeypot_db_seed_1/2/3 (each honeypot pool's own database) -- see
+# docker-compose.yml. Same script for all four: which WordPress instance
+# it targets and how much content it seeds are entirely controlled by
+# the environment variables below, not by which service runs it.
 #
 # PROBLEM THIS FIXES:
 #   A freshly-cloned repo already ships the entire WordPress codebase --
-#   core, plugins, themes, uploads, all git-tracked under
-#   production_eshop_files/ -- but production_database starts with ZERO
-#   tables: nothing has ever run `wp core install`. Every request that
-#   touches wp_options (nearly every request -- this is WordPress core
-#   itself, not an Elementor-specific bug) was erroring with "Table
-#   'production_database.wp_options' doesn't exist" until a human
-#   manually clicked through wp-admin/install.php in a browser --
-#   including wp_install_state.lua's own 30s health-probe timer, which is
-#   why the error recurs on a clock. This script does that install
-#   automatically, once, idempotently, BEFORE production_eshop (or that
-#   probe) ever sees a schemaless database -- see docker-compose.yml's
-#   production_db_seed service and production_eshop's depends_on.
+#   core, plugins, themes, uploads -- for production (git-tracked under
+#   production_eshop_files/) and, once init_setup's rsync has run, for
+#   each honeypot pool too (named volumes honeypot_eshop_files[_N]) --
+#   but every one of those FOUR databases starts with ZERO tables:
+#   nothing had ever run `wp core install` against any of them. Every
+#   request touching wp_options (nearly every request -- this is
+#   WordPress core itself, not an Elementor-specific bug) errored with
+#   "Table '...production_database.wp_options' doesn't exist" until a
+#   human manually clicked through wp-admin/install.php in a browser --
+#   including wp_install_state.lua's own 30s health-probe timer against
+#   production, which is why the error recurred on a clock, AND
+#   honeypot_content_sync's own periodic replication cycle against each
+#   pool (its scoped DELETE/INSERT assumes the destination tables
+#   already exist -- it creates content ROWS, never SCHEMA). This script
+#   does the install automatically, once, idempotently, before anything
+#   downstream ever sees a schemaless database -- see docker-compose.yml's
+#   depends_on chains (production_eshop/honeypot_eshop_N on their
+#   respective seed service; honeypot_content_sync on ALL FOUR).
 #
 # WHY A SCRIPT, NOT A COMMITTED SQL DUMP / git-lfs BINARY:
 #   This is a few KB of plain-text, reviewable-in-a-normal-`git diff`
@@ -38,15 +47,31 @@
 #   exploit test runs, since exploits are expected to modify/corrupt
 #   this database.
 #
+# IMPORT_SAMPLE_CONTENT (default "1"):
+#   production_db_seed leaves this at its default -- production is the
+#   one and only source of real content (WooCommerce sample catalog +
+#   the Elementor demo pages authored by seed_elementor_pages.sh).
+#   honeypot_db_seed_1/2/3 set this to "0": a honeypot pool is meant to
+#   have IDENTICAL content to production, not its own independently
+#   authored copy -- that's already handled by
+#   scripts/replicate_content_to_honeypot.sh's own scoped-mirror logic
+#   once real schema exists to mirror INTO. Authoring separate content
+#   here too would just leave orphaned rows alongside whatever
+#   replication brings in, with no schema/content conflict but no
+#   purpose either. Schema/theme/plugin setup happens identically either
+#   way -- pools need to actually LOOK like production, just not have
+#   their own independently-sourced data.
+#
 # RESILIENCE:
 #   `wp core install` itself is the one step allowed to fail loudly and
-#   abort (set -e) -- without it nothing downstream makes sense, and
-#   production_eshop's depends_on (service_completed_successfully) means
-#   the whole stack correctly stays down rather than serving a broken
-#   site. Everything past that (product catalog import needs a one-time
-#   wordpress.org plugin download; the Elementor pages are cosmetic) is
-#   best-effort: a transient network hiccup on first boot degrades to a
-#   working-but-emptier storefront instead of blocking startup entirely.
+#   abort (set -e) -- without it nothing downstream makes sense, and the
+#   dependent eshop container's depends_on (service_completed_successfully)
+#   means the whole stack correctly stays down rather than serving a
+#   broken site. Everything past that (product catalog import needs a
+#   one-time wordpress.org plugin download; the Elementor pages are
+#   cosmetic) is best-effort: a transient network hiccup on first boot
+#   degrades to a working-but-emptier storefront instead of blocking
+#   startup entirely.
 set -eu
 
 : "${WORDPRESS_DB_HOST:?WORDPRESS_DB_HOST environment variable is required}"
@@ -130,6 +155,14 @@ $WP option update woocommerce_onboarding_profile '{"skipped":true}' --format=jso
 # WooCommerce's own activation hook (triggered by `plugin activate` above)
 # already creates the Shop/Cart/Checkout/My Account pages and their
 # associated wc_get_page_id() option entries -- no separate step needed.
+
+if [ "${IMPORT_SAMPLE_CONTENT:-1}" != "1" ]; then
+    log "IMPORT_SAMPLE_CONTENT=0 -- schema/theme/plugins ready, skipping content"
+    log "  authoring (honeypot_content_sync will mirror production's real"
+    log "  content into this database instead)."
+    log "Seed complete (schema only)."
+    exit 0
+fi
 
 # Best-effort from here: a working (if emptier) storefront on failure,
 # not a blocked startup -- see the file header's RESILIENCE note.

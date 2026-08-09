@@ -10,12 +10,14 @@ from PyQt6.QtCharts import QBarCategoryAxis, QBarSeries, QBarSet, QChart, QChart
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPainter
 from PyQt6.QtWidgets import (
-    QComboBox, QHBoxLayout, QHeaderView, QLabel, QPlainTextEdit,
+    QComboBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPlainTextEdit,
     QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from core.docker_ctl import Target, targets_for
-from core.redis_inspect import RedisInspectError, RedisKeyInfo, dbsize, get_threat_scores, get_value, list_keys
+from core.redis_inspect import (
+    RedisInspectError, RedisKeyInfo, dbsize, flush_all, get_threat_scores, get_value, list_keys,
+)
 from core.state import AppState, RemoteConfig
 
 
@@ -38,6 +40,10 @@ class RedisPage(QWidget):
         self.dbsize_label = QLabel("")
         toolbar.addWidget(self.dbsize_label)
         toolbar.addStretch()
+        self.reset_btn = QPushButton("Reset Redis KV store…")
+        self.reset_btn.setStyleSheet("QPushButton { color: #d9534f; }")
+        self.reset_btn.clicked.connect(self._reset)
+        toolbar.addWidget(self.reset_btn)
         layout.addLayout(toolbar)
 
         self.error_banner = QLabel("")
@@ -94,6 +100,29 @@ class RedisPage(QWidget):
         if 0 <= idx < len(self._targets):
             return self._targets[idx].remote
         return None
+
+    def _reset(self) -> None:
+        remote = self._current_remote()
+        reply = QMessageBox.warning(
+            self, "Confirm Redis reset",
+            "This wipes EVERY key in session_store's Redis (FLUSHALL) -- "
+            "including attacker IP classification/reputation (threat_ips, "
+            "built up from Suricata/admin/vulnerability/AbuseIPDB detections) "
+            "and all active sessions (every visitor, including yourself, will "
+            "be logged out and re-scored from scratch on their next request). "
+            "Rate limits and sticky honeypot pool assignments are cleared too. "
+            "This cannot be undone. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            flush_all(remote)
+        except RedisInspectError as e:
+            QMessageBox.warning(self, "Reset failed", str(e))
+            return
+        self.refresh()
 
     def refresh(self) -> None:
         remote = self._current_remote()
