@@ -1,7 +1,7 @@
 """Parses honeypot_content_sync's stdout log lines into a small activity
 summary -- backs ui/page_health.py's per-pool status panel.
 
-honeypot_content_sync (see openstack-work/scripts/replicate_content_to_honeypot.sh)
+honeypot_content_sync (see ids/scripts/replicate_content_to_honeypot.sh)
 has no Docker healthcheck and writes no host-readable state file (its
 $WORKDIR is an ephemeral in-container mktemp, cleaned up on exit) -- the
 container's own State/Health only ever say "the loop process is alive",

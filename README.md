@@ -16,7 +16,7 @@ Oblasť: Kombinované bezpečnostné riešenia
 
 # Technical & Operational Manual
 
-This file is the single technical/functional manual for the project: what it is, how to run it, how it works in detail, what's known-broken, and what's left to do. It supersedes and merges the following (now removed) files: `CHECKLIST.md`, `CHECKLIST-MANUAL.md`, `PROMPT_TODO.md`, `walkthrough.md` (both the root and `openstack-work/` copies), `refactoring-plan.md`, `summary-for-claude.md`, `openstack-work/README.md`, `openstack-work/ELK_INTEGRATION.md`, `openstack-work/SQL_PROXY_ROUTING.md`, and `openstack-work/reverse_proxy_enhanced/HONEYPOT_ROUTING_TEST_CASES.md`. Thesis-scoped material (the LaTeX thesis under `master-thesis-latex/`) stays separate — see [§12](#12-thesis--academic-material). `COUNTERARGUMENTS.md`, `PLAN_DP1-3.md`, and `master-thesis-rewrite-plan/` are cited a few times below for historical context but no longer exist in the repository (removed in a later cleanup pass — see §12's note).
+This file is the single technical/functional manual for the project: what it is, how to run it, how it works in detail, what's known-broken, and what's left to do. It supersedes and merges the following (now removed) files: `CHECKLIST.md`, `CHECKLIST-MANUAL.md`, `PROMPT_TODO.md`, `walkthrough.md` (both the root and `ids/` copies), `refactoring-plan.md`, `summary-for-claude.md`, `ids/README.md`, `ids/ELK_INTEGRATION.md`, `ids/SQL_PROXY_ROUTING.md`, and `ids/reverse_proxy_enhanced/HONEYPOT_ROUTING_TEST_CASES.md`. Thesis-scoped material (the LaTeX thesis under `master-thesis-latex/`) stays separate — see [§12](#12-thesis--academic-material). `COUNTERARGUMENTS.md`, `PLAN_DP1-3.md`, and `master-thesis-rewrite-plan/` are cited a few times below for historical context but no longer exist in the repository (removed in a later cleanup pass — see §12's note).
 
 Every claim below was checked against the running system or the current source as of this writing, not copied forward from older docs — see [§9](#9-known-issues--stale-documentation-corrections) for what was found stale in the files this replaces and corrected here.
 
@@ -30,18 +30,18 @@ A WordPress/WooCommerce e-commerce site with an OpenResty (Nginx + Lua) reverse 
 
 ### Two-host run order
 
-This system spans **two separate hosts/VMs**, each its own independent `docker-compose.yml` project (`openstack-work/` and `openstack-siem-work/`) with no shared files or networks — see `ARCHITECTURE.md` at the repo root for the full write-up (data-flow diagram, why the split is a deliberate security boundary rather than an accident, and exactly how to run both together on a single host for testing without merging them):
+This system spans **two separate hosts/VMs**, each its own independent `docker-compose.yml` project (`ids/` and `siem/`) with no shared files or networks — see `ARCHITECTURE.md` at the repo root for the full write-up (data-flow diagram, why the split is a deliberate security boundary rather than an accident, and exactly how to run both together on a single host for testing without merging them):
 
 ```bash
 # 1. On the SIEM VM first:
 sudo apt install docker docker-compose curl wget zip unzip git jq
-cd openstack-siem-work/elk_dockerized/certs/root-ca && ./gen_elk_certs.sh && cd ../../docker
+cd siem/certs/root-ca && ./gen_elk_certs.sh && cd ../../docker
 sudo docker compose up
 # wait for http://<siem-vm-ip>:5601/app/home#/ to be reachable
 
 # 2. Then on the main/edge VM:
 sudo apt install docker docker-compose curl wget zip unzip git jq
-cd openstack-work
+cd ids
 sudo docker compose up
 ```
 
@@ -52,7 +52,7 @@ The SIEM half is optional for local development — the main stack runs standalo
 ### First-time setup (main VM / local dev)
 
 ```bash
-cd openstack-work
+cd ids
 cp .env.example .env
 vi .env    # set real passwords, or generate them:
 sed -i "s/change_this_user_password_in_production/$(openssl rand -base64 32)/" .env
@@ -65,7 +65,7 @@ sed -i "s/change_this_internal_test_secret/$(openssl rand -hex 24)/" .env
 docker compose up -d --build
 ```
 
-There is no `deploy.sh` or `test_system.sh` in this repository — despite being referenced by that name in the old `openstack-work/README.md` this file replaces, neither script exists. Use `docker compose` directly, as above.
+There is no `deploy.sh` or `test_system.sh` in this repository — despite being referenced by that name in the old `ids/README.md` this file replaces, neither script exists. Use `docker compose` directly, as above.
 
 ### Common commands
 
@@ -116,7 +116,7 @@ FORCE_RESEED=1 docker compose up production_db_seed && docker compose restart ho
 ### Where things live
 
 ```
-openstack-work/
+ids/
 ├── reverse_proxy_enhanced/lua/   # the actual thesis contribution — see §4
 ├── reverse_proxy_enhanced/nginx.conf
 ├── production_eshop_files/       # real WordPress+WooCommerce+omega-storefront theme
@@ -130,7 +130,7 @@ openstack-work/
 ├── ssl_certificates/             # gitignored, regenerate on fresh clone
 └── .env / .env.example
 
-openstack-siem-work/elk_dockerized/   # SEPARATE docker-compose project — SIEM backend, own host
+siem/   # SEPARATE docker-compose project — SIEM backend, own host
 ARCHITECTURE.md                       # the two-host split: why, data flow, single-host testing — see §1/§6
 dashboard/                            # PyQt6 GUI: start/stop/health/certs/settings for both projects, local+remote — see dashboard/README.md
 master-thesis-latex/                  # the thesis itself (LaTeX)
@@ -181,7 +181,7 @@ As of this session, the request-handling Lua code follows a deliberate **pipelin
 | — | `sophistication_analyzer.lua` | (fixed, untested pre-session) | Attacker classification |
 | — | `lua_pattern_utils.lua` | 9 | Shared `url_decode`/`escape_pattern`, deduplicated from 3 copies |
 
-**224 unit tests total, all passing** (`cd openstack-work/reverse_proxy_enhanced/lua/tests && for f in test_*.lua; do lua "$f"; done`). `router.decide_route()` deliberately stays impure — its 10-stage pipeline interleaves session mutation with Redis/AbuseIPDB I/O too deeply to safely extract without risking a bug in the single most consequential function in the system; only its self-contained predicates (`is_static_asset`, `is_admin_access`, `is_rapid_automation`, `is_suspicious_upload`, `is_vulnerable_plugin_access`) were moved out.
+**224 unit tests total, all passing** (`cd ids/reverse_proxy_enhanced/lua/tests && for f in test_*.lua; do lua "$f"; done`). `router.decide_route()` deliberately stays impure — its 10-stage pipeline interleaves session mutation with Redis/AbuseIPDB I/O too deeply to safely extract without risking a bug in the single most consequential function in the system; only its self-contained predicates (`is_static_asset`, `is_admin_access`, `is_rapid_automation`, `is_suspicious_upload`, `is_vulnerable_plugin_access`) were moved out.
 
 **Every `architecture.canvas` refactor candidate is now either split or confirmed to need no split.** The four adapters above (`session_handler.lua`, `admin_handler.lua`, `honeytoken_handler.lua`, `abuseipdb_client.lua`) were originally assessed as "I/O-dominated, lower value" and left unsplit — a later pass found genuinely pure decision cores in all four anyway (81 new tests) once the `ngx.*`/`_G.*` reads were turned into parameters. One real bug surfaced doing it: `session_handler.lua` had its own third, never-reconciled copy of the static-asset check (`router_rules.lua` and `threat_rules.lua` already document reconciling two disagreeing copies of this same check) that still didn't strip the query string, undercounting `request_count` for static-asset loads with cache-busting query strings. `pool_router.lua` is the one node that was assessed and correctly left alone both times — 100% Redis I/O, zero pattern-matching, no pure core exists to extract.
 
@@ -234,7 +234,7 @@ Stripe (`woocommerce-gateway-stripe`) was already installed and active before th
 
 **The fix**: `scripts/seed_wordpress_db.sh`, run once per database by a one-shot `wordpress:cli-php8.1` service (`production_db_seed`, `honeypot_db_seed_1/2/3`) that the corresponding eshop container now `depends_on: condition: service_completed_successfully` — so `production_eshop`/`honeypot_eshop_N` can never start serving requests (or be health-probed) against a schemaless database again. The script runs `wp core install`, activates the theme + WooCommerce + Elementor (deliberately *not* every other installed plugin — see the script's own comment: activating Wordfence/Jetpack/etc. for real would work against the honeypot's purpose or hang on an unreachable external connection, and classic pre-auth plugin CVEs target the PHP file path directly regardless of WordPress "active" status anyway), and — production only — imports WooCommerce's own official sample product catalog (`wp-content/plugins/woocommerce/sample-data/sample_products.xml`, ~18 products) and authors two Elementor-built pages (home + About Us, one set as the static front page) via `scripts/seed_elementor_pages.sh`. Idempotent (bails out immediately if already installed); pass `FORCE_RESEED=1` to wipe and rebuild from scratch (see the dashboard's Backups page "Reset demo store" button, or the one-liner in [§1](#1-quick-reference)'s Common Commands).
 
-**Why not a committed SQL dump / git-lfs binary** (the originally-requested approach): `openstack-work/backups/.gitattributes` already routes `db/*.sql.gz`/`wp/*.tar.gz` through git-lfs, but GitHub's free LFS tier is only 1GB storage / 1GB bandwidth *per month*, total, across the whole repo — a real WordPress file archive backup is already 143–232MB *per generation* (§3.4.2), and a real WooCommerce+Elementor DB dump would add more on top. A few KB of plain-text, `git diff`-reviewable WP-CLI commands that deterministically rebuild the same state from the already-committed plugin/theme code sidesteps that entirely, and needs no regeneration when the demo content changes — just edit the script.
+**Why not a committed SQL dump / git-lfs binary** (the originally-requested approach): `ids/backups/.gitattributes` already routes `db/*.sql.gz`/`wp/*.tar.gz` through git-lfs, but GitHub's free LFS tier is only 1GB storage / 1GB bandwidth *per month*, total, across the whole repo — a real WordPress file archive backup is already 143–232MB *per generation* (§3.4.2), and a real WooCommerce+Elementor DB dump would add more on top. A few KB of plain-text, `git diff`-reviewable WP-CLI commands that deterministically rebuild the same state from the already-committed plugin/theme code sidesteps that entirely, and needs no regeneration when the demo content changes — just edit the script.
 
 **Honeypot pools need the exact same fix, for a subtler reason**: `honeypot_content_sync`'s replication (`scripts/replicate_content_to_honeypot.sh`) does a *scoped* `DELETE`+`INSERT` into **existing** tables — it mirrors content rows, it never creates schema. Without `honeypot_db_seed_1/2/3` first, every replication cycle against all three pools would fail (`Table '...wp_postmeta' doesn't exist`) regardless of production's own state. `honeypot_content_sync` now `depends_on` all four seed services completing, so its very first cycle already has both a real source (production) and real destinations (all three pools) to work with — verified live: a fresh `docker compose up` (then a manual `docker compose restart honeypot_content_sync` to trigger a cycle immediately instead of waiting out `REPLICATION_INTERVAL_SECONDS`) leaves production and all three pools at an identical 18-product catalog, and `production_db_seed`/every `restore_db_command` invocation in the dashboard now chains a `honeypot_content_sync` restart automatically for the same reason. **Status is always visible**, not just assumed: the triggering command's own echoed progress streams live into whichever panel ran it (the dashboard's Backups page, or your terminal for the CLI one-liner), and the Health page's "Content sync activity" panel parses `honeypot_content_sync`'s own per-pool `starting`/`complete`/`failed` log lines out of the same restart's live log tail — so a stuck or failing pool is visible immediately, not silently assumed to have worked.
 
@@ -242,9 +242,9 @@ Honeypot pools set `IMPORT_SAMPLE_CONTENT=0` (no independent WooCommerce sample 
 
 #### 3.4.2 Backup lifecycle: label, delete, export, import (not just from the dashboard)
 
-`backup_service`'s nightly dumps (`openstack-work/backups/{db,wp}/*.gz`, §9.3) can now be labeled, deleted, exported to a local file, and re-imported — from the dashboard's Backups page *or* from the command line via `openstack-work/backups/manage_backups.sh` (`list`/`label`/`delete`/`export`/`import`), which reads and writes the exact same `labels.json` manifest inside `backup_service` (`docker compose exec`) that the dashboard does, so a label set from one shows up in the other immediately. See the script's own header comment for exact usage. The same page also has the "Reset demo store" action described in §3.4.1.
+`backup_service`'s nightly dumps (`ids/backups/{db,wp}/*.gz`, §9.3) can now be labeled, deleted, exported to a local file, and re-imported — from the dashboard's Backups page *or* from the command line via `ids/backups/manage_backups.sh` (`list`/`label`/`delete`/`export`/`import`), which reads and writes the exact same `labels.json` manifest inside `backup_service` (`docker compose exec`) that the dashboard does, so a label set from one shows up in the other immediately. See the script's own header comment for exact usage. The same page also has the "Reset demo store" action described in §3.4.1.
 
-`openstack-work/backups/.gitattributes` already routed `db/*.sql.gz`/`wp/*.tar.gz` through git-lfs, but the root `.gitignore`'s blanket `*.sql.gz`/`*.tar.gz` rules were silently shadowing that — `git check-ignore` confirmed every real backup file was ignored regardless, so despite the LFS plumbing existing, zero backup files had ever actually reached git. **Fixed** with narrow negation exceptions (`!openstack-work/backups/db/*.sql.gz`, `!openstack-work/backups/wp/*.tar.gz`) — this does not mean backups are committed automatically (nothing changed about what gets `git add`ed by default), it means a backup you've deliberately chosen to keep (labeled, then `git add`ed) actually can be, rather than being invisibly dropped regardless of intent.
+`ids/backups/.gitattributes` already routed `db/*.sql.gz`/`wp/*.tar.gz` through git-lfs, but the root `.gitignore`'s blanket `*.sql.gz`/`*.tar.gz` rules were silently shadowing that — `git check-ignore` confirmed every real backup file was ignored regardless, so despite the LFS plumbing existing, zero backup files had ever actually reached git. **Fixed** with narrow negation exceptions (`!ids/backups/db/*.sql.gz`, `!ids/backups/wp/*.tar.gz`) — this does not mean backups are committed automatically (nothing changed about what gets `git add`ed by default), it means a backup you've deliberately chosen to keep (labeled, then `git add`ed) actually can be, rather than being invisibly dropped regardless of intent.
 
 ### 3.5 Session, Redis & IP-based state
 
@@ -299,7 +299,7 @@ This schema was reconstructed by reading all ~10 Lua files that touch either sto
 - **Not fixed, just documented**: `active_sessions`, `compromised_sessions`, `vulnerability_events`, `vulnerability_scans`, `cve:*`, and `suricata_alerts` are all write-only — populated on every relevant event, never read by any code path. They function as raw forensic trails inspectable via `redis-cli`/the audit script below, not as live application state. This may be intentional (data for the "ELK Dashboards" gap noted in §10's "Still open" list to eventually visualize) rather than a bug — flagged here since it wasn't obvious without reading every file.
 - **Not fixed, just documented**: `threat_ips` (both the Redis blob and its shared-dict mirror) grows forever — no per-entry expiry, no cap. For a real long-running deployment this is worth revisiting (e.g. drop entries not updated in N days), but wasn't in scope for this pass.
 
-**Live verification**: `openstack-work/scripts/redis_key_audit.sh` connects to the running `session_store` container and prints every key currently present, grouped by the prefixes documented above (with type, TTL, and count per group), plus a "keys present but not in this table" section so the table and the live system can be diffed against each other going forward instead of silently drifting apart again.
+**Live verification**: `ids/scripts/redis_key_audit.sh` connects to the running `session_store` container and prints every key currently present, grouped by the prefixes documented above (with type, TTL, and count per group), plus a "keys present but not in this table" section so the table and the live system can be diffed against each other going forward instead of silently drifting apart again.
 
 ### 3.6 Suricata IDS
 
@@ -359,7 +359,7 @@ The full attack-URL reference (path traversal, SQLi, XSS, command injection, mal
 
 ### 5.2 Blind pentest (task 4 — completed this session)
 
-A context-isolated AI agent (fresh instance, zero knowledge of this repo) was briefed only with a generic "assess this e-commerce site" prompt and network access. Result: **rubric score 3/3, confirmed detection** — the agent independently found the deception from the server's own responses: TLS cert `O=HoneypotOrg`, cookie literally named `HONEYPOT_SESSION`, and the `X-Route-Target`/`X-Threat-Score` headers (since fixed — see §9). Full protocol and results: `openstack-work/testing/BLIND_PENTEST_PROTOCOL.md` and `openstack-work/testing/blind_pentest_report_run1.md`.
+A context-isolated AI agent (fresh instance, zero knowledge of this repo) was briefed only with a generic "assess this e-commerce site" prompt and network access. Result: **rubric score 3/3, confirmed detection** — the agent independently found the deception from the server's own responses: TLS cert `O=HoneypotOrg`, cookie literally named `HONEYPOT_SESSION`, and the `X-Route-Target`/`X-Threat-Score` headers (since fixed — see §9). Full protocol and results: `ids/testing/BLIND_PENTEST_PROTOCOL.md` and `ids/testing/blind_pentest_report_run1.md`.
 
 Cross-referenced against internal telemetry: the agent's session classified as `scripted` (not `ai_assisted`) — correct, not a bug: it was instructed to interact via plain `curl` only (for genuine blackbox isolation), which is indistinguishable at the network layer from a scripted scanner using the same tool. This is a real, documented limitation of the sophistication classifier worth stating explicitly in the thesis: it detects a *tooling fingerprint*, not "was an LLM involved" in the abstract.
 
@@ -371,7 +371,7 @@ Cross-referenced against internal telemetry: the agent's session classified as `
 
 ## 6. Observability (ELK / SIEM)
 
-Two-host split (see §1, and now `ARCHITECTURE.md` at the repo root for the full data-flow diagram and single-host testing instructions — added this session, closing the gap this paragraph used to describe): a local **Vector** agent (`openstack-work/vector/vector.yaml`, profile-gated) tails Docker/nginx/Suricata/Redis logs and ships them over mTLS to a **Vector aggregator** on the SIEM host, which re-emits to **Elasticsearch**, visualized in **Kibana**.
+Two-host split (see §1, and now `ARCHITECTURE.md` at the repo root for the full data-flow diagram and single-host testing instructions — added this session, closing the gap this paragraph used to describe): a local **Vector** agent (`ids/vector/vector.yaml`, profile-gated) tails Docker/nginx/Suricata/Redis logs and ships them over mTLS to a **Vector aggregator** on the SIEM host, which re-emits to **Elasticsearch**, visualized in **Kibana**.
 
 **Verified live end-to-end this session** (previously designed but never actually run/tested together): brought up both `docker-compose.yml` projects on one host (see `ARCHITECTURE.md` for how, without merging them), generated real traffic, and confirmed real documents landing in Elasticsearch with a Kibana data view (`honeypot-*`) able to query them. Two real bugs found and fixed along the way — the aggregator's own Docker healthcheck used `wget`, which doesn't exist in its image, so it always reported unhealthy regardless of Vector's actual state; and the aggregator's TLS server certificate had no Subject Alternative Names, so hostname verification failed for every connection method *except* the literal string `vector` — including the real two-host deployment's own default (an IP address). See `ARCHITECTURE.md` for both fixes in detail.
 
@@ -430,7 +430,7 @@ WooCommerce Cart Abandonment Recovery, WPify Slovensko/Česko, HubSpot Chatbot, 
 Verified this session by checking claims against running code — these are corrections to earlier documentation (now removed) that had drifted from reality, plus genuinely open bugs:
 
 - **SQL Proxy Routing was never completed, despite being documented as if finished.** The old `SQL_PROXY_ROUTING.md` described a single-WordPress-frontend, dual-database architecture (`X-DB-Target` header → custom `wp-content/db.php` drop-in) in full technical detail, with test scripts, logs, and a "Version 1.0.0" marker. In reality: `wp-content/db.php` **does not exist**, and the only code that would set `X-DB-Target` (`router.lua`'s `apply_routing_decision()`) is **dead code, never called**. Only the Docker network topology (both WordPress instances reachable on both DB networks) was actually put in place. This matches `COUNTERARGUMENTS.md` Q1, which correctly states the SQL-proxy approach was "considered" but deemed infeasible — the two documents contradicted each other; this file now reflects the correct, current state (two-instance Nginx routing, no SQL proxy).
-- **The old `openstack-work/README.md`'s architecture diagram and integration guide described a Node.js Session Manager and a Python Threat Intel service as live, working components**, with detailed request-flow code samples. Both are confirmed **dead code** — `docker-compose.yml` explicitly comments them out with `# DEAD CODE:` markers, alongside `traffic_mirror`, `log_aggregator`, and `file_sync` (also referenced as a working "continuous 5-minute sync" feature in that same old README). The actual system does all of this directly in Lua + Redis, described accurately in §3 above.
+- **The old `ids/README.md`'s architecture diagram and integration guide described a Node.js Session Manager and a Python Threat Intel service as live, working components**, with detailed request-flow code samples. Both are confirmed **dead code** — `docker-compose.yml` explicitly comments them out with `# DEAD CODE:` markers, alongside `traffic_mirror`, `log_aggregator`, and `file_sync` (also referenced as a working "continuous 5-minute sync" feature in that same old README). The actual system does all of this directly in Lua + Redis, described accurately in §3 above.
 - **`deploy.sh`, `test_system.sh`, and `test_sql_routing.sh` do not exist** despite being referenced as primary entry points in old docs. Use `docker compose` directly (§1).
 - **`nginx.conf` is baked into the Docker image at build time** while `reverse_proxy_enhanced/lua/*.lua` is bind-mounted live — `docker compose restart` silently does not pick up nginx.conf edits, only `--build` does. Discovered mid-session while debugging what looked like a code change having no effect.
 - **`init_setup`'s file-copy is one-shot** — honeypot pool volumes drift from `production_eshop_files/` after first provisioning (§3.4).
@@ -526,10 +526,10 @@ Verified live end-to-end after all four fixes: `docker compose exec backup_servi
 
 ## 11. Related documentation still living in their own files
 
-- `openstack-work/testing/BLIND_PENTEST_PROTOCOL.md`, `openstack-work/testing/blind_pentest_report_run1.md` — blind pentest protocol + results
+- `ids/testing/BLIND_PENTEST_PROTOCOL.md`, `ids/testing/blind_pentest_report_run1.md` — blind pentest protocol + results
 - `architecture.canvas` (Obsidian Canvas, full system diagram — 39 nodes, 28 edges, responsibility/refactoring/overlap notes per node, color-coded by status) — restored and brought current this session after being lost for a stretch of this project's history; open the repo root as an Obsidian vault to browse it
-- `openstack-work/elk-siem-testing.md` and `master-thesis-rewrite-plan/` were both referenced from earlier versions of this file but **no longer exist in the repository** — neither was ever committed to git, and both were lost during a later, uncommitted cleanup pass.
-- `openstack-siem-work/elk_dockerized/README.md` — the SIEM sub-project's own setup doc
+- `ids/elk-siem-testing.md` and `master-thesis-rewrite-plan/` were both referenced from earlier versions of this file but **no longer exist in the repository** — neither was ever committed to git, and both were lost during a later, uncommitted cleanup pass.
+- `siem/README.md` — the SIEM sub-project's own setup doc
 
 ---
 

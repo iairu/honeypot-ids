@@ -52,20 +52,20 @@ class SettingsPage(QWidget):
         self.edge_env_tab = EnvSourceTab(
             "edge", EDGE_ENV_FILE, EDGE_ENV_EXAMPLE, lambda: self.state.remote_edge,
         )
-        self.tabs.addTab(self.edge_env_tab, "openstack-work .env")
+        self.tabs.addTab(self.edge_env_tab, "ids .env")
 
         self.siem_env_tab = EnvSourceTab(
             "siem", SIEM_ENV_FILE, SIEM_ENV_EXAMPLE, lambda: self.state.remote_siem,
         )
-        self.tabs.addTab(self.siem_env_tab, "openstack-siem-work .env")
+        self.tabs.addTab(self.siem_env_tab, "siem .env")
 
         self.edge_remote_widget = RemoteConfigWidget("edge", self.state.remote_edge)
         edge_remote_tab = self._wrap_with_save(self.edge_remote_widget, self._save_edge_remote)
-        self.tabs.addTab(edge_remote_tab, "openstack-work remote (SSH)")
+        self.tabs.addTab(edge_remote_tab, "ids remote (SSH)")
 
         self.siem_remote_widget = RemoteConfigWidget("siem", self.state.remote_siem)
         siem_remote_tab = self._wrap_with_save(self.siem_remote_widget, self._save_siem_remote)
-        self.tabs.addTab(siem_remote_tab, "openstack-siem-work remote (SSH)")
+        self.tabs.addTab(siem_remote_tab, "siem remote (SSH)")
 
         self.tabs.addTab(self._build_export_import_tab(), "Export / Import")
 
@@ -134,14 +134,14 @@ class SettingsPage(QWidget):
         self.state.save()
         self._on_state_changed()
         self.edge_env_tab.refresh_remote_availability()
-        QMessageBox.information(self, "Saved", "Remote settings saved for openstack-work.")
+        QMessageBox.information(self, "Saved", "Remote settings saved for ids.")
 
     def _save_siem_remote(self) -> None:
         self.state.remote_siem = self.siem_remote_widget.to_config()
         self.state.save()
         self._on_state_changed()
         self.siem_env_tab.refresh_remote_availability()
-        QMessageBox.information(self, "Saved", "Remote settings saved for openstack-siem-work.")
+        QMessageBox.information(self, "Saved", "Remote settings saved for siem.")
 
     # ---- Export / Import ----
 

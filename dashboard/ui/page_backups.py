@@ -1,11 +1,11 @@
 """Backups page: lists the DB dumps + WordPress file archives backup_service
-(openstack-work / edge project) has written under /backups, plus a tail of
+(ids / edge project) has written under /backups, plus a tail of
 its structured backup.log, and lets you restore either kind of backup back
 onto the live production stack -- see core/backup_ctl.py for exactly how
 each restore path works and why they differ.
 
 Also covers the full lifecycle around those backups -- label/rename,
-delete, export to a local file, import from one (openstack-work/backups/
+delete, export to a local file, import from one (ids/backups/
 manage_backups.sh is the non-dashboard equivalent, sharing the exact same
 labels.json manifest) -- and a "Reset demo store" action that re-runs the
 WP-CLI seed script (scripts/seed_production_db.sh) to rebuild a clean

@@ -1,9 +1,9 @@
-"""Backup listing + restore for the "backup_service" container (openstack-work
+"""Backup listing + restore for the "backup_service" container (ids
 / edge project) -- backs ui/page_backups.py.
 
-backup_service (see openstack-work/backups/backup.sh) writes nightly DB
+backup_service (see ids/backups/backup.sh) writes nightly DB
 dumps + WordPress file archives under /backups (a host bind mount at
-openstack-work/backups/), plus one JSON line per step to
+ids/backups/), plus one JSON line per step to
 /backups/backup.log. All of that is read back the same way every other
 docker-facing feature in this app reaches a service -- `docker compose
 exec`, via Target.build() (see core/redis_inspect.py for the identical
@@ -67,9 +67,9 @@ _RESYNC_SUFFIX = (
 )
 
 # A flat {filename: {"label": ..., "updated": ...}} JSON manifest living at
-# /backups/labels.json (i.e. openstack-work/backups/labels.json on the
+# /backups/labels.json (i.e. ids/backups/labels.json on the
 # local host bind mount) -- read/written by BOTH this module and
-# openstack-work/backups/manage_backups.sh via the exact same `docker
+# ids/backups/manage_backups.sh via the exact same `docker
 # compose exec` path, so a label set from one is immediately visible from
 # the other; there is no separate/divergent state to keep in sync.
 _LABELS_PATH = "/backups/labels.json"
@@ -304,7 +304,7 @@ def restore_wp_command(remote: RemoteConfig | None, filename: str) -> tuple[list
 def set_label(remote: RemoteConfig | None, filename: str, label: str, timeout: float = 15.0) -> None:
     """Sets (or clears, if label is empty) the human-readable label shown
     next to `filename` in list_backups() -- also visible to/settable from
-    openstack-work/backups/manage_backups.sh, same manifest either way."""
+    ids/backups/manage_backups.sh, same manifest either way."""
     target = Target(project="edge", remote=remote)
     _backup_subdir(filename)  # validates filename shape; raises if not a real backup name
     labels = _read_labels(target, timeout=timeout)

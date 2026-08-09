@@ -66,7 +66,7 @@ CERT_GROUPS: list[CertGroup] = [
     CertGroup("siem-vector-agent", "SIEM: Vector-agent client cert only",
               "Reuses the existing CA. Re-copy to the edge host's vector/certs/ afterward."),
     CertGroup("edge-nginx", "Edge: nginx/reverse-proxy self-signed SSL cert",
-              "openstack-work/ssl_certificates/server.{crt,key} -- independent of the SIEM CA entirely."),
+              "ids/ssl_certificates/server.{crt,key} -- independent of the SIEM CA entirely."),
 ]
 
 

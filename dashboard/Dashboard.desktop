@@ -2,7 +2,7 @@
 Type=Application
 Version=1.0
 Name=Honeypot / SIEM Dashboard
-Comment=Control openstack-work and openstack-siem-work (start/stop, health, certs, .env)
+Comment=Control ids and siem (start/stop, health, certs, .env)
 Exec=/home/ondrej/Desktop/DP_honeypot/honeypot-ids/dashboard/run.sh
 Path=/home/ondrej/Desktop/DP_honeypot/honeypot-ids/dashboard
 Icon=/home/ondrej/Desktop/DP_Repository/dashboard/resources/app_icon.svg

@@ -155,7 +155,7 @@ class WelcomePage(TimelineMixin, QWizardPage):
 
         label = QLabel(
             "This wizard creates/populates the .env files both compose "
-            "projects need (openstack-work and openstack-siem-work), and "
+            "projects need (ids and siem), and "
             "optionally sets up remote SSH control and initial certificates.\n\n"
             "Re-running this wizard later loads your existing .env values "
             "instead of blanking them -- it's also reachable anytime from "
@@ -186,11 +186,11 @@ class RemotePage(TimelineMixin, QWizardPage):
         layout.addWidget(info)
 
         self.edge_widget = RemoteConfigWidget("edge", state.remote_edge)
-        layout.addWidget(QLabel("<b>openstack-work</b>"))
+        layout.addWidget(QLabel("<b>ids</b>"))
         layout.addWidget(self.edge_widget)
 
         self.siem_widget = RemoteConfigWidget("siem", state.remote_siem)
-        layout.addWidget(QLabel("<b>openstack-siem-work</b>"))
+        layout.addWidget(QLabel("<b>siem</b>"))
         layout.addWidget(self.siem_widget)
 
     def validatePage(self) -> bool:
@@ -335,7 +335,7 @@ class RemoteAwareEnvPage(TimelineMixin, QWizardPage):
 class EdgeEnvPage(RemoteAwareEnvPage):
     def __init__(self, state: AppState, parent=None):
         super().__init__(
-            state, "edge", "openstack-work (edge honeypot) — .env",
+            state, "edge", "ids (edge honeypot) — .env",
             EDGE_ENV_FILE, EDGE_ENV_EXAMPLE, EDGE_ENV_DEFAULT_KEYS, parent,
         )
 
@@ -343,7 +343,7 @@ class EdgeEnvPage(RemoteAwareEnvPage):
 class SiemEnvPage(RemoteAwareEnvPage):
     def __init__(self, state: AppState, parent=None):
         super().__init__(
-            state, "siem", "openstack-siem-work (SIEM) — .env",
+            state, "siem", "siem (SIEM) — .env",
             SIEM_ENV_FILE, SIEM_ENV_EXAMPLE, None, parent,
         )
 

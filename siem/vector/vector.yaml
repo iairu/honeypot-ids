@@ -1,0 +1,142 @@
+sources:
+  agent_in:
+    type: vector
+    version: "2"
+    address: 0.0.0.0:6000
+    tls:
+      enabled: true
+      crt_file: /usr/share/vector/certs/vector/vector.crt
+      key_file: /usr/share/vector/certs/vector/vector.key
+      ca_file: /usr/share/vector/certs/ca/ca.crt
+      verify_certificate: true # enforces client certificate verification (mTLS)
+
+transforms:
+  enrich:
+    type: remap
+    inputs:
+      - agent_in
+    source: |
+      ###################################
+      ###### GEOIP DATA ENRICHMENT ######
+      ###################################
+
+      # GeoIP enrichment disabled - databases not available
+      # To enable: download GeoLite2 databases from MaxMind, mount them under
+      # /geoip, register them as "enrichment_tables" in this file, and uncomment below
+      # .source.geo = get_enrichment_table_record!("geoip_city", { "ip": .src_ip })
+      # .source.asn = get_enrichment_table_record!("geoip_asn", { "ip": .src_ip })
+
+      #####################################################
+      ###### PARSE NGINX ACCESS/SECURITY LOG MESSAGES ######
+      #####################################################
+
+      # .message for nginx_access/nginx_security is a raw combined-log-format
+      # line (see ids/reverse_proxy_enhanced/nginx.conf's
+      # log_format main/security) -- previously shipped as one opaque text
+      # blob, meaning none of it (status code, route decision, threat score)
+      # was actually queryable/aggregatable in Kibana. Added this session
+      # specifically so real dashboards (threat overview, session analysis)
+      # have real fields to build on instead of just Suricata's already-
+      # structured alert.* fields.
+      if .log_type == "nginx_access" || .log_type == "nginx_security" {
+        common, common_err = parse_regex(.message,
+          r'^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<time_local>[^\]]+)\] "(?P<method>\S+) (?P<uri>\S+) (?P<http_version>\S+)" (?P<status>\d+) (?P<body_bytes_sent>\d+) "(?P<referer>[^"]*)" "(?P<user_agent>[^"]*)" "(?P<xff>[^"]*)"')
+        if common_err == null {
+          # No object!() here (unlike parse_json's result elsewhere in this
+          # pipeline): parse_regex()'s success value is already statically
+          # known to be an object of string captures, so VRL's compiler
+          # rejects an object!() cast on it as a no-op "abort on a failure
+          # that can't happen" -- confirmed live (E620) when this used the
+          # same object!() pattern as the parse_json call below.
+          . = merge(., common)
+          .status = to_int(.status) ?? null
+          .body_bytes_sent = to_int(.body_bytes_sent) ?? null
+        }
+      }
+
+      if .log_type == "nginx_security" {
+        sec, sec_err = parse_regex(.message,
+          r'session_id="(?P<session_id>[^"]*)" route="(?P<route>[^"]*)" threat_score="(?P<threat_score>[^"]*)" suspicious="(?P<suspicious>[^"]*)"')
+        if sec_err == null {
+          . = merge(., sec)
+          .threat_score = to_int(.threat_score) ?? 0
+          .suspicious = to_bool(.suspicious) ?? false
+          # nginx's "-" placeholder for an unset PHPSESSID cookie isn't a
+          # real session id -- normalize it to actually-absent rather than
+          # the literal three-character string "-", so a "how many distinct
+          # sessions" cardinality aggregation isn't off by one forever.
+          if .session_id == "-" {
+            del(.session_id)
+          }
+        }
+      }
+
+      ###############################################
+      ###### FLATTEN DOCKER LABEL KEYS (DOTTED) ######
+      ###############################################
+
+      # Docker Compose v2 sets BOTH "com.docker.compose.project" (a plain
+      # string, the project name) AND "com.docker.compose.project.config_hash"
+      # / ".working_dir" (also plain strings) as real labels on every
+      # container -- confirmed live via `docker inspect`. Elasticsearch
+      # dot-expands field names into nested objects, so
+      # "label.com.docker.compose.project" ends up needing to be BOTH a leaf
+      # string AND a parent object at once -- every docker-sourced event hit
+      # "can't merge a non object mapping [label.com.docker.compose.project]
+      # with an object mapping" and got silently dropped (bulk API rejects
+      # that one item with status 400; other events in the same batch, e.g.
+      # suricata alerts, still indexed fine, which is why this went
+      # unnoticed as a total pipeline failure). Fixed by replacing "." with
+      # "_" in every label key before it reaches Elasticsearch, so ES only
+      # ever sees flat field names -- no information lost, just unambiguous
+      # paths. This also sidesteps whatever bad mapping is already locked in
+      # for today's index (honeypot-docker-YYYY.MM.DD), since the
+      # underscored keys are new field paths ES has never mapped before.
+      if exists(.label) {
+        label_map, label_err = object(.label)
+        if label_err == null {
+          .label = map_keys(label_map) -> |key| { replace(key, ".", "_") }
+        }
+      }
+
+      #######################################
+      ###### REMOVE UNNECESSARY FIELDS ######
+      #######################################
+
+      del(.tags)
+      del(.ecs.version)
+      del(.input.type)
+      del(.dst_ip)
+      del(.dst_port)
+      del(.log.file.path)
+      del(.log.offset)
+      del(.source.ip)
+
+sinks:
+  elasticsearch_out:
+    type: elasticsearch
+    inputs:
+      - enrich
+    endpoints:
+      - "${ELASTIC_HOSTS}" # Replace with your Elasticsearch URL
+    bulk:
+      # Was the literal placeholder "hello-world-index" -- every shipped
+      # event (nginx access/error/security, suricata, docker, redis) landed
+      # in the same untyped bucket, with no date rotation. The edge
+      # shipper's vector.yaml already tags every event with .log_type
+      # (docker/suricata/suricata_fast/nginx_access/nginx_security/
+      # nginx_error/redis) specifically so the aggregator could split on
+      # it -- this just actually uses that field. Daily rotation matches
+      # standard ELK/Kibana index-pattern conventions (index per day,
+      # e.g. for retention/ILM policies).
+      index: "honeypot-{{ log_type }}-%Y.%m.%d"
+    auth:
+      strategy: basic
+      user: "${ELASTIC_USERNAME}"
+      password: "${ELASTIC_PASSWORD}"
+    tls:
+      ca_file: /usr/share/vector/certs/ca/ca.crt
+
+api:
+  enabled: true
+  address: 0.0.0.0:8686

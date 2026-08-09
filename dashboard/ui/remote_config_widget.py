@@ -21,9 +21,9 @@ from core.project_upload import (
 from core.state import RemoteConfig
 
 _LOCAL_ENV_FILES = {"edge": EDGE_ENV_FILE, "siem": SIEM_ENV_FILE}
-_PROJECT_ENV_LABELS = {"edge": "openstack-work/.env", "siem": "openstack-siem-work/docker/.env"}
+_PROJECT_ENV_LABELS = {"edge": "ids/.env", "siem": "siem/docker/.env"}
 _LOCAL_PROJECT_DIRS = {"edge": EDGE_DIR, "siem": SIEM_DIR}
-_PROJECT_DIR_LABELS = {"edge": "openstack-work", "siem": "openstack-siem-work"}
+_PROJECT_DIR_LABELS = {"edge": "ids", "siem": "siem"}
 
 
 class RemoteConfigWidget(QWidget):
@@ -59,8 +59,8 @@ class RemoteConfigWidget(QWidget):
 
         self.remote_path_edit = QLineEdit(config.remote_path)
         self.remote_path_edit.setPlaceholderText(
-            "e.g. /home/user/DP_Repository/openstack-work "
-            "(or .../openstack-siem-work/elk_dockerized -- same idea, the "
+            "e.g. /home/user/DP_Repository/ids "
+            "(or .../siem -- same idea, the "
             "project root either way; this app finds SIEM's "
             "docker-compose.yml in the docker/ subdirectory automatically, "
             "same as it does locally)"
@@ -79,8 +79,8 @@ class RemoteConfigWidget(QWidget):
         layout.addLayout(test_row)
 
         # Only enabled after a successful Test connection -- clearly names
-        # which project's .env it would send (openstack-work vs.
-        # openstack-siem-work), since a remote target's own .env otherwise
+        # which project's .env it would send (ids vs.
+        # siem), since a remote target's own .env otherwise
         # has to be placed there by hand.
         upload_row = QHBoxLayout()
         self.upload_btn = QPushButton(f"Upload {_PROJECT_ENV_LABELS[project]} to remote…")

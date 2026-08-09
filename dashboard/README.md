@@ -1,7 +1,7 @@
 # Honeypot / SIEM Dashboard
 
 A PyQt6 desktop app for controlling both compose projects in this repo
-(`openstack-work` and `openstack-siem-work`) without hand-typing `docker
+(`ids` and `siem`) without hand-typing `docker
 compose` commands — local or remote (SSH), with live health status, log
 viewing, certificate management, and `.env` editing.
 
@@ -153,7 +153,7 @@ always obvious which goes where):
   SSH connection, with a live progress bar. Runtime-generated data is
   excluded so it isn't blindly copied alongside the actual project
   (backups, container logs, database/Redis volumes, and a
-  local-diffing-only file snapshot — confirmed live: `openstack-work/backups/`
+  local-diffing-only file snapshot — confirmed live: `ids/backups/`
   alone was 1.2GB, `suricata_logs/` 378MB, neither belongs in "deploy the
   project"). If the remote directory already has files in it, you're asked
   to confirm before anything is overwritten. Needs `rsync` installed
@@ -164,8 +164,8 @@ always obvious which goes where):
 `dashboard/state.json` (gitignored) holds window geometry, which page you
 were last on, remote-connection settings, the status-poll interval, and
 the tray-notification toggle. It does **not** hold `.env` contents — those
-live in the real `.env` files this app edits directly (`openstack-work/.env`,
-`openstack-siem-work/elk_dockerized/docker/.env`), so `docker compose` and
+live in the real `.env` files this app edits directly (`ids/.env`,
+`siem/docker/.env`), so `docker compose` and
 this app are always looking at the same configuration. For a portable
 backup of the *whole* setup (env values + remote config together), use
 Settings → Export/Import instead of copying `state.json` by hand.

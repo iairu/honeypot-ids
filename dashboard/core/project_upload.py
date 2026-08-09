@@ -8,7 +8,7 @@ everything, a re-sync only moves what changed), native machine-readable
 progress reporting (--info=progress2), and --exclude support so runtime/
 log/backup data isn't blindly copied alongside actual project code -- see
 EXCLUDE_PATTERNS, sized against this repo's real directory footprint
-(confirmed live: openstack-work/backups/ alone is 1.2GB, suricata_logs/
+(confirmed live: ids/backups/ alone is 1.2GB, suricata_logs/
 378MB -- neither belongs in a "deploy the project" sync).
 """
 from __future__ import annotations
@@ -35,7 +35,6 @@ EXCLUDE_PATTERNS = [
     ".git/", "__pycache__/", "*.pyc", "venv/", "node_modules/",
     "backups/",
     "suricata_logs/", "nginx_logs/",
-    "production_database_sql_dumps/",
     "production_eshop_files_fresh_for_diff/",
     "redis_data/",
     "honeypot_database_data/", "honeypot_database_data_2/", "honeypot_database_data_3/",

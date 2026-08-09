@@ -90,8 +90,8 @@ def apply_bundle(bundle: dict[str, Any], state: AppState) -> list[str]:
     notes: list[str] = []
 
     for label, env_path, bundle_key in (
-        ("openstack-work", EDGE_ENV_FILE, "edge_env"),
-        ("openstack-siem-work", SIEM_ENV_FILE, "siem_env"),
+        ("ids", EDGE_ENV_FILE, "edge_env"),
+        ("siem", SIEM_ENV_FILE, "siem_env"),
     ):
         values = bundle.get(bundle_key)
         if not values:
@@ -109,8 +109,8 @@ def apply_bundle(bundle: dict[str, Any], state: AppState) -> list[str]:
         notes.append(note)
 
     for label, bundle_key, attr in (
-        ("openstack-work", "remote_edge", "remote_edge"),
-        ("openstack-siem-work", "remote_siem", "remote_siem"),
+        ("ids", "remote_edge", "remote_edge"),
+        ("siem", "remote_siem", "remote_siem"),
     ):
         if bundle_key in bundle and isinstance(bundle[bundle_key], dict):
             setattr(state, attr, _filtered_remote_config(bundle[bundle_key]))

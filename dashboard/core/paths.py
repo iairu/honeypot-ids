@@ -8,12 +8,12 @@ from pathlib import Path
 DASHBOARD_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = DASHBOARD_DIR.parent
 
-EDGE_DIR = REPO_ROOT / "openstack-work"
+EDGE_DIR = REPO_ROOT / "ids"
 EDGE_COMPOSE_FILE = EDGE_DIR / "docker-compose.yml"
 EDGE_ENV_FILE = EDGE_DIR / ".env"
 EDGE_ENV_EXAMPLE = EDGE_DIR / ".env.example"
 
-SIEM_DIR = REPO_ROOT / "openstack-siem-work" / "elk_dockerized"
+SIEM_DIR = REPO_ROOT / "siem"
 SIEM_COMPOSE_DIR = SIEM_DIR / "docker"
 SIEM_COMPOSE_FILE = SIEM_COMPOSE_DIR / "docker-compose.yml"
 SIEM_ENV_FILE = SIEM_COMPOSE_DIR / ".env"

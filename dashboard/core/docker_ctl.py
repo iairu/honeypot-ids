@@ -25,8 +25,8 @@ PROJECT_DIRS = {
 }
 
 PROJECT_LABELS = {
-    "edge": "openstack-work",
-    "siem": "openstack-siem-work",
+    "edge": "ids",
+    "siem": "siem",
 }
 
 

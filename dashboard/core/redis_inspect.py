@@ -1,4 +1,4 @@
-"""Redis introspection for the "session_store" service (openstack-work /
+"""Redis introspection for the "session_store" service (ids /
 edge project) -- backs ui/page_redis.py's table+graph viewer.
 
 Goes through `docker compose exec session_store redis-cli ...` (locally or
