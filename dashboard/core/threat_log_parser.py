@@ -75,8 +75,18 @@ _DOCKER_TIMESTAMP_RE = re.compile(
 )
 
 _HEADER_SUMMARY_RE = re.compile(r"\[LOCATION / HEADER\] route_decision='(\w+)' threat_score='(-?\d+)'")
+# Score:\s*(-?\d+)/(\d+) -- both the score AND the honeypot_threshold it's
+# being compared against (nginx.conf now logs "Score: N/80" on both
+# branches, matching every other score line in this pipeline). Requiring
+# the "/(\d+)" here is also what keeps this regex from ever mis-parsing a
+# score again the way it silently did before threat_analyzer.lua/router.lua
+# started rounding+capping every score to a clean integer: a raw float like
+# "84.484160391042" left the old (-?\d+)-only pattern matching just "84"
+# and dumping the leftover ".484160391042" into the "rest" group, which
+# showed up as literal garbage text next to "Final decision: HONEYPOT" in
+# the dashboard.
 _FINAL_DECISION_RE = re.compile(
-    r"\[FINAL DECISION\].*ROUTING TO (HONEYPOT|PRODUCTION)\s*\|\s*Score:\s*(-?\d+)(.*)$"
+    r"\[FINAL DECISION\].*ROUTING TO (HONEYPOT|PRODUCTION)\s*\|\s*Score:\s*(-?\d+)/(\d+)(.*)$"
 )
 _FINAL_SCORE_RE = re.compile(r"\[THREAT ANALYZER\].*FINAL SCORE:\s*(-?\d+)/(\d+)\s*\(([^)]+)\)")
 _ROUTING_RE = re.compile(r"\[ROUTING\]\s*(.+?)\s*(HONEYPOT|PRODUCTION)\b(.*)$")
@@ -137,13 +147,17 @@ def _parse_line_body(line: str) -> ThreatEvent | None:
 
     m = _FINAL_DECISION_RE.search(line)
     if m:
-        target, score_str, rest = m.group(1), m.group(2), m.group(3)
+        target, score_str, threshold, rest = m.group(1), m.group(2), m.group(3), m.group(4)
         try:
             score = int(score_str)
         except ValueError:
             score = 0
         color = COLOR_HIGH if target == "HONEYPOT" else COLOR_LOW
-        return ThreatEvent("outcome", f"Final decision: {target}", _strip_seps(rest) or f"Score: {score}", color, score)
+        detail = f"Score: {score}/{threshold}"
+        rest_clean = _strip_seps(rest)
+        if rest_clean:
+            detail += f" | {rest_clean}"
+        return ThreatEvent("outcome", f"Final decision: {target}", detail, color, score)
 
     m = _FINAL_SCORE_RE.search(line)
     if m:

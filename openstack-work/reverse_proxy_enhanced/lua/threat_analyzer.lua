@@ -248,6 +248,22 @@ function _M.analyze_request(uri, headers, remote_ip)
                 ") | Filter risk_score: ", injection_result.risk_score, " | URI: ", uri)
     end
 
+    -- Round + cap to the documented 0-100 scale before anything reads or
+    -- logs this. Two separate things could otherwise leak through
+    -- uncapped/fractional: individual stages can sum past 100 on a single
+    -- request (confirmed live: CVE match +40, suspicious headers +50, URI
+    -- pattern +25, automation +5 = 120 -- "Final score: 120/80"), and
+    -- Stage 4's IP-reputation contribution comes from
+    -- suricata_rules.decayed_score()'s exponential decay, which is a raw
+    -- float, never an integer. Doing this here, once, means every
+    -- downstream consumer (the suspicious-threshold check right below,
+    -- every ngx.log call in this function, router.lua's own accumulation,
+    -- nginx.conf's [FINAL DECISION] line) sees a clean, properly-bounded
+    -- integer -- not a 15-decimal-place fraction with no real meaning at
+    -- that precision, and not a score that reads as "120/80" when the
+    -- scale is supposed to top out at 100.
+    threat_result.score = math.min(math.floor(threat_result.score + 0.5), _G.config.threat.max_threat_score)
+
     -- Final determination: flag as suspicious when accumulated score meets
     -- or exceeds the threshold defined in _G.config.threat.honeypot_threshold.
     threat_result.suspicious = threat_result.score >= _G.config.threat.honeypot_threshold

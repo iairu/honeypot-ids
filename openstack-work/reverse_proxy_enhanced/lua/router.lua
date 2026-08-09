@@ -245,6 +245,15 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         else
             threat_result.score = math.max(fresh_score, decayed_base)
         end
+        -- Round to a clean integer -- decayed_base is router_rules.
+        -- decayed_score()'s exponential decay (peak * 0.5^half_lives), a
+        -- raw float essentially never landing on a whole number. From here
+        -- on threat_result.score drives every later stage's threshold
+        -- check AND every log line for this request (including nginx.conf's
+        -- [FINAL DECISION] "Score: N"), so a 15-decimal-place fraction like
+        -- "84.484160391042" was leaking straight into logs a dashboard user
+        -- reads, with no meaning at that precision.
+        threat_result.score = math.floor(threat_result.score + 0.5)
     end
 
     -- Stage 2: Sticky honeypot routing.
@@ -298,6 +307,24 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
             sd.last_threat_time = ngx.time()
             routing_decision.session_data = sd
         end
+
+        -- Carry the ORIGINAL binding reason (set once, back when this
+        -- session was first flagged -- e.g. "high_threat_score",
+        -- "cve_pattern_match") through in routing_decision.session_data
+        -- too, not just in this function's own log line below. Without
+        -- this, nginx.conf's [FINAL DECISION] log (which only has
+        -- routing_decision.session_data to read from, not this function's
+        -- local `session_data` variable) had nothing to fall back to on
+        -- this sticky-reuse path and always printed "Reason: unknown" --
+        -- confirmed live, every single "Final decision: HONEYPOT" line for
+        -- an already-bound session showed this regardless of the real
+        -- reason. Safe to set unconditionally (not just when
+        -- new_signal_fired/update_session are true): session_handler.
+        -- update_session() only ever reads routing_decision.session_data
+        -- when update_session is actually true, so this is a no-op extra
+        -- field the rest of the time, not a spurious Redis write.
+        routing_decision.session_data = routing_decision.session_data or {}
+        routing_decision.session_data.honeypot_reason = session_data.honeypot_reason
 
         routing_decision.target   = "honeypot"
         routing_decision.upstream = pool_router.get_upstream_for_pool(pool_num)
