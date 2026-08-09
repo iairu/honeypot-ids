@@ -10,7 +10,7 @@ from PyQt6.QtCharts import QBarCategoryAxis, QBarSeries, QBarSet, QChart, QChart
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPainter
 from PyQt6.QtWidgets import (
-    QComboBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPlainTextEdit,
+    QComboBox, QHBoxLayout, QHeaderView, QLabel, QPlainTextEdit,
     QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -39,6 +39,14 @@ class RedisPage(QWidget):
         toolbar.addWidget(self.dbsize_label)
         toolbar.addStretch()
         layout.addLayout(toolbar)
+
+        self.error_banner = QLabel("")
+        self.error_banner.setWordWrap(True)
+        self.error_banner.setStyleSheet(
+            "background-color: #d9534f; color: white; padding: 6px; border-radius: 4px;"
+        )
+        self.error_banner.setVisible(False)
+        layout.addWidget(self.error_banner)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(splitter, stretch=1)
@@ -101,9 +109,12 @@ class RedisPage(QWidget):
         if error:
             self.dbsize_label.setText("unreachable")
             self.dbsize_label.setStyleSheet("color: #d9534f;")
+            self.error_banner.setText(f"⚠ session_store (Redis) unreachable: {error}")
+            self.error_banner.setVisible(True)
         else:
             self.dbsize_label.setText(f"{size} keys")
             self.dbsize_label.setStyleSheet("")
+            self.error_banner.setVisible(False)
 
         self.table.setRowCount(len(self._keys))
         for row, info in enumerate(self._keys):
@@ -115,9 +126,6 @@ class RedisPage(QWidget):
         self.value_view.clear()
 
         self._refresh_chart(remote)
-
-        if error:
-            QMessageBox.warning(self, "Redis error", error)
 
     def _on_row_selected(self) -> None:
         rows = self.table.selectionModel().selectedRows()
