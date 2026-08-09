@@ -127,6 +127,51 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Imports the committed Honeypot dashboards (data view + visualizations +
+  # the two dashboards themselves -- siem/kibana/saved_objects/
+  # honeypot-dashboards.ndjson, built by siem/kibana/build_dashboards.py)
+  # into Kibana on every startup. Without this, the dashboards only ever
+  # existed as objects someone built by hand in a prior session -- they
+  # live in Elasticsearch's .kibana index, so a purge (docker compose down
+  # -v) silently wiped them with no way to get them back short of rebuilding
+  # every panel from scratch. overwrite=true makes this idempotent: running
+  # it again (e.g. after a genuine dashboard edit was committed) just
+  # re-applies the committed version rather than erroring on "already
+  # exists".
+  #
+  # defaultRoute is set separately via the plain settings API, not shipped
+  # as part of the NDJSON import: Kibana stores it as a `config` saved
+  # object keyed by the exact running version string (e.g. "8.17.3"), so an
+  # exported copy silently stops applying the moment STACK_VERSION changes
+  # -- confirmed live via `GET _find?type=config`. Setting it explicitly
+  # here is version-independent.
+  kibana_dashboards_setup:
+    image: curlimages/curl:7.85.0
+    depends_on:
+      kibana:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c '
+        echo "Importing Honeypot dashboards...";
+        curl --cacert /certs/ca/ca.crt -u elastic:${ELASTIC_PASSWORD} -H "kbn-xsrf: true" \
+          -X POST "https://kibana:5601/api/saved_objects/_import?overwrite=true" \
+          -F "file=@/data/honeypot-dashboards.ndjson";
+        echo "";
+        echo "Setting default landing page to the Web Traffic & Threat Overview dashboard...";
+        curl --cacert /certs/ca/ca.crt -u elastic:${ELASTIC_PASSWORD} -H "kbn-xsrf: true" -H "Content-Type: application/json" \
+          -X POST "https://kibana:5601/api/kibana/settings/defaultRoute" \
+          -d "{\"value\": \"/app/dashboards#/view/dashboard-web-threat-overview\"}";
+        echo "";
+        echo "Dashboards imported.";
+        exit 0;
+      '
+    volumes:
+      - ../elasticsearch/certs/ca:/certs/ca:ro
+      - ../kibana/saved_objects/honeypot-dashboards.ndjson:/data/honeypot-dashboards.ndjson:ro
+    networks:
+      - elastic
+    restart: "no"
+
   vector:
     image: timberio/vector:${VECTOR_VERSION}-debian
     container_name: vector
