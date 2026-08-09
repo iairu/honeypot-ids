@@ -331,21 +331,31 @@ add_filter( 'rest_endpoints', function ( array $endpoints ): array {
             foreach ( $endpoints[ $endpoint ] as $index => $handler ) {
                 // Not every entry under a route is a handler definition --
                 // WP_REST_Server::get_routes() also stores a 'schema'
-                // entry per route (a callable, not an array of
-                // methods/callback/permission_callback), and in some
-                // dispatch contexts (confirmed via WP-CLI + WooCommerce's
-                // WC_CLI_Runner, which calls get_routes() before the
-                // normal rest_api_init route-registration order settles)
-                // that entry -- or others -- can show up as something
-                // other than the expected array shape. Blindly assuming
-                // every entry is an array and writing
-                // $endpoints[$endpoint][$index]['permission_callback']
-                // into it fataled with "Cannot access offset of type
-                // string on string" whenever $handler wasn't an array.
-                // Skipping non-array entries is safe: only real
-                // method/callback/permission_callback handler arrays need
-                // (or can use) a permission_callback at all.
-                if ( ! is_array( $handler ) ) {
+                // entry per route: a plain 2-element PHP callable, e.g.
+                // [$controller, 'get_public_item_schema'], NOT an
+                // associative methods/callback/permission_callback array.
+                // is_array() alone doesn't distinguish the two -- a
+                // 2-element callable IS an array -- so the previous
+                // version of this check (is_array($handler) only) let
+                // the code below inject a 'permission_callback' STRING
+                // KEY into that 2-element callable, turning it into a
+                // 3-element array. PHP no longer recognizes a 3-element
+                // array as a valid callable at that point, which is
+                // exactly what a *2-element-array* callable is defined
+                // as -- so any later call_user_func() on it (confirmed
+                // live: WP_REST_Server::get_data_for_route(), reached via
+                // WP-CLI + WooCommerce's WC_CLI_Runner, which re-dispatches
+                // a REST index request -- get_routes(), 'help' context --
+                // as part of registering `wp wc ...` CLI commands, something
+                // no normal browser/API request path ever triggers) fatals
+                // with "call_user_func(): Argument #1 ($callback) must be
+                // a valid callback, array must have exactly two members".
+                // A genuine handler-definition entry always has a
+                // 'callback' key (that's literally what register_rest_route()
+                // requires per HTTP method) -- the 'schema' entry never
+                // does, so checking for that key (not just is_array) skips
+                // it correctly while still catching every real handler.
+                if ( ! is_array( $handler ) || ! isset( $handler['callback'] ) ) {
                     continue;
                 }
                 // Wrap the existing permission callback to require authentication.
