@@ -195,6 +195,7 @@ class MainWindow(QMainWindow):
     def _on_status_results(self, results: dict) -> None:
         self.services_page.apply_status(results)
         self.health_page.apply_status(results)
+        self.exploits_page.apply_status(results)
         self._notify_new_problems(results)
 
     # ---- system tray ----
