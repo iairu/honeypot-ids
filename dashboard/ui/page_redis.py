@@ -19,6 +19,7 @@ from core.redis_inspect import (
     RedisInspectError, RedisKeyInfo, dbsize, flush_all, get_threat_scores, get_value, list_keys,
 )
 from core.state import AppState, RemoteConfig
+from ui.process_runner import LogPanel
 
 
 class RedisPage(QWidget):
@@ -53,6 +54,17 @@ class RedisPage(QWidget):
         )
         self.error_banner.setVisible(False)
         layout.addWidget(self.error_banner)
+
+        # Only ever shows output for the Reset action's reverse_proxy
+        # restart (see _reset()) -- kept compact and out of the way the
+        # rest of the time, but visible progress feedback matters here
+        # since that restart alone can take over a minute (nginx's
+        # graceful shutdown waits out in-flight keepalive connections --
+        # same as ExploitsPage's "Unpoison host IP" restart).
+        self.action_log = LogPanel(show_stop_button=False)
+        self.action_log.setMaximumHeight(120)
+        self.action_log.finished.connect(self._on_reset_restart_finished)
+        layout.addWidget(self.action_log)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(splitter, stretch=1)
@@ -95,14 +107,20 @@ class RedisPage(QWidget):
             self.target_combo.addItem(t.label)
         self.target_combo.blockSignals(False)
 
-    def _current_remote(self) -> RemoteConfig | None:
+    def _current_target(self) -> Target | None:
         idx = self.target_combo.currentIndex()
         if 0 <= idx < len(self._targets):
-            return self._targets[idx].remote
+            return self._targets[idx]
         return None
 
+    def _current_remote(self) -> RemoteConfig | None:
+        target = self._current_target()
+        return target.remote if target else None
+
     def _reset(self) -> None:
-        remote = self._current_remote()
+        target = self._current_target()
+        if target is None:
+            return
         reply = QMessageBox.warning(
             self, "Confirm Redis reset",
             "This wipes EVERY key in session_store's Redis (FLUSHALL) -- "
@@ -111,18 +129,30 @@ class RedisPage(QWidget):
             "and all active sessions (every visitor, including yourself, will "
             "be logged out and re-scored from scratch on their next request). "
             "Rate limits and sticky honeypot pool assignments are cleared too. "
-            "This cannot be undone. Continue?",
+            "reverse_proxy is then restarted automatically, since "
+            "threat_analyzer.lua's hot-path IP-reputation check reads an "
+            "in-memory copy of threat_ips that FLUSHALL alone doesn't touch "
+            "-- without the restart, stale scores would keep being applied "
+            "despite Redis itself being empty. This cannot be undone. "
+            "Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
         try:
-            flush_all(remote)
+            flush_all(target.remote)
         except RedisInspectError as e:
             QMessageBox.warning(self, "Reset failed", str(e))
             return
         self.refresh()
+
+        argv, cwd = target.build("restart", "reverse_proxy")
+        self.action_log.run(argv, cwd)
+
+    def _on_reset_restart_finished(self, exit_code: int) -> None:
+        if exit_code == 0:
+            self.refresh()
 
     def refresh(self) -> None:
         remote = self._current_remote()
