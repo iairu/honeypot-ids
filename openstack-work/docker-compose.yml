@@ -580,6 +580,15 @@ services:
       # `wp plugin activate` below has nothing to activate.
       init_setup:
         condition: service_completed_successfully
+      # Pool 1 keeps the SAME password as production (no rotation --
+      # WORDPRESS_DB_PASSWORD below is ${MYSQL_PASSWORD}, not a POOL_2/3
+      # variant), so this dependency isn't about credentials for pool 1
+      # specifically -- it's still required so this never runs concurrently
+      # with honeypot_db_migration's own schema migrations against the
+      # same database. See honeypot_db_seed_2/3's copy of this comment for
+      # why it's load-bearing (not just a nice-to-have) for THOSE two.
+      honeypot_db_migration:
+        condition: service_completed_successfully
     environment:
       - WORDPRESS_DB_HOST=honeypot_database_1:3306
       - WORDPRESS_DB_NAME=production_database
@@ -625,6 +634,20 @@ services:
         condition: service_healthy
       init_setup:
         condition: service_completed_successfully
+      # Load-bearing, not just ordering hygiene: honeypot_database_2's
+      # data directory starts as a raw copy of production's, so it still
+      # has production's OWN password (MYSQL_PASSWORD) until
+      # honeypot_db_migration's set_pool_password() step ALTER USERs it to
+      # MYSQL_PASSWORD_POOL_2 (see that service's own comment). Without
+      # waiting for that to actually finish, this could start and try to
+      # authenticate with MYSQL_PASSWORD_POOL_2 while the live password is
+      # still the old one -- a real race (both this and
+      # honeypot_db_migration only require honeypot_database_2 to be
+      # merely healthy to start), producing exactly the same "Error
+      # establishing a database connection" wp-cli reports for any bad
+      # credential, transient or not.
+      honeypot_db_migration:
+        condition: service_completed_successfully
     environment:
       - WORDPRESS_DB_HOST=honeypot_database_2:3306
       - WORDPRESS_DB_NAME=production_database
@@ -664,6 +687,11 @@ services:
       honeypot_database_3:
         condition: service_healthy
       init_setup:
+        condition: service_completed_successfully
+      # Same reasoning as honeypot_db_seed_2's identical dependency --
+      # honeypot_database_3 only gets rotated to MYSQL_PASSWORD_POOL_3 by
+      # honeypot_db_migration's set_pool_password() step.
+      honeypot_db_migration:
         condition: service_completed_successfully
     environment:
       - WORDPRESS_DB_HOST=honeypot_database_3:3306

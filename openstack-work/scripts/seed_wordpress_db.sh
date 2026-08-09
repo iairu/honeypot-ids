@@ -95,6 +95,48 @@ WP="wp --allow-root --path=/var/www/html"
 now_iso() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 log() { echo "[SEED] $(now_iso) $*"; }
 
+# depends_on: service_healthy only proves mysqld itself is accepting
+# connections -- for a MySQL container, that's a mysqladmin ping using
+# WHATEVER credentials that healthcheck happens to use, which isn't
+# necessarily WORDPRESS_DB_USER/PASSWORD as seen from THIS container
+# (confirmed live: honeypot_database_2/3 start out cloned from
+# production's own data directory and keep production's password until
+# honeypot_db_migration's own ALTER USER step rotates it -- a real race
+# against this container if that dependency were ever missing or
+# insufficient).
+#
+# A plain TCP-readiness check, not `wp db check`/`mysql -e` -- confirmed
+# live those fail here with "TLS/SSL error: Certificate verification
+# failure", unrelated to credentials: this image's bundled mysql CLI
+# client (MariaDB 15.2) defaults to verifying certs and rejects the
+# self-signed one a mysql:5.7 server presents, the same class of issue
+# backup.sh already works around for mysqldump with --skip-ssl. `wp core
+# install` itself, just below, does NOT go through that CLI binary at
+# all -- WordPress/wpdb connects via PHP's mysqli extension directly,
+# which doesn't hit this -- so a CLI-based pre-flight check was actively
+# wrong here, not just unnecessary: it could fail (and block startup)
+# on a perfectly healthy database that `wp core install` would have
+# connected to just fine. A raw TCP connect (PHP's fsockopen, still
+# nothing MySQL-protocol-specific) is what actually waits out a genuine
+# "container just started, not accepting connections yet" race without
+# reintroducing that mismatch.
+db_host="${WORDPRESS_DB_HOST%%:*}"
+db_port="${WORDPRESS_DB_HOST##*:}"
+[ "$db_port" = "$WORDPRESS_DB_HOST" ] && db_port=3306  # no ":port" suffix present
+
+log "Waiting for ${db_host}:${db_port} to accept connections..."
+attempt=0
+max_attempts=30
+until php -r "exit(@fsockopen('${db_host}', ${db_port}, \$e, \$s, 2) ? 0 : 1);"; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge "$max_attempts" ]; then
+        log "ERROR: ${db_host}:${db_port} still not accepting connections after ${max_attempts} attempts (60s) -- giving up."
+        exit 1
+    fi
+    sleep 2
+done
+log "${db_host}:${db_port} reachable."
+
 if $WP core is-installed 2>/dev/null; then
     if [ "${FORCE_RESEED:-0}" != "1" ]; then
         log "WordPress already installed -- nothing to do (set FORCE_RESEED=1 to wipe and rebuild)."
