@@ -219,18 +219,18 @@ function _M.increment_threat_score(ip, additional_score)
 
         if not threats[ip] then
             threats[ip] = {
-                score = 0,
+                raw_score = 0,
                 reason = "clean",
                 updated = ngx.time()
             }
         end
-        
-        old_score = threats[ip].score
-        threats[ip].score = math.min(threats[ip].score + additional_score, 100)
+
+        old_score = threats[ip].raw_score
+        threats[ip].raw_score = math.min(threats[ip].raw_score + additional_score, 100)
         threats[ip].admin_activity = (threats[ip].admin_activity or 0) + 1
         threats[ip].updated = ngx.time()
         threats[ip].reason = "suspicious_admin_activity"
-        
+
         red:set('threat_ips', cjson.encode(threats))
         _G.redis_pool.close_connection(red)
     end
@@ -249,23 +249,23 @@ function _M.increment_threat_score(ip, additional_score)
         
         if not shared_threats[ip] then
             shared_threats[ip] = {
-                score = 0,
+                raw_score = 0,
                 reason = "clean",
                 updated = ngx.time()
             }
         end
-        
-        old_score = shared_threats[ip].score
-        shared_threats[ip].score = math.min(shared_threats[ip].score + additional_score, 100)
+
+        old_score = shared_threats[ip].raw_score
+        shared_threats[ip].raw_score = math.min(shared_threats[ip].raw_score + additional_score, 100)
         shared_threats[ip].admin_activity = (shared_threats[ip].admin_activity or 0) + 1
         shared_threats[ip].updated = ngx.time()
         shared_threats[ip].reason = "suspicious_admin_activity"
-        
+
         threat_intel:set("threat_ips", cjson.encode(shared_threats))
     end
-    
-    ngx.log(ngx.WARN, "[ADMIN] 📈 Threat score increased | IP: ", ip, " | Old: ", old_score, 
-            " | New: ", (threats[ip] and threats[ip].score or (shared_threats and shared_threats[ip] and shared_threats[ip].score or 0)), 
+
+    ngx.log(ngx.WARN, "[ADMIN] 📈 Threat score increased | IP: ", ip, " | Old: ", old_score,
+            " | New: ", (threats[ip] and threats[ip].raw_score or (shared_threats and shared_threats[ip] and shared_threats[ip].raw_score or 0)),
             " | Added: +", additional_score)
 end
 
@@ -386,7 +386,7 @@ function _M.should_block_admin_access(ip)
     local threats = cjson.decode(threat_data)
     _G.redis_pool.close_connection(red)
     
-    if threats[ip] and threats[ip].score >= 70 then
+    if threats[ip] and threats[ip].raw_score >= 70 then
         return true
     end
     

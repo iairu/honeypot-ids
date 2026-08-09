@@ -146,23 +146,23 @@ do
     local HALF_LIFE = 300
 
     check("nil entry returns zero", rules.decayed_score(nil, now, HALF_LIFE) == 0)
-    check("entry with zero score stays zero",
-          rules.decayed_score({ score = 0, updated = now }, now + 10000, HALF_LIFE) == 0)
+    check("entry with zero raw_score stays zero",
+          rules.decayed_score({ raw_score = 0, updated = now }, now + 10000, HALF_LIFE) == 0)
 
-    local fresh = { score = 100, updated = now }
+    local fresh = { raw_score = 100, updated = now }
     check("no time elapsed -> no decay", rules.decayed_score(fresh, now, HALF_LIFE) == 100)
 
     -- The specific bug this exists to fix: a stale alert (or a one-off
-    -- false positive, e.g. this project's own known same-host Suricata
-    -- IP-attribution caveat) must not permanently poison an IP's
-    -- reputation with no way to age out short of manually clearing Redis.
+    -- false positive, e.g. an AbuseIPDB blacklist entry that's since been
+    -- resolved) must not permanently poison an IP's reputation with no
+    -- way to age out short of manually clearing Redis.
     local one_half_life = rules.decayed_score(fresh, now + HALF_LIFE, HALF_LIFE)
     check("one half-life elapsed -> decayed to ~half", math.abs(one_half_life - 50) < 0.01)
 
     local four_half_lives = rules.decayed_score(fresh, now + 4 * HALF_LIFE, HALF_LIFE)
     check("four half-lives elapsed -> well below the Stage 6 >50 gate", four_half_lives < 10)
 
-    local missing_anchor = rules.decayed_score({ score = 100 }, now + 10000, HALF_LIFE)
+    local missing_anchor = rules.decayed_score({ raw_score = 100 }, now + 10000, HALF_LIFE)
     check("missing updated timestamp -> no decay (treated as still-fresh)", missing_anchor == 100)
 
     check("nil half_life -> no decay",
@@ -179,6 +179,28 @@ do
           reason:find("CVE%-2023%-28121") ~= nil)
     check("reason is the full signature text, not truncated",
           reason == "suricata: CVE-2023-28121 WooCommerce Payments Unauthorized Admin Access Attempt")
+end
+
+print("== is_private_ip() ==")
+do
+    -- REAL_ALERT's src_ip -- the exact shape of the container-to-container
+    -- misattribution documented in this module's KNOWN CAVEAT (and, live,
+    -- in threat_ips: two internal addresses scored 100 with no real
+    -- external attacker behind them) -- must be filtered.
+    check("REAL_ALERT's own src_ip (172.21.0.9) is private", rules.is_private_ip(REAL_ALERT.src_ip))
+
+    check("10.x is private", rules.is_private_ip("10.0.0.1"))
+    check("127.x is private (loopback)", rules.is_private_ip("127.0.0.1"))
+    check("172.16-31.x is private", rules.is_private_ip("172.21.0.10"))
+    check("172.15.x is NOT private (just outside the 172.16-31 range)", not rules.is_private_ip("172.15.0.1"))
+    check("172.32.x is NOT private (just outside the 172.16-31 range)", not rules.is_private_ip("172.32.0.1"))
+    check("192.168.x is private", rules.is_private_ip("192.168.1.1"))
+
+    check("a real public IP is NOT private", not rules.is_private_ip("8.8.8.8"))
+    check("a real public IP is NOT private (attacker-shaped)", not rules.is_private_ip("203.0.113.42"))
+
+    check("nil is NOT private (never crashes)", not rules.is_private_ip(nil))
+    check("non-IP string is NOT private (never crashes)", not rules.is_private_ip("not-an-ip"))
 end
 
 print(string.format("%d passed, %d failed", passed, failed))

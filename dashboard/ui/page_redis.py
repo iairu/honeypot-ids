@@ -150,8 +150,11 @@ class RedisPage(QWidget):
 
         chart = QChart()
         if scores:
-            chart.setTitle("threat_ips scores by IP")
-            bar_set = QBarSet("Score")
+            # raw_score, not the decayed score threat_analyzer.lua actually
+            # applies per-request -- see core/redis_inspect.py's
+            # get_threat_scores() docstring.
+            chart.setTitle("threat_ips raw_score by IP")
+            bar_set = QBarSet("raw_score")
             ips = list(scores.keys())
             bar_set.append([scores[ip] for ip in ips])
             series = QBarSeries()
@@ -169,6 +172,6 @@ class RedisPage(QWidget):
             series.attachAxis(axis_y)
             chart.legend().hide()
         else:
-            chart.setTitle("threat_ips scores by IP -- no data yet")
+            chart.setTitle("threat_ips raw_score by IP -- no data yet")
 
         self.chart_view.setChart(chart)

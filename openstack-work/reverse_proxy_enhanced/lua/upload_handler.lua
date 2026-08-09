@@ -177,15 +177,15 @@ function _M.update_ip_threat_for_upload(ip, upload_threat_score)
     
     if not threats[ip] then
         threats[ip] = {
-            score = 0,
+            raw_score = 0,
             reason = "clean",
             updated = ngx.time()
         }
     end
-    
+
     -- Add upload-specific threat score
     local additional_score = math.floor(upload_threat_score / 2)  -- Scale down for IP reputation
-    threats[ip].score = math.min(threats[ip].score + additional_score, 100)
+    threats[ip].raw_score = math.min(threats[ip].raw_score + additional_score, 100)
     threats[ip].reason = "suspicious_upload_activity"
     threats[ip].updated = ngx.time()
     threats[ip].upload_attempts = (threats[ip].upload_attempts or 0) + 1

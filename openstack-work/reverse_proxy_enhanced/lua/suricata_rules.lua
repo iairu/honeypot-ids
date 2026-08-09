@@ -47,6 +47,20 @@
 --   external traffic (not available in this dev environment). Flagged
 --   here rather than silently assumed fixed.
 --
+--   is_private_ip() below is what init_worker.lua's parse_suricata_logs()
+--   uses to act on this caveat rather than just document it: an alert
+--   whose src_ip is RFC1918/loopback is -- by construction -- never the
+--   address router.lua's remote_ip (nginx's client-facing view) could
+--   ever equal for a real request, so writing it into threat_ips can
+--   never actually gate anything; it only pollutes threat_ips with a
+--   container's own address at score 100 (confirmed live: reverse_proxy's
+--   own bridge IP, misattributed as the source of its own proxied
+--   requests to the backends). Filtering these at ingestion time, rather
+--   than only being able to clean them up after the fact (see
+--   core/redis_inspect.py's is_local_ip/_UNPOISON_SCRIPT for the
+--   dashboard-side equivalent, same IP ranges), stops the pollution from
+--   happening in the first place.
+--
 -- SEVERITY -> SCORE:
 --   Suricata's own severity field (lower number = more severe, standard
 --   Suricata/Snort convention: 1=high, 2=medium, 3=low) grades the score
@@ -107,6 +121,43 @@ function _M.is_alert_line(line)
     return line ~= nil and line:find('"event_type":"alert"', 1, true) ~= nil
 end
 
+--- Whether `ip` is a private/loopback address (RFC1918 + 127.0.0.0/8) --
+--- i.e. one that can only ever be a docker-internal hop (container<->
+--- container traffic, or the docker bridge gateway when curling the host
+--- itself), never a genuine external client. See the module docstring's
+--- KNOWN CAVEAT for why this matters: Suricata's network_mode: host +
+--- interface "any" visibility means an alert's src_ip can be the
+--- reverse_proxy->backend leg of a proxied request rather than the
+--- client->reverse_proxy leg, and init_worker.lua's parse_suricata_logs()
+--- uses this to skip writing such alerts into threat_ips.
+---
+--- Same ranges as core/redis_inspect.py's is_local_ip() (dashboard-side
+--- equivalent, used to clean up already-poisoned entries) -- kept
+--- consistent deliberately, not a coincidence.
+---
+--- @param  ip  string|nil
+--- @return boolean
+function _M.is_private_ip(ip)
+    if type(ip) ~= "string" then
+        return false
+    end
+    local a, b = ip:match("^(%d+)%.(%d+)%.%d+%.%d+$")
+    if not a then
+        return false
+    end
+    a, b = tonumber(a), tonumber(b)
+    if a == 10 or a == 127 then
+        return true
+    end
+    if a == 172 and b >= 16 and b <= 31 then
+        return true
+    end
+    if a == 192 and b == 168 then
+        return true
+    end
+    return false
+end
+
 --- Extract an alert record from an already-decoded eve.json event object.
 --- Decoding (cjson.decode) is the caller's job -- see the module docstring
 --- for why that split exists. Returns nil for anything that isn't a
@@ -161,7 +212,7 @@ function _M.next_score(previous_score, severity)
     return math.min((previous_score or 0) + delta, MAX_SCORE)
 end
 
---- Time-decayed view of a threat_ips[ip] entry's stored score.
+--- Time-decayed view of a threat_ips[ip] entry's stored raw_score.
 ---
 --- Added after confirming live that a stale/false-positive Suricata alert
 --- permanently poisoned an IP's reputation contribution: check_ip_
@@ -170,23 +221,33 @@ end
 --- manually clearing Redis. That's the same class of bug already fixed
 --- for session-level scoring (router_rules.decayed_score()) -- this is
 --- its IP-reputation-side counterpart, same shape: decay is computed at
---- READ time from the stored (score, updated) pair rather than mutating
---- the stored value on every read (which would compound incorrectly
---- across repeated evaluations) or requiring next_score() itself to know
---- about wall-clock time on the WRITE path.
+--- READ time from the stored (raw_score, updated) pair rather than
+--- mutating the stored value on every read (which would compound
+--- incorrectly across repeated evaluations) or requiring next_score()
+--- itself to know about wall-clock time on the WRITE path.
+---
+--- The field is named raw_score (not score) specifically to distinguish
+--- it from THIS function's return value: raw_score only ever goes up
+--- (capped at MAX_SCORE) and is what's actually stored in Redis/
+--- threat_intel, while the decayed number returned here -- not raw_score
+--- itself -- is what check_ip_reputation() actually adds into a request's
+--- threat_result.score. Reading Redis's threat_ips directly (e.g. via the
+--- dashboard's Redis page) shows raw_score, so seeing a bigger number
+--- there than in a request's logged score contribution is expected, not a
+--- bug -- this is the difference.
 ---
 --- @param  entry               table|nil  threat_ips[ip], i.e.
----                              { score, reason, updated, alert_count }.
+---                              { raw_score, reason, updated, alert_count }.
 --- @param  current_time        number     e.g. ngx.time()
 --- @param  half_life_seconds   number     e.g.
 ---                              _G.config.threat.score_decay_half_life_seconds
---- @return number  the decayed score (0 if entry is nil or has no score)
+--- @return number  the decayed score (0 if entry is nil or has no raw_score)
 function _M.decayed_score(entry, current_time, half_life_seconds)
     if not entry then
         return 0
     end
 
-    local stored = entry.score or 0
+    local stored = entry.raw_score or 0
     if stored <= 0 then
         return 0
     end

@@ -247,10 +247,16 @@ def get_value(remote: RemoteConfig | None, key: str, key_type: str, timeout: flo
 
 
 def get_threat_scores(remote: RemoteConfig | None, timeout: float = 15.0) -> dict[str, int]:
-    """{ip: score} from the "threat_ips" key (see router.lua/init_worker.lua),
-    for page_redis.py's bar chart. Empty dict if the key doesn't exist yet
-    or doesn't parse -- both are normal states (a freshly-started stack
-    has no threat data yet), not errors."""
+    """{ip: raw_score} from the "threat_ips" key (see router.lua/
+    init_worker.lua), for page_redis.py's bar chart. This is the raw,
+    ever-only-increasing stored value (capped at 100) -- NOT the same
+    number threat_analyzer.lua actually applies to a request's score,
+    which is a time-decayed view of this (suricata_rules.decayed_score()),
+    smaller once any time has passed since `updated`. Seeing a bigger
+    number here than in reverse_proxy's own logs for the same IP is
+    expected, not a bug. Empty dict if the key doesn't exist yet or
+    doesn't parse -- both are normal states (a freshly-started stack has
+    no threat data yet), not errors."""
     try:
         text = _run_redis_cli(remote, "GET", "threat_ips", timeout=timeout).strip()
     except RedisInspectError:
@@ -263,8 +269,8 @@ def get_threat_scores(remote: RemoteConfig | None, timeout: float = 15.0) -> dic
         return {}
     scores = {}
     for ip, entry in data.items():
-        if isinstance(entry, dict) and "score" in entry:
-            scores[ip] = int(entry["score"])
+        if isinstance(entry, dict) and "raw_score" in entry:
+            scores[ip] = int(entry["raw_score"])
     return scores
 
 

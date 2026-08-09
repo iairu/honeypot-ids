@@ -76,10 +76,10 @@ function _M.is_blacklist_enabled()
 end
 
 -- ---------------------------------------------------------------------------
--- Internal: merge a table of {ip -> {score, reason}} into the threat_intel
--- shared dict's "threat_ips" blob, taking the max score when an IP already
--- has an entry (e.g. from a Suricata alert) so we never downgrade an
--- existing higher-confidence signal.
+-- Internal: merge a table of {ip -> {raw_score, reason}} into the
+-- threat_intel shared dict's "threat_ips" blob, taking the max raw_score
+-- when an IP already has an entry (e.g. from a Suricata alert) so we
+-- never downgrade an existing higher-confidence signal.
 -- ---------------------------------------------------------------------------
 local function merge_threat_ips(updates)
     local threat_intel = ngx.shared.threat_intel
@@ -90,7 +90,7 @@ local function merge_threat_ips(updates)
 
     for ip, entry in pairs(updates) do
         local existing = threat_ips[ip]
-        if not existing or (entry.score or 0) > (existing.score or 0) then
+        if not existing or (entry.raw_score or 0) > (existing.raw_score or 0) then
             threat_ips[ip] = entry
         end
     end
@@ -244,7 +244,7 @@ function _M.fetch_blacklist()
     for _, entry in ipairs(decoded.data) do
         if entry.ipAddress then
             updates[entry.ipAddress] = {
-                score = entry.abuseConfidenceScore or _G.config.abuseipdb.confidence_minimum,
+                raw_score = entry.abuseConfidenceScore or _G.config.abuseipdb.confidence_minimum,
                 reason = "abuseipdb_blacklist",
                 updated = ngx.time()
             }
@@ -329,7 +329,7 @@ function _M.check_ip_async(ip)
         if confidence > 0 then
             merge_threat_ips({
                 [ip] = {
-                    score = confidence,
+                    raw_score = confidence,
                     reason = "abuseipdb_check",
                     updated = ngx.time()
                 }

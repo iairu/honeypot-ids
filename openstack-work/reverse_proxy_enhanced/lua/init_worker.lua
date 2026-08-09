@@ -265,66 +265,107 @@ local function init_worker()
 
                         if alert then
                             -- Store the raw alert (forensic record, same
-                            -- 1000-entry cap as before).
+                            -- 1000-entry cap as before) regardless of
+                            -- whether it ends up feeding IP reputation
+                            -- below -- still useful for debugging/
+                            -- visibility (dashboard's Redis page raw
+                            -- alerts list) either way.
                             red:lpush("suricata_alerts", cjson.encode(alert))
                             red:ltrim("suricata_alerts", 0, 1000)
 
-                            -- Update threat intelligence.
-                            -- red:get() returns the ngx.null userdata sentinel for
-                            -- a missing key, not Lua nil -- "if current_intel then"
-                            -- doesn't catch that (ngx.null is truthy), so
-                            -- cjson.decode() would crash with "string expected,
-                            -- got userdata" on a fresh/flushed Redis (same bug
-                            -- already fixed this session in admin_handler.lua,
-                            -- upload_handler.lua, and vulnerability_handler.lua).
-                            local current_intel = red:get("threat_ips")
-                            local threat_ips = {}
-                            if current_intel and current_intel ~= ngx.null then
-                                threat_ips = cjson.decode(current_intel)
-                            end
+                            if suricata_rules.is_private_ip(alert.src_ip) then
+                                -- Suricata runs with network_mode: host +
+                                -- interface "any" (see suricata_rules.lua's
+                                -- module docstring KNOWN CAVEAT), so it sees
+                                -- every hop of a proxied request, not just
+                                -- the client->reverse_proxy leg. A private/
+                                -- loopback src_ip here is a container-to-
+                                -- container hop (e.g. reverse_proxy ->
+                                -- production_eshop/honeypot_eshop_N), never
+                                -- a genuine external actor -- confirmed
+                                -- live: this was writing reverse_proxy's own
+                                -- bridge address into threat_ips at score
+                                -- 100 instead of (or in addition to) the
+                                -- real client/attacker IP. That address can
+                                -- never match a future request's real
+                                -- remote_ip anyway (check_ip_reputation()
+                                -- always looks up ngx.var.remote_addr,
+                                -- nginx's own client-facing view), so
+                                -- writing it was pure noise with no actual
+                                -- reputation-gating effect -- just a
+                                -- misleading entry in threat_ips.
+                                ngx.log(ngx.INFO, "Suricata alert not attributed to IP reputation -- src_ip ",
+                                        alert.src_ip, " is private/internal (container-to-container hop, not ",
+                                        "an attributable external client): ", alert.signature)
+                            else
+                                -- Update threat intelligence.
+                                -- red:get() returns the ngx.null userdata sentinel for
+                                -- a missing key, not Lua nil -- "if current_intel then"
+                                -- doesn't catch that (ngx.null is truthy), so
+                                -- cjson.decode() would crash with "string expected,
+                                -- got userdata" on a fresh/flushed Redis (same bug
+                                -- already fixed this session in admin_handler.lua,
+                                -- upload_handler.lua, and vulnerability_handler.lua).
+                                local current_intel = red:get("threat_ips")
+                                local threat_ips = {}
+                                if current_intel and current_intel ~= ngx.null then
+                                    threat_ips = cjson.decode(current_intel)
+                                end
 
-                            -- Score is graded by Suricata's own severity
-                            -- field (suricata_rules.severity_to_score),
-                            -- not a flat +20 per alert regardless of what
-                            -- fired -- a single confirmed CVE-exploit-
-                            -- attempt (priority 1 in local.rules) now moves
-                            -- an IP most of the way to Stage 6's >50
-                            -- honeypot-diversion threshold on its own; a
-                            -- low-priority scan/recon signature contributes
-                            -- much less, so noisy background scanning
-                            -- doesn't force honeypot diversion as readily
-                            -- as a real exploit attempt does. The reason
-                            -- string carries the actual matched signature
-                            -- (e.g. "suricata: CVE-2023-28121 ...") through
-                            -- to router.lua's Stage 6 honeypot_reason
-                            -- instead of a generic "bad_ip_reputation".
-                            local previous = threat_ips[alert.src_ip]
-                            threat_ips[alert.src_ip] = {
-                                score = suricata_rules.next_score(previous and previous.score, alert.severity),
-                                reason = suricata_rules.build_reason(alert),
-                                updated = ngx.time(),
-                                alert_count = (previous and previous.alert_count or 0) + 1,
-                            }
+                                -- raw_score is graded by Suricata's own
+                                -- severity field (suricata_rules.
+                                -- severity_to_score), not a flat +20 per
+                                -- alert regardless of what fired -- a
+                                -- single confirmed CVE-exploit-attempt
+                                -- (priority 1 in local.rules) now moves an
+                                -- IP most of the way to Stage 6's >50
+                                -- honeypot-diversion threshold on its own; a
+                                -- low-priority scan/recon signature
+                                -- contributes much less, so noisy
+                                -- background scanning doesn't force
+                                -- honeypot diversion as readily as a real
+                                -- exploit attempt does. Named raw_score
+                                -- (not score) to distinguish it from the
+                                -- time-decayed number check_ip_reputation()
+                                -- actually adds to a request's score (see
+                                -- suricata_rules.decayed_score()) -- this
+                                -- stored value only ever goes up, capped at
+                                -- 100; what's logged/applied per-request is
+                                -- smaller once any time has passed. The
+                                -- reason string carries the actual matched
+                                -- signature (e.g. "suricata: CVE-2023-28121
+                                -- ...") through to router.lua's Stage 6
+                                -- honeypot_reason instead of a generic
+                                -- "bad_ip_reputation".
+                                local previous = threat_ips[alert.src_ip]
+                                threat_ips[alert.src_ip] = {
+                                    raw_score = suricata_rules.next_score(
+                                        previous and previous.raw_score, alert.severity),
+                                    reason = suricata_rules.build_reason(alert),
+                                    updated = ngx.time(),
+                                    alert_count = (previous and previous.alert_count or 0) + 1,
+                                }
 
-                            local encoded_threat_ips = cjson.encode(threat_ips)
-                            red:set("threat_ips", encoded_threat_ips)
+                                local encoded_threat_ips = cjson.encode(threat_ips)
+                                red:set("threat_ips", encoded_threat_ips)
 
-                            -- Mirror into the shared-memory cache threat_analyzer.lua
-                            -- actually reads on the hot path (it never touches Redis
-                            -- directly, for latency) -- without this, a Suricata
-                            -- alert would update Redis's durable threat_ips record
-                            -- but have zero effect on live routing/scoring until
-                            -- something else happened to refresh the shared dict.
-                            local threat_intel_shared = ngx.shared.threat_intel
-                            if threat_intel_shared then
-                                threat_intel_shared:set("threat_ips", encoded_threat_ips)
+                                -- Mirror into the shared-memory cache threat_analyzer.lua
+                                -- actually reads on the hot path (it never touches Redis
+                                -- directly, for latency) -- without this, a Suricata
+                                -- alert would update Redis's durable threat_ips record
+                                -- but have zero effect on live routing/scoring until
+                                -- something else happened to refresh the shared dict.
+                                local threat_intel_shared = ngx.shared.threat_intel
+                                if threat_intel_shared then
+                                    threat_intel_shared:set("threat_ips", encoded_threat_ips)
+                                end
+
+                                ngx.log(ngx.WARN, "Suricata alert processed: ", alert.src_ip, " -> ", alert.signature,
+                                        " (severity ", alert.severity or "?", ", raw_score now ",
+                                        threat_ips[alert.src_ip].raw_score, ")")
                             end
 
                             alerts_processed = alerts_processed + 1
-
-                            ngx.log(ngx.WARN, "Suricata alert processed: ", alert.src_ip, " -> ", alert.signature,
-                                    " (severity ", alert.severity or "?", ", score now ",
-                                    threat_ips[alert.src_ip].score, ")")
                         end
                     end
                 end

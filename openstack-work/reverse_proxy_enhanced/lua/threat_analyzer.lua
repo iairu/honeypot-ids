@@ -339,23 +339,27 @@ function _M.check_ip_reputation(ip)
         local threat_ips = cjson.decode(threat_ips_json)
         if threat_ips[ip] then
             known_ip = true
-            -- Decayed, not the raw stored value: a Suricata alert from
-            -- long ago (or a one-off false positive -- e.g. this dev
-            -- environment's own internal health-check traffic, which
-            -- Suricata's network_mode:host visibility can misattribute
-            -- to a container's own address, see suricata_rules.lua's
-            -- module docstring) would otherwise permanently poison this
-            -- IP's reputation contribution with no way to age out short
-            -- of manually clearing Redis -- confirmed live this was
-            -- happening repeatedly. score_decay_half_life_seconds is the
-            -- same knob session-level scoring decays against
-            -- (router_rules.decayed_score(), router.lua) -- one shared
-            -- "how long does suspicion linger" setting for both.
+            -- Decayed, not the raw stored value: a stale alert (or a
+            -- one-off false positive, e.g. an AbuseIPDB blacklist entry
+            -- that's since been resolved) would otherwise permanently
+            -- poison this IP's reputation contribution with no way to age
+            -- out short of manually clearing Redis -- confirmed live this
+            -- was happening repeatedly. (A DIFFERENT class of false
+            -- positive -- Suricata's network_mode:host visibility
+            -- misattributing an alert to a container's own internal
+            -- address rather than the real client -- is filtered out
+            -- before it ever reaches threat_ips at all; see
+            -- suricata_rules.lua's module docstring and
+            -- init_worker.lua's parse_suricata_logs().)
+            -- score_decay_half_life_seconds is the same knob session-level
+            -- scoring decays against (router_rules.decayed_score(),
+            -- router.lua) -- one shared "how long does suspicion linger"
+            -- setting for both.
             result.score = suricata_rules.decayed_score(
                 threat_ips[ip], ngx.time(), _G.config.threat.score_decay_half_life_seconds)
             result.reason = threat_ips[ip].reason or "known_threat"
             ngx.log(ngx.ERR, "[THREAT ANALYZER] 🚨 Known threat IP detected: ", ip, " | Reason: ", result.reason,
-                    " | Stored score: ", threat_ips[ip].score or 0, " | Decayed score: ",
+                    " | Stored raw_score: ", threat_ips[ip].raw_score or 0, " | Decayed score: ",
                     string.format("%.1f", result.score))
         end
     end
