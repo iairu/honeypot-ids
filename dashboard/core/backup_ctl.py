@@ -36,12 +36,21 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 from core.docker_ctl import Target
 from core.state import RemoteConfig
 
 BACKUP_SERVICE = "backup_service"
 WP_RESTORE_TARGET_SERVICE = "production_eshop"
+
+# A flat {filename: {"label": ..., "updated": ...}} JSON manifest living at
+# /backups/labels.json (i.e. openstack-work/backups/labels.json on the
+# local host bind mount) -- read/written by BOTH this module and
+# openstack-work/backups/manage_backups.sh via the exact same `docker
+# compose exec` path, so a label set from one is immediately visible from
+# the other; there is no separate/divergent state to keep in sync.
+_LABELS_PATH = "/backups/labels.json"
 
 # Matches backup.sh's own filename shape exactly. Enforced here (before a
 # filename ever reaches a command line) AND again inside restore_db.sh
@@ -60,6 +69,7 @@ class BackupFile:
     filename: str
     size_bytes: int
     mtime: datetime  # UTC
+    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +93,68 @@ def _run(target: Target, *compose_args: str, timeout: float = 15.0) -> str:
     return result.stdout
 
 
+def _run_binary(
+    target: Target, *compose_args: str, input_bytes: bytes | None = None, timeout: float = 60.0,
+) -> bytes:
+    """Like _run(), but for reading/writing raw file bytes (export/import,
+    a large mysqldump or tar archive) rather than short text output --
+    binary mode throughout, no text decoding that could corrupt a gzip/tar
+    stream, and an optional input_bytes piped to stdin (import's `cat >
+    file` on the remote end)."""
+    argv, cwd = target.build(*compose_args)
+    try:
+        result = subprocess.run(
+            argv, cwd=cwd, input=input_bytes, capture_output=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        raise BackupCtlError("Command timed out.")
+    except OSError as e:
+        raise BackupCtlError(f"Could not run command: {e}")
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace").strip()
+        raise BackupCtlError(stderr or f"Command exited with code {result.returncode}")
+    return result.stdout
+
+
+def _backup_subdir(filename: str) -> str:
+    """"db" or "wp", purely from filename shape -- raises BackupCtlError
+    for anything that doesn't match either (same validation
+    restore_db_command()/restore_wp_command() already apply)."""
+    if _DB_FILENAME_RE.match(filename):
+        return "db"
+    if _WP_FILENAME_RE.match(filename):
+        return "wp"
+    raise BackupCtlError(
+        f"Not a valid backup filename: {filename!r} "
+        "(expected *_production_database.sql.gz or *_production_eshop.tar.gz)"
+    )
+
+
+def _read_labels(target: Target, timeout: float = 15.0) -> dict:
+    """{} if labels.json doesn't exist yet (no labels set) or fails to
+    parse -- both non-fatal, same "freshly-started stack" reasoning as
+    read_backup_log()."""
+    try:
+        out = _run(
+            target, "exec", "-T", BACKUP_SERVICE, "sh", "-c",
+            f"cat {_LABELS_PATH} 2>/dev/null || echo '{{}}'", timeout=timeout,
+        )
+    except BackupCtlError:
+        return {}
+    try:
+        data = json.loads(out) if out.strip() else {}
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_labels(target: Target, labels: dict, timeout: float = 15.0) -> None:
+    _run_binary(
+        target, "exec", "-T", BACKUP_SERVICE, "sh", "-c", f"cat > {_LABELS_PATH}",
+        input_bytes=json.dumps(labels, indent=2, sort_keys=True).encode(), timeout=timeout,
+    )
+
+
 def list_backups(
     remote: RemoteConfig | None, timeout: float = 15.0,
 ) -> tuple[list[BackupFile], list[BackupFile]]:
@@ -96,6 +168,7 @@ def list_backups(
         "for f in /backups/wp/*.tar.gz; do [ -e \"$f\" ] && stat -c 'WP|%n|%s|%Y' \"$f\"; done"
     )
     out = _run(target, "exec", "-T", BACKUP_SERVICE, "sh", "-c", script, timeout=timeout)
+    labels = _read_labels(target, timeout=timeout)
 
     db_files: list[BackupFile] = []
     wp_files: list[BackupFile] = []
@@ -109,7 +182,10 @@ def list_backups(
             mtime = datetime.fromtimestamp(int(mtime_str), tz=timezone.utc)
         except ValueError:
             continue
-        entry = BackupFile(filename=path.rsplit("/", 1)[-1], size_bytes=size, mtime=mtime)
+        filename = path.rsplit("/", 1)[-1]
+        label_entry = labels.get(filename)
+        label = label_entry.get("label") if isinstance(label_entry, dict) else None
+        entry = BackupFile(filename=filename, size_bytes=size, mtime=mtime, label=label)
         (db_files if kind == "DB" else wp_files).append(entry)
 
     db_files.sort(key=lambda f: f.mtime, reverse=True)
@@ -180,4 +256,90 @@ def restore_wp_command(remote: RemoteConfig | None, filename: str) -> tuple[list
         f"docker compose --profile '*' exec -T {WP_RESTORE_TARGET_SERVICE} "
         "tar --extract --gzip --file=- --directory=/var/www/html"
     )
+    return target.build_shell(command)
+
+
+def set_label(remote: RemoteConfig | None, filename: str, label: str, timeout: float = 15.0) -> None:
+    """Sets (or clears, if label is empty) the human-readable label shown
+    next to `filename` in list_backups() -- also visible to/settable from
+    openstack-work/backups/manage_backups.sh, same manifest either way."""
+    target = Target(project="edge", remote=remote)
+    _backup_subdir(filename)  # validates filename shape; raises if not a real backup name
+    labels = _read_labels(target, timeout=timeout)
+    if label.strip():
+        labels[filename] = {
+            "label": label.strip(),
+            "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+    else:
+        labels.pop(filename, None)
+    _write_labels(target, labels, timeout=timeout)
+
+
+def delete_backup(remote: RemoteConfig | None, filename: str, timeout: float = 15.0) -> None:
+    """Permanently deletes `filename` from backup_service's /backups and
+    drops its label entry, if any. No confirmation here -- callers (the
+    dashboard's page_backups.py, manage_backups.sh) are expected to have
+    already confirmed with the user; this module's job is just to do
+    exactly what's asked."""
+    target = Target(project="edge", remote=remote)
+    subdir = _backup_subdir(filename)
+    _run(target, "exec", "-T", BACKUP_SERVICE, "rm", "-f", f"/backups/{subdir}/{filename}", timeout=timeout)
+    labels = _read_labels(target, timeout=timeout)
+    if filename in labels:
+        del labels[filename]
+        _write_labels(target, labels, timeout=timeout)
+
+
+def export_backup(
+    remote: RemoteConfig | None, filename: str, dest_path: str, timeout: float = 120.0,
+) -> None:
+    """Copies `filename` out of backup_service to a local file at
+    dest_path -- a WP file archive can be well over 100MB, hence the
+    longer default timeout than this module's other operations."""
+    target = Target(project="edge", remote=remote)
+    subdir = _backup_subdir(filename)
+    data = _run_binary(target, "exec", "-T", BACKUP_SERVICE, "cat", f"/backups/{subdir}/{filename}", timeout=timeout)
+    try:
+        Path(dest_path).write_bytes(data)
+    except OSError as e:
+        raise BackupCtlError(f"Could not write {dest_path}: {e}")
+
+
+def import_backup(remote: RemoteConfig | None, src_path: str, timeout: float = 120.0) -> str:
+    """Copies a local file at src_path into backup_service's /backups/db
+    or /backups/wp (chosen from its own filename, same as export_backup's
+    counterpart) -- e.g. re-importing an exported backup on another
+    machine, or a backup a teammate sent you. Returns the filename it was
+    imported as (== Path(src_path).name) so a caller can immediately
+    refresh/select it. Overwrites an existing file of the same name."""
+    filename = Path(src_path).name
+    subdir = _backup_subdir(filename)
+    try:
+        data = Path(src_path).read_bytes()
+    except OSError as e:
+        raise BackupCtlError(f"Could not read {src_path}: {e}")
+    target = Target(project="edge", remote=remote)
+    _run_binary(
+        target, "exec", "-T", BACKUP_SERVICE, "sh", "-c", f"cat > /backups/{subdir}/{filename}",
+        input_bytes=data, timeout=timeout,
+    )
+    return filename
+
+
+def reseed_command(
+    remote: RemoteConfig | None, force: bool = True,
+) -> tuple[list[str], str | None]:
+    """(argv, cwd) that (re)runs production_db_seed -- see
+    scripts/seed_production_db.sh. force=True passes FORCE_RESEED=1 so an
+    already-installed WordPress gets wiped and rebuilt from scratch
+    (used by the dashboard's "Reset demo store" action, e.g. to restore a
+    clean storefront after running exploits against it); force=False
+    just replays the normal idempotent no-op-if-already-installed
+    behavior every `docker compose up` already gets for free, useful only
+    to watch it happen / confirm it's a no-op. Meant for LogPanel.run(),
+    same reasoning as the restore_*_command() functions above."""
+    target = Target(project="edge", remote=remote)
+    env_prefix = "FORCE_RESEED=1 " if force else ""
+    command = f"{env_prefix}docker compose --profile '*' up production_db_seed"
     return target.build_shell(command)

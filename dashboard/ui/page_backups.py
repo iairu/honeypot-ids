@@ -2,21 +2,30 @@
 (openstack-work / edge project) has written under /backups, plus a tail of
 its structured backup.log, and lets you restore either kind of backup back
 onto the live production stack -- see core/backup_ctl.py for exactly how
-each restore path works and why they differ."""
+each restore path works and why they differ.
+
+Also covers the full lifecycle around those backups -- label/rename,
+delete, export to a local file, import from one (openstack-work/backups/
+manage_backups.sh is the non-dashboard equivalent, sharing the exact same
+labels.json manifest) -- and a "Reset demo store" action that re-runs the
+WP-CLI seed script (scripts/seed_production_db.sh) to rebuild a clean
+WooCommerce/Elementor storefront, e.g. after exploits have been run
+against it."""
 from __future__ import annotations
 
 import html
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QComboBox, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
-    QPlainTextEdit, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog,
+    QLabel, QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from core.backup_ctl import (
-    BackupCtlError, BackupFile, list_backups, read_backup_log,
-    restore_db_command, restore_wp_command,
+    BackupCtlError, BackupFile, delete_backup, export_backup, import_backup,
+    list_backups, read_backup_log, reseed_command, restore_db_command,
+    restore_wp_command, set_label,
 )
 from core.docker_ctl import Target, targets_for
 from core.state import AppState, RemoteConfig
@@ -34,9 +43,10 @@ def _human_size(n: int) -> str:
 
 class _BackupTable(QTableWidget):
     def __init__(self, parent=None):
-        super().__init__(0, 2, parent)
-        self.setHorizontalHeaderLabels(["Filename (date)", "Size"])
+        super().__init__(0, 3, parent)
+        self.setHorizontalHeaderLabels(["Filename (date)", "Size", "Label"])
         self.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -49,6 +59,7 @@ class _BackupTable(QTableWidget):
             when = f.mtime.strftime("%Y-%m-%d %H:%M:%S UTC")
             self.setItem(row, 0, QTableWidgetItem(f"{f.filename}\n{when}"))
             self.setItem(row, 1, QTableWidgetItem(_human_size(f.size_bytes)))
+            self.setItem(row, 2, QTableWidgetItem(f.label or ""))
 
     def selected_file(self) -> BackupFile | None:
         rows = self.selectionModel().selectedRows()
@@ -76,6 +87,15 @@ class BackupsPage(QWidget):
         self.refresh_btn.clicked.connect(self.refresh)
         toolbar.addWidget(self.refresh_btn)
         toolbar.addStretch()
+        # Page-level, not tied to either table -- rebuilds the live demo
+        # storefront from scratch via production_db_seed (see
+        # core/backup_ctl.reseed_command). Not a "backup" action itself,
+        # but lives here since it's the same "reset the eshop's data to a
+        # known state" family of operation as restore.
+        self.reseed_btn = QPushButton("Reset demo store…")
+        self.reseed_btn.setStyleSheet("QPushButton { color: #d9534f; }")
+        self.reseed_btn.clicked.connect(self._reseed)
+        toolbar.addWidget(self.reseed_btn)
         layout.addLayout(toolbar)
 
         self.error_banner = QLabel("")
@@ -93,6 +113,21 @@ class BackupsPage(QWidget):
         db_layout = QVBoxLayout(db_box)
         self.db_table = _BackupTable()
         db_layout.addWidget(self.db_table)
+        db_btn_row = QHBoxLayout()
+        self.label_db_btn = QPushButton("Label…")
+        self.label_db_btn.clicked.connect(lambda: self._label(self.db_table))
+        db_btn_row.addWidget(self.label_db_btn)
+        self.export_db_btn = QPushButton("Export…")
+        self.export_db_btn.clicked.connect(lambda: self._export(self.db_table))
+        db_btn_row.addWidget(self.export_db_btn)
+        self.import_db_btn = QPushButton("Import…")
+        self.import_db_btn.clicked.connect(lambda: self._import("db"))
+        db_btn_row.addWidget(self.import_db_btn)
+        self.delete_db_btn = QPushButton("Delete")
+        self.delete_db_btn.setStyleSheet("QPushButton { color: #d9534f; }")
+        self.delete_db_btn.clicked.connect(lambda: self._delete(self.db_table))
+        db_btn_row.addWidget(self.delete_db_btn)
+        db_layout.addLayout(db_btn_row)
         self.restore_db_btn = QPushButton("Restore selected dump…")
         self.restore_db_btn.setStyleSheet("QPushButton { color: #d9534f; }")
         self.restore_db_btn.clicked.connect(self._restore_db)
@@ -103,6 +138,21 @@ class BackupsPage(QWidget):
         wp_layout = QVBoxLayout(wp_box)
         self.wp_table = _BackupTable()
         wp_layout.addWidget(self.wp_table)
+        wp_btn_row = QHBoxLayout()
+        self.label_wp_btn = QPushButton("Label…")
+        self.label_wp_btn.clicked.connect(lambda: self._label(self.wp_table))
+        wp_btn_row.addWidget(self.label_wp_btn)
+        self.export_wp_btn = QPushButton("Export…")
+        self.export_wp_btn.clicked.connect(lambda: self._export(self.wp_table))
+        wp_btn_row.addWidget(self.export_wp_btn)
+        self.import_wp_btn = QPushButton("Import…")
+        self.import_wp_btn.clicked.connect(lambda: self._import("wp"))
+        wp_btn_row.addWidget(self.import_wp_btn)
+        self.delete_wp_btn = QPushButton("Delete")
+        self.delete_wp_btn.setStyleSheet("QPushButton { color: #d9534f; }")
+        self.delete_wp_btn.clicked.connect(lambda: self._delete(self.wp_table))
+        wp_btn_row.addWidget(self.delete_wp_btn)
+        wp_layout.addLayout(wp_btn_row)
         self.restore_wp_btn = QPushButton("Restore selected archive…")
         self.restore_wp_btn.setStyleSheet("QPushButton { color: #d9534f; }")
         self.restore_wp_btn.clicked.connect(self._restore_wp)
@@ -118,11 +168,11 @@ class BackupsPage(QWidget):
         activity_layout.addWidget(self.activity_view)
         layout.addWidget(activity_box)
 
-        log_label = QLabel("Restore output:")
+        log_label = QLabel("Restore / reset output:")
         layout.addWidget(log_label)
         self.log_panel = LogPanel(show_stop_button=False)
         self.log_panel.setMinimumHeight(140)
-        self.log_panel.finished.connect(self._on_restore_finished)
+        self.log_panel.finished.connect(self._on_action_finished)
         layout.addWidget(self.log_panel, stretch=1)
 
         self.rebuild_targets()
@@ -227,8 +277,99 @@ class BackupsPage(QWidget):
             return
         self.log_panel.run(argv, cwd)
 
-    def _on_restore_finished(self, _exit_code: int) -> None:
-        # Picks up restore_db.sh's new db_restore log entry (and re-checks
-        # backup_service is still reachable) without a separate manual
-        # Refresh click.
+    def _label(self, table: _BackupTable) -> None:
+        remote = self._current_remote()
+        selected = table.selected_file()
+        if selected is None:
+            return
+        text, ok = QInputDialog.getText(
+            self, "Label backup", f"Label for {selected.filename}\n(leave blank to clear):",
+            text=selected.label or "",
+        )
+        if not ok:
+            return
+        try:
+            set_label(remote, selected.filename, text)
+        except BackupCtlError as e:
+            QMessageBox.warning(self, "Label failed", str(e))
+            return
+        self.refresh()
+
+    def _delete(self, table: _BackupTable) -> None:
+        remote = self._current_remote()
+        selected = table.selected_file()
+        if selected is None:
+            return
+        reply = QMessageBox.warning(
+            self, "Confirm delete",
+            f"This permanently deletes the backup file:\n\n{selected.filename}\n\n"
+            "This does not affect the live production database/files -- only the "
+            "backup copy itself. This cannot be undone. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            delete_backup(remote, selected.filename)
+        except BackupCtlError as e:
+            QMessageBox.warning(self, "Delete failed", str(e))
+            return
+        self.refresh()
+
+    def _export(self, table: _BackupTable) -> None:
+        remote = self._current_remote()
+        selected = table.selected_file()
+        if selected is None:
+            return
+        dest, _ = QFileDialog.getSaveFileName(self, "Export backup to…", selected.filename)
+        if not dest:
+            return
+        try:
+            export_backup(remote, selected.filename, dest)
+        except BackupCtlError as e:
+            QMessageBox.warning(self, "Export failed", str(e))
+            return
+        QMessageBox.information(self, "Exported", f"Saved {selected.filename} to:\n{dest}")
+
+    def _import(self, kind: str) -> None:
+        remote = self._current_remote()
+        name_filter = "DB dumps (*.sql.gz)" if kind == "db" else "WP archives (*.tar.gz)"
+        src, _ = QFileDialog.getOpenFileName(self, "Import backup…", "", name_filter)
+        if not src:
+            return
+        try:
+            imported_name = import_backup(remote, src)
+        except BackupCtlError as e:
+            QMessageBox.warning(self, "Import failed", str(e))
+            return
+        self.refresh()
+        QMessageBox.information(self, "Imported", f"Imported as {imported_name}")
+
+    def _reseed(self) -> None:
+        target = self._current_target()
+        if target is None:
+            return
+        reply = QMessageBox.warning(
+            self, "Confirm demo store reset",
+            f"This wipes and rebuilds the ENTIRE live production database on {target.label} "
+            "(WordPress, WooCommerce, Elementor, every product/page/order) from a clean "
+            "seed -- everything currently there, including anything an attacker has done, "
+            "will be lost. This cannot be undone. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            argv, cwd = reseed_command(target.remote, force=True)
+        except BackupCtlError as e:
+            QMessageBox.warning(self, "Reset failed", str(e))
+            return
+        self.log_panel.run(argv, cwd)
+
+    def _on_action_finished(self, _exit_code: int) -> None:
+        # Picks up restore_db.sh's db_restore log entry / the reseed's
+        # effect on the DB (and re-checks backup_service is still
+        # reachable) without a separate manual Refresh click.
         self.refresh()
