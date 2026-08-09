@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import (
     QWizard, QWizardPage,
 )
 
-from core.cert_ctl import CertError, regenerate
 from core.docker_ctl import Target
 from core.env_file import EnvFile, seed_from_example
 from core.env_upload import EnvUploadError, download_env_text, upload_env_text
@@ -24,6 +23,7 @@ from core.paths import (
 from core.state import AppState
 from ui.dependency_banner import DependencyBanner
 from ui.env_editor import EnvEditorWidget
+from ui.page_certs import CertWorker
 from ui.remote_config_widget import RemoteConfigWidget
 
 EDGE_ENV_DEFAULT_KEYS = [
@@ -367,19 +367,58 @@ class CertsPage(TimelineMixin, QWizardPage):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
 
-        btn = QPushButton("Generate all certificates now")
-        btn.clicked.connect(self._generate_all)
-        layout.addWidget(btn)
+        self.generate_btn = QPushButton("Generate all certificates now")
+        self.generate_btn.clicked.connect(self._generate_all)
+        layout.addWidget(self.generate_btn)
+
+        # Run via CertWorker (a QThread -- see ui/page_certs.py, the
+        # standalone Certificates page's own "Regenerate ALL" button,
+        # which already did this correctly) rather than calling
+        # cert_ctl.regenerate() directly here on the UI thread. That was
+        # the actual bug behind "setup gets stuck after clicking Generate
+        # all certificates": regenerate()'s own docstring says as much
+        # ("callers should run this from a background thread") --
+        # rotating the SIEM CA + issuing 5 certs is several openssl
+        # `genpkey`/`req`/`x509` calls in a row, and RSA key generation
+        # can block for a real, noticeable amount of time waiting on
+        # system entropy, freezing the whole wizard window (no repaint,
+        # no input) for the duration -- indistinguishable from a genuine
+        # hang from the user's side, just not one that would ever return.
+        self._queue: list[str] = []
+        self._worker: CertWorker | None = None
+        self._lines: list[str] = []
 
     def _generate_all(self) -> None:
-        lines = []
-        try:
-            for group_id in ["siem-all", "edge-nginx"]:
-                regenerate(group_id, log=lambda msg: lines.append(msg))
-            self.status_label.setText("\n".join(lines) + "\n\nDone.")
-        except CertError as e:
-            self.status_label.setText(f"Failed: {e}")
-            QMessageBox.warning(self, "Certificate generation failed", str(e))
+        self.generate_btn.setEnabled(False)
+        self._lines = []
+        self.status_label.setText("Generating…")
+        self._queue = ["siem-all", "edge-nginx"]
+        self._run_next_in_queue()
+
+    def _run_next_in_queue(self) -> None:
+        if not self._queue:
+            self.status_label.setText("\n".join(self._lines) + "\n\nDone.")
+            self.generate_btn.setEnabled(True)
+            return
+        group_id = self._queue.pop(0)
+        self._worker = CertWorker(group_id)
+        self._worker.line.connect(self._on_line)
+        self._worker.done.connect(self._on_step_done)
+        self._worker.start()
+
+    def _on_line(self, msg: str) -> None:
+        self._lines.append(msg.rstrip("\n"))
+        self.status_label.setText("\n".join(self._lines))
+
+    def _on_step_done(self, success: bool, message: str) -> None:
+        if not success:
+            self._lines.append(f"Failed: {message}")
+            self.status_label.setText("\n".join(self._lines))
+            self.generate_btn.setEnabled(True)
+            self._queue.clear()
+            QMessageBox.warning(self, "Certificate generation failed", message)
+            return
+        self._run_next_in_queue()
 
 
 class FinishPage(TimelineMixin, QWizardPage):
