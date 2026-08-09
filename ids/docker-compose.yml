@@ -355,7 +355,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      # 240s, not 30s: only matters on a genuinely empty volume -- confirmed
+      # live that mysqld's first-ever bootstrap (InnoDB init + SSL cert
+      # generation) can take ~3 minutes on slower disks. Failures during
+      # start_period don't count as "unhealthy", they just don't count as
+      # healthy yet -- so this costs nothing on a warm restart (which
+      # passes on the first check regardless) but without it, `docker
+      # compose up` was flagging this container unhealthy at ~80s
+      # (30s + 5*10s) and aborting the entire dependency chain before
+      # mysqld had actually finished starting.
+      start_period: 240s
 
   # Production WordPress instance (clean, secure)
   production_eshop:
@@ -796,7 +805,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      # See production_database's healthcheck comment above for why 240s.
+      start_period: 240s
 
   # Pool 2 – independent database instance
   honeypot_database_2:
@@ -839,7 +849,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      # See production_database's healthcheck comment above for why 240s.
+      start_period: 240s
 
   # Pool 3 – independent database instance
   honeypot_database_3:
@@ -882,7 +893,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      # See production_database's healthcheck comment above for why 240s.
+      start_period: 240s
 
   # ---------------------------------------------------------------------------
   # Honeypot WordPress instances (pool 1, 2, 3)
