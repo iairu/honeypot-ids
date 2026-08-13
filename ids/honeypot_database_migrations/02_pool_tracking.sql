@@ -150,10 +150,28 @@ CREATE TABLE IF NOT EXISTS `honeypot_pool_events` (
 -- ============================================
 -- Mark this pool tracking migration as installed
 -- (reuses the honeypot marker pattern from migration 01)
+--
+-- Guarded (unlike migration 01's own wp_options touches): this migration
+-- runs BEFORE honeypot_db_seed_N's `wp core install` (see that service's
+-- depends_on comment in docker-compose.yml), so wp_options does not exist
+-- yet on a freshly-provisioned pool -- confirmed live, this INSERT failed
+-- with "Table ... wp_options doesn't exist" on every first-time run.
+-- Everything above this point (CREATE TABLE IF NOT EXISTS / INSERT ...
+-- ON DUPLICATE KEY) is already safe to fail on and doesn't need this same
+-- treatment. Marker just doesn't get set on that first run; the next
+-- honeypot_db_migration run (after wp_options exists) sets it then.
 -- ============================================
-INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`) VALUES
-    ('_honeypot_pool_migration_02', NOW(), 'no')
-ON DUPLICATE KEY UPDATE `option_value` = VALUES(`option_value`);
+SET @wp_options_exists = (
+    SELECT COUNT(*) FROM `information_schema`.`tables`
+    WHERE `table_schema` = DATABASE() AND `table_name` = 'wp_options'
+);
+SET @marker_sql = IF(@wp_options_exists > 0,
+    'INSERT INTO `wp_options` (`option_name`, `option_value`, `autoload`) VALUES (\'_honeypot_pool_migration_02\', NOW(), \'no\') ON DUPLICATE KEY UPDATE `option_value` = VALUES(`option_value`)',
+    'SELECT ''wp_options does not exist yet -- skipping migration marker (will be set on a later re-run, after honeypot_db_seed_N has run)'' AS status'
+);
+PREPARE marker_stmt FROM @marker_sql;
+EXECUTE marker_stmt;
+DEALLOCATE PREPARE marker_stmt;
 
 -- ============================================
 -- Migration Complete

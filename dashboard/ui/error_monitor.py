@@ -19,6 +19,18 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 # suffix docker compose appends is unambiguous to strip back off.
 _PREFIX_RE = re.compile(r"^(?P<service>[A-Za-z0-9_.]+)-\d+\s*\|\s?(?P<message>.*)$")
 
+# NOT a plain \b word-boundary match -- confirmed live that Vector's own
+# routine startup log line ("component_id=nginx_error_in ... include=
+# [\"/var/log/nginx/error.log\"]") still flags on this, since \b only
+# excludes adjacent \w characters (letters/digits/underscore): that rules
+# out "nginx_error_in" (joined by "_") but NOT "error.log" (joined by "."),
+# so the same line still matches via its second "error". Also excluding
+# "." and "/" (and "-") from what counts as a boundary rules out both --
+# file paths/extensions/identifiers built from any of these don't count,
+# while a genuine "[error]"/"ERROR"/"Error:" token (surrounded by
+# whitespace/punctuation outside this set) still does.
+_ERROR_RE = re.compile(r"(?<![\w./-])error(?![\w./-])", re.IGNORECASE)
+
 
 class ErrorLogMonitor(QObject):
     counts_changed = pyqtSignal()
@@ -64,7 +76,7 @@ class ErrorLogMonitor(QObject):
             m = _PREFIX_RE.match(plain)
             if not m:
                 continue
-            if "error" in m.group("message").lower():
+            if _ERROR_RE.search(m.group("message")):
                 key = (target_key, m.group("service"))
                 self._counts[key] = self._counts.get(key, 0) + 1
                 changed = True

@@ -178,8 +178,51 @@ services:
       - MYSQL_PASSWORD_POOL_3=${MYSQL_PASSWORD_POOL_3}
     command: |
       bash -c "
-      echo 'Waiting for all honeypot pool databases to settle...'
-      sleep 5
+      # -----------------------------------------------------------------------
+      # Helper: block until a host's MySQL port actually accepts a TCP
+      # connection, not just until Docker reports its healthcheck as
+      # healthy -- confirmed live that right after init_setup's tar copy of
+      # a large data directory, mysqld can still be mid crash-recovery/
+      # InnoDB startup for a few seconds after \`mysqladmin ping\` (the
+      # healthcheck) starts succeeding, especially under the extra load of
+      # multiple pools starting at once. This replaces a blind 'sleep 5',
+      # which was too short under that load and produced 'ERROR 2003: Can't
+      # connect to MySQL server ... (111)' (errno 111 = ECONNREFUSED)
+      # bursts below.
+      #
+      # Deliberately a raw TCP probe (bash's /dev/tcp), NOT a MySQL auth
+      # check (e.g. \`mysql -e 'SELECT 1'\`) -- pool 2/3 may already have had
+      # their password rotated to their pool-specific value by a PRIOR run
+      # of set_pool_password() below (rotation is persisted in the pool's
+      # own datadir), in which case the still-shared \$$MYSQL_PASSWORD this
+      # runs with genuinely stops authenticating there even though the
+      # server is fully up -- confirmed live this produced a false
+      # 'not accepting connections' report using an auth-based check.
+      # Whether the currently-valid password is the shared or pool-specific
+      # one is exactly what set_pool_password() below already figures out;
+      # this helper only needs to know the TCP port is actually listening.
+      # -----------------------------------------------------------------------
+      wait_for_db() {
+        HOST=\$$1
+        TRIES=0
+        MAX_TRIES=30
+        until timeout 2 bash -c \"echo > /dev/tcp/\$$HOST/3306\" 2>/dev/null; do
+          TRIES=\$$((TRIES + 1))
+          if [ \"\$$TRIES\" -ge \"\$$MAX_TRIES\" ]; then
+            echo \"  WARNING: \$$HOST:3306 still not accepting TCP connections after \$$((MAX_TRIES * 2))s -- proceeding anyway\"
+            return 1
+          fi
+          sleep 2
+        done
+        if [ \"\$$TRIES\" -gt 0 ]; then
+          echo \"  \$$HOST:3306 is accepting connections (after \$$((TRIES * 2))s)\"
+        fi
+      }
+
+      echo 'Waiting for all honeypot pool databases to actually accept connections...'
+      wait_for_db honeypot_database_1
+      wait_for_db honeypot_database_2
+      wait_for_db honeypot_database_3
 
       # -----------------------------------------------------------------------
       # Helper: rotate a pool's DB user password to its own pool-specific
@@ -217,9 +260,19 @@ services:
       # Helper: apply all migrations to a single database host. Each pool has
       # its own DB password (see set_pool_password above), so the password to
       # use is passed in per call, not read from a single shared MYSQL_PASSWORD.
-      # Exits with status 1 if any migration fails so Docker marks the service
-      # as failed and dependent services (honeypot_eshop_N) do not start.
+      # Sets MIGRATION_FAILED=1 if any migration OTHER than
+      # 01_clean-honeypot-data.sql fails, so the script exits 1 at the end
+      # and Docker marks the service as failed (dependent services --
+      # honeypot_eshop_N -- then never start on an incomplete schema).
+      # 01_clean-honeypot-data.sql's own header already documents its
+      # DELETEs as expected to fail with 'table doesn't exist' on a
+      # freshly-copied pool -- that pool's wp_* tables don't exist yet at
+      # this point (honeypot_db_seed_N's \`wp core install\` runs AFTER this
+      # service, see its depends_on comment below), so this is the ONE
+      # migration file that's genuinely best-effort, not a real failure.
       # -----------------------------------------------------------------------
+      MIGRATION_FAILED=0
+
       apply_migrations() {
         HOST=\$$1
         PASS=\$$2
@@ -230,11 +283,14 @@ services:
           for migration in \$$(ls /migrations/*.sql | sort); do
             if [ -f \"\$$migration\" ]; then
               echo \"  Applying: \$$migration\"
-              mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$PASS\" \"\$$MYSQL_DATABASE\" --force < \"\$$migration\"
-              if [ \$$? -eq 0 ]; then
+              if [ \"\$$(basename \"\$$migration\")\" = '01_clean-honeypot-data.sql' ]; then
+                mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$PASS\" \"\$$MYSQL_DATABASE\" --force < \"\$$migration\" 2>/dev/null
+                echo \"  [OK] \$$migration applied to \$$HOST (best-effort -- table-not-found errors here are expected on a fresh pool, silenced)\"
+              elif mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$PASS\" \"\$$MYSQL_DATABASE\" --force < \"\$$migration\"; then
                 echo \"  [OK] \$$migration applied to \$$HOST\"
               else
-                echo \"  [SKIP] \$$migration failed on \$$HOST (continuing)\"
+                echo \"  [FAILED] \$$migration failed on \$$HOST\"
+                MIGRATION_FAILED=1
               fi
             fi
           done
@@ -245,11 +301,15 @@ services:
       }
 
       # Apply to every pool database in turn, each with its own password.
-      # Failures are fatal so that a honeypot pool is never started with
-      # incomplete schema (which would expose real production data).
       apply_migrations honeypot_database_1 \"\$$MYSQL_PASSWORD\"
       apply_migrations honeypot_database_2 \"\$$MYSQL_PASSWORD_POOL_2\"
       apply_migrations honeypot_database_3 \"\$$MYSQL_PASSWORD_POOL_3\"
+
+      if [ \"\$$MIGRATION_FAILED\" = '1' ]; then
+        echo ''
+        echo 'FATAL: one or more honeypot pool database migrations failed -- see [FAILED] lines above.'
+        exit 1
+      fi
 
       echo ''
       echo 'All honeypot pool database migrations completed successfully.'

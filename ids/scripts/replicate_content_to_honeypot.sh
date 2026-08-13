@@ -120,9 +120,17 @@ prod_mysql() {
 }
 
 prod_mysqldump() {
+    # --no-tablespaces: without it, mysqldump also tries to dump tablespace
+    # metadata up front, which needs the PROCESS privilege -- production_user
+    # doesn't have (and doesn't need) it for anything else this script does.
+    # Confirmed live: every cycle was failing with "Access denied; you need
+    # (at least one of) the PROCESS privilege(s) ... when trying to dump
+    # tablespaces" before this, immediately aborting prod_mysqldump() with no
+    # actual table data ever dumped.
     mysqldump -h "$PROD_HOST" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" \
         --single-transaction --no-create-info --skip-add-drop-table \
-        --skip-triggers --skip-add-locks --skip-comments --compact "$@"
+        --skip-triggers --skip-add-locks --skip-comments --compact \
+        --no-tablespaces "$@"
 }
 
 # ---------------------------------------------------------------------------
