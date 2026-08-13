@@ -88,6 +88,17 @@ setup wizard…** without losing existing values.
   entry text is kept short (full context in a tooltip where needed) since
   a single overly long entry would otherwise put a floor under how narrow
   the legend, and the window, could ever get.
+  Right below the legend, one live-ticking **uptime** label each for
+  "ids" and "siem" (local + remote targets combined into one shared
+  value per project, not one per target) — computed from the earliest
+  start time among that project's currently-running containers, ticking
+  up every second rather than only refreshing once per poll.
+  A poll that transiently comes back with zero containers for a target
+  (e.g. `docker compose ps` racing an in-flight Start/Restart) no longer
+  immediately flickers that target's whole group to "(no containers
+  found)" — it keeps showing the last-known containers for up to 2
+  consecutive empty polls before actually redrawing as empty, since a
+  genuinely-stopped target stays empty past that anyway.
   Two small icons sit directly on every node, no click-through required:
   top-left **⬇** exports that container's logs to a file under
   `dashboard/logs/` (prompts for a line count, 0 = the entire log), and

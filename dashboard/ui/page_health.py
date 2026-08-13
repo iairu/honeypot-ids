@@ -6,8 +6,10 @@ via export_logs_requested."""
 from __future__ import annotations
 
 import html
+import re
+from datetime import datetime, timedelta, timezone
 
-from PyQt6.QtCore import QProcess, QUrl, Qt
+from PyQt6.QtCore import QProcess, QTimer, QUrl, Qt
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QGroupBox, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton,
@@ -15,6 +17,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.content_sync_status import parse_content_sync_log
+from core.docker_ctl import PROJECT_LABELS
 from core.shell_ctl import build_shell_command
 from core.web_links import build_url, web_ui_for
 from ui.error_monitor import ErrorLogMonitor, is_error_log_line
@@ -39,6 +42,45 @@ _POOL_STATUS_COLORS = {
     "complete": "#5cb85c",
     "failed": "#d9534f",
 }
+
+# How many consecutive polls a target is allowed to come back with zero
+# containers before its group is actually redrawn as empty -- see
+# HealthPage._debounce_empty().
+_EMPTY_GRACE_POLLS = 2
+
+# `docker compose ps --format json`'s own CreatedAt field is Go's default
+# time.Time String() format, e.g. "2026-08-13 18:44:49 +0200 CEST" -- only
+# the date/time/UTC-offset prefix is parsed; the trailing zone
+# abbreviation ("CEST") is redundant once the numeric offset is known, and
+# Python's %Z can't reliably parse arbitrary abbreviations for strptime
+# anyway.
+_CREATED_AT_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) ([+-]\d{4})")
+
+
+def _parse_created_at(value: str) -> datetime | None:
+    if not value:
+        return None
+    m = _CREATED_AT_RE.match(value)
+    if not m:
+        return None
+    try:
+        return datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M:%S %z")
+    except ValueError:
+        return None
+
+
+def _format_duration(delta: timedelta) -> str:
+    total = max(int(delta.total_seconds()), 0)
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h {minutes}m"
+    if hours:
+        return f"{hours}h {minutes}m {seconds}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
 
 
 class LegendWidget(QWidget):
@@ -119,10 +161,36 @@ class HealthPage(QWidget):
         self._get_targets = get_targets
         self._last_results: dict[str, list[dict]] = {}
         self._targets_by_key: dict[str, object] = {}
+        # How many consecutive polls in a row a target has come back empty
+        # -- see _debounce_empty().
+        self._empty_streak: dict[str, int] = {}
+        # project ("edge"/"siem") -> earliest CreatedAt among that
+        # project's currently-running containers, across local+remote
+        # targets combined -- see _update_uptimes()/_refresh_uptime_labels().
+        self._project_started: dict[str, datetime] = {}
 
         layout = QVBoxLayout(self)
 
         layout.addWidget(LegendWidget())
+
+        uptime_row = QHBoxLayout()
+        self._uptime_labels: dict[str, QLabel] = {}
+        for project in ("edge", "siem"):
+            lbl = QLabel(f"{PROJECT_LABELS[project]} uptime: —")
+            lbl.setStyleSheet("color: #888888;")
+            self._uptime_labels[project] = lbl
+            uptime_row.addWidget(lbl)
+            uptime_row.addSpacing(24)
+        uptime_row.addStretch()
+        layout.addLayout(uptime_row)
+
+        # Ticks every second so the displayed uptime keeps counting up
+        # smoothly between polls, not just once per poll interval -- the
+        # underlying start times themselves only change on a real poll
+        # (_update_uptimes(), called from apply_status()).
+        self._uptime_timer = QTimer(self)
+        self._uptime_timer.timeout.connect(self._refresh_uptime_labels)
+        self._uptime_timer.start(1000)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(splitter, stretch=1)
@@ -203,13 +271,71 @@ class HealthPage(QWidget):
         self._log_exporter = LogExporter(self)
 
     def apply_status(self, results: dict[str, list[dict]]) -> None:
-        self._last_results = results
         targets = self._get_targets()
         self._targets_by_key = {t.key: t for t in targets}
+        results = self._debounce_empty(results, targets)
+        self._last_results = results
         self.diagram.rebuild(targets, results)
         if self._selected:
             self._refresh_detail_label()
         self._update_restart_progress()
+        self._update_uptimes(targets, results)
+
+    def _debounce_empty(
+        self, results: dict[str, list[dict]], targets,
+    ) -> dict[str, list[dict]]:
+        """A poll that comes back empty for a target that had real
+        containers a moment ago is treated as a transient blip, not
+        "everything's gone", for up to _EMPTY_GRACE_POLLS consecutive
+        polls -- confirmed live that a `docker compose ps` invocation
+        racing an in-flight Start/Restart for the same project (containers
+        passing through the "created" state) can transiently come back
+        empty, which without this wiped the whole diagram group to a
+        "(no containers found)" placeholder for a poll or two before
+        self-correcting -- a confusing flicker for something that was
+        never actually down. A target that's genuinely stopped still
+        correctly goes empty once the grace period elapses."""
+        display: dict[str, list[dict]] = {}
+        for target in targets:
+            containers = results.get(target.key, [])
+            if containers:
+                self._empty_streak[target.key] = 0
+                display[target.key] = containers
+                continue
+            streak = self._empty_streak.get(target.key, 0) + 1
+            self._empty_streak[target.key] = streak
+            prior = self._last_results.get(target.key)
+            display[target.key] = prior if prior and streak <= _EMPTY_GRACE_POLLS else containers
+        return display
+
+    def _update_uptimes(self, targets, results: dict[str, list[dict]]) -> None:
+        """One shared uptime per PROJECT (ids/siem), not per target --
+        local and remote targets for the same project are combined,
+        taking the earliest CreatedAt among all their currently-running
+        containers. Recomputed every real poll; _refresh_uptime_labels()
+        (the 1s QTimer) does the actual continuous counting-up in
+        between."""
+        earliest: dict[str, datetime] = {}
+        for target in targets:
+            for container in results.get(target.key, []):
+                if container.get("State") != "running":
+                    continue
+                created = _parse_created_at(container.get("CreatedAt", ""))
+                if created is None:
+                    continue
+                if target.project not in earliest or created < earliest[target.project]:
+                    earliest[target.project] = created
+        self._project_started = earliest
+        self._refresh_uptime_labels()
+
+    def _refresh_uptime_labels(self) -> None:
+        now = datetime.now(timezone.utc)
+        for project, label in self._uptime_labels.items():
+            started = self._project_started.get(project)
+            if started is None:
+                label.setText(f"{PROJECT_LABELS[project]} uptime: —")
+            else:
+                label.setText(f"{PROJECT_LABELS[project]} uptime: {_format_duration(now - started)}")
 
     def _selected_container(self) -> dict | None:
         if not self._selected:

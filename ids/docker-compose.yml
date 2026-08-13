@@ -415,16 +415,26 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      # 240s, not 30s: only matters on a genuinely empty volume -- confirmed
+      # 420s, not 30s: only matters on a genuinely empty volume -- confirmed
       # live that mysqld's first-ever bootstrap (InnoDB init + SSL cert
-      # generation) can take ~3 minutes on slower disks. Failures during
-      # start_period don't count as "unhealthy", they just don't count as
-      # healthy yet -- so this costs nothing on a warm restart (which
-      # passes on the first check regardless) but without it, `docker
-      # compose up` was flagging this container unhealthy at ~80s
-      # (30s + 5*10s) and aborting the entire dependency chain before
-      # mysqld had actually finished starting.
-      start_period: 240s
+      # generation) can take ~90s for ONE database in isolation, but this
+      # container never actually starts alone: a purge + `docker compose
+      # up` always bootstraps all 4 databases (this one + all 3 honeypot
+      # pools) from scratch AT THE SAME TIME, and confirmed live that the
+      # resulting I/O contention is severe enough to matter, not just
+      # theoretical -- InnoDB's own page_cleaner logged "1000ms intended
+      # loop took 40733ms" during a real 4-way-concurrent fresh init.
+      # 240s was already one bump up from an original 30s for the
+      # single-instance case (see the old note this replaced); confirmed
+      # live even 240s wasn't always enough for the real 4-way-concurrent
+      # case -- `docker compose up` gave up calling this container
+      # "unhealthy" and aborted the whole dependency chain (every
+      # container downstream of it left stuck in `created`, never
+      # started) while it was still genuinely mid-bootstrap, not actually
+      # broken. Failures during start_period don't count as "unhealthy",
+      # they just don't count as healthy yet -- so this costs nothing on
+      # a warm restart (which passes on the first check regardless).
+      start_period: 420s
 
   # Production WordPress instance (clean, secure)
   production_eshop:
@@ -865,8 +875,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      # See production_database's healthcheck comment above for why 240s.
-      start_period: 240s
+      # See production_database's healthcheck comment above for why 420s.
+      start_period: 420s
 
   # Pool 2 – independent database instance
   honeypot_database_2:
@@ -909,8 +919,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      # See production_database's healthcheck comment above for why 240s.
-      start_period: 240s
+      # See production_database's healthcheck comment above for why 420s.
+      start_period: 420s
 
   # Pool 3 – independent database instance
   honeypot_database_3:
@@ -953,8 +963,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-      # See production_database's healthcheck comment above for why 240s.
-      start_period: 240s
+      # See production_database's healthcheck comment above for why 420s.
+      start_period: 420s
 
   # ---------------------------------------------------------------------------
   # Honeypot WordPress instances (pool 1, 2, 3)
