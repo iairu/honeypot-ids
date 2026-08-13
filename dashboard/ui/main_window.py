@@ -18,6 +18,7 @@ from core.docker_ctl import Target, all_targets
 from core.paths import DASHBOARD_DIR
 from core.state import AppState
 from ui.dependency_banner import DependencyBanner
+from ui.error_monitor import ErrorLogMonitor
 from ui.health_diagram import classify
 from ui.page_backups import BackupsPage
 from ui.page_certs import CertsPage
@@ -114,8 +115,13 @@ class MainWindow(QMainWindow):
         self.security_feed = SecurityEventFeed(state, self)
         self.security_feed.start(self._edge_target())
 
-        self.services_page = ServicesPage(self._get_targets)
-        self.health_page = HealthPage(self._get_targets)
+        # Shared across Services (feeds it, from every target's always-
+        # running combined log tail) and Health (reads it, to badge nodes)
+        # -- see ui/error_monitor.py.
+        self.error_monitor = ErrorLogMonitor(self)
+
+        self.services_page = ServicesPage(self._get_targets, self.error_monitor)
+        self.health_page = HealthPage(self._get_targets, self.error_monitor)
         self.certs_page = CertsPage()
         self.redis_page = RedisPage(state)
         self.backups_page = BackupsPage(state)

@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.docker_ctl import PROJECT_LABELS, Target
+from ui.error_monitor import ErrorLogMonitor
 from ui.health_diagram import is_problem, is_ready
 from ui.log_export import LogExporter
 from ui.process_runner import LogPanel
@@ -66,9 +67,10 @@ def _progress_counts(containers: list[dict]) -> tuple[int, int, bool]:
 
 
 class TargetPanel(QGroupBox):
-    def __init__(self, target: Target, parent=None):
+    def __init__(self, target: Target, error_monitor: ErrorLogMonitor | None = None, parent=None):
         super().__init__(target.label, parent)
         self.target = target
+        self._error_monitor = error_monitor
         # Whether the LogPanel's current process is a mutating compose
         # command (up/down/restart) vs. the harmless auto-tail (logs -f) --
         # used to warn before quitting mid-operation without nagging the
@@ -138,6 +140,8 @@ class TargetPanel(QGroupBox):
         self.log_panel = LogPanel(show_stop_button=False, reload_action=self._reload_logs)
         self.log_panel.setMinimumHeight(160)
         self.log_panel.finished.connect(self._on_log_finished)
+        if self._error_monitor is not None:
+            self.log_panel.line_received.connect(self._on_log_line)
         layout.addWidget(self.log_panel)
 
         # Auto-show logs immediately rather than waiting for a button click
@@ -189,8 +193,17 @@ class TargetPanel(QGroupBox):
 
     def _run(self, *compose_args: str, mutating: bool = True) -> None:
         self._mutating_action = mutating
+        # A fresh `logs -f` tail replays its own `--tail=50` scrollback --
+        # reset this target's error counts so that scrollback isn't
+        # double-counted on top of whatever it already contributed the
+        # last time this same tail started (see ErrorLogMonitor.reset()).
+        if compose_args and compose_args[0] == "logs" and self._error_monitor is not None:
+            self._error_monitor.reset(self.target.key)
         argv, cwd = self.target.build(*compose_args)
         self.log_panel.run(argv, cwd)
+
+    def _on_log_line(self, text: str) -> None:
+        self._error_monitor.process_chunk(self.target.key, text)
 
     def _on_log_finished(self, _exit_code: int) -> None:
         # `docker compose up -d` (and restart/down/down -v) exit as soon as
@@ -249,9 +262,10 @@ class TargetPanel(QGroupBox):
 
 
 class ServicesPage(QWidget):
-    def __init__(self, get_targets, parent=None):
+    def __init__(self, get_targets, error_monitor: ErrorLogMonitor | None = None, parent=None):
         super().__init__(parent)
         self._get_targets = get_targets
+        self._error_monitor = error_monitor
         self.panels: dict[str, TargetPanel] = {}
         self._tab_view = True
 
@@ -298,7 +312,7 @@ class ServicesPage(QWidget):
         self.panels.clear()
 
         for target in self._get_targets():
-            self.panels[target.key] = TargetPanel(target)
+            self.panels[target.key] = TargetPanel(target, self._error_monitor)
 
         self._populate_current_view()
 

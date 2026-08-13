@@ -80,7 +80,14 @@ setup wizard…** without losing existing values.
   `dashboard/logs/` (prompts for a line count, 0 = the entire log), and
   top-right **↗** (shown only on nodes with a web UI — Kibana,
   Elasticsearch, `reverse_proxy`, and every eshop container, since nginx is
-  their only reachable entrypoint) opens it in your browser directly.
+  their only reachable entrypoint) opens it in your browser directly. A
+  bottom-right red **"!N"** badge appears automatically the moment any log
+  line for that service (from the Services page's always-running combined
+  log tail, so this works even while you're on a different page) contains
+  the word "error", case-insensitive — N is a running count, reset
+  whenever that target's log tail restarts (Start/Restart/Stop/Purge, or
+  just reopening the Services page tab) so it doesn't recount the same
+  `--tail=50` scrollback forever. Hover a node for the exact count.
   Clicking a node also immediately starts live-tailing its logs in the
   detail panel — no separate "View logs" click needed (the button's still
   there to re-trigger it manually if you want). Detail panel: **Restart**

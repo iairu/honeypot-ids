@@ -6,7 +6,7 @@ edge Vector -> SIEM Vector aggregator -> Elasticsearch -> Kibana, etc.).
 from __future__ import annotations
 
 from PyQt6.QtCore import QRectF, QUrl, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QDesktopServices, QFont, QPainter, QPen
+from PyQt6.QtGui import QBrush, QColor, QDesktopServices, QFont, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import (
     QGraphicsLineItem, QGraphicsObject, QGraphicsScene,
     QGraphicsSimpleTextItem, QGraphicsView,
@@ -14,15 +14,26 @@ from PyQt6.QtWidgets import (
 
 from core.web_links import build_url, web_ui_for
 from ui import theme
+from ui.error_monitor import ErrorLogMonitor
 
 NODE_W, NODE_H = 150, 44
 WEB_UI_ICON_SIZE = 16
 WEB_UI_ICON_MARGIN = 3
 EXPORT_ICON_SIZE = 16
 EXPORT_ICON_MARGIN = 3
+ERROR_BADGE_MARGIN = 3
+ERROR_BADGE_HEIGHT = 14
+ERROR_BADGE_COLOR = QColor("#d9302c")
 COL_GAP, ROW_GAP = 24, 18
 GROUP_PADDING = 30
 GROUP_GAP_Y = 60
+
+
+def _error_badge_font() -> QFont:
+    font = QFont()
+    font.setPointSize(8)
+    font.setBold(True)
+    return font
 
 # Canvas background / group title / group border -- unlike STATUS_COLORS
 # (self-contained, saturated node fills with white text, readable on either
@@ -153,6 +164,7 @@ class ServiceNode(QGraphicsObject):
         self._status = "down"
         self._detail = ""
         self._selected = False
+        self._error_count = 0
         self.web_ui_url = build_url(project, service, host)
         self._web_ui_label = web_ui_for(project, service).label if self.web_ui_url else None
 
@@ -171,15 +183,46 @@ class ServiceNode(QGraphicsObject):
             EXPORT_ICON_SIZE, EXPORT_ICON_SIZE,
         )
 
+    def _error_badge_text(self) -> str:
+        return f"!{self._error_count}"
+
+    def _error_badge_rect(self) -> QRectF:
+        # Bottom-right corner -- top-left (export) and top-right (web UI,
+        # when present) are already spoken for. Width follows the digit
+        # count via QFontMetrics rather than a fixed size, so a node that's
+        # been up a long time and accumulated a 3+ digit count doesn't get
+        # its number clipped.
+        fm = QFontMetrics(_error_badge_font())
+        w = fm.horizontalAdvance(self._error_badge_text()) + 8
+        return QRectF(
+            NODE_W - w - ERROR_BADGE_MARGIN, NODE_H - ERROR_BADGE_HEIGHT - ERROR_BADGE_MARGIN,
+            w, ERROR_BADGE_HEIGHT,
+        )
+
     def set_status(self, status: str, detail: str) -> None:
         self._status = status
         self._detail = detail
-        tooltip = f"{self.service}\n{detail}"
-        if self._web_ui_label:
+        self._refresh_tooltip()
+        self.update()
+
+    def set_error_count(self, count: int) -> None:
+        if count == self._error_count:
+            return
+        self._error_count = count
+        self._refresh_tooltip()
+        self.update()
+
+    def _refresh_tooltip(self) -> None:
+        tooltip = f"{self.service}\n{self._detail}"
+        if self.web_ui_url:
             tooltip += f"\n\n↗ top-right icon: {self._web_ui_label}"
         tooltip += "\n⬇ top-left icon: export logs to a file"
+        if self._error_count:
+            tooltip += (
+                f"\n❗ bottom-right badge: {self._error_count} log line"
+                f"{'s' if self._error_count != 1 else ''} containing \"error\" seen"
+            )
         self.setToolTip(tooltip)
-        self.update()
 
     def set_selected_look(self, selected: bool) -> None:
         self._selected = selected
@@ -225,6 +268,15 @@ class ServiceNode(QGraphicsObject):
         painter.setFont(icon_font)
         painter.drawText(export_rect, Qt.AlignmentFlag.AlignCenter, "⬇")
 
+        if self._error_count > 0:
+            badge_rect = self._error_badge_rect()
+            painter.setPen(QPen(QColor("#ffffff")))
+            painter.setBrush(QBrush(ERROR_BADGE_COLOR))
+            painter.drawRoundedRect(badge_rect, 4, 4)
+            painter.setPen(QPen(QColor("#ffffff")))
+            painter.setFont(_error_badge_font())
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, self._error_badge_text())
+
     def mousePressEvent(self, event) -> None:
         if self.web_ui_url and self._web_ui_icon_rect().contains(event.pos()):
             QDesktopServices.openUrl(QUrl(self.web_ui_url))
@@ -240,7 +292,7 @@ class HealthDiagram(QGraphicsView):
     node_selected = pyqtSignal(str, str)  # target_key, service
     export_logs_requested = pyqtSignal(str, str)  # target_key, service
 
-    def __init__(self, parent=None):
+    def __init__(self, error_monitor: ErrorLogMonitor | None = None, parent=None):
         super().__init__(parent)
         self.scene_ = QGraphicsScene(self)
         self.setScene(self.scene_)
@@ -250,6 +302,13 @@ class HealthDiagram(QGraphicsView):
         self.nodes: dict[tuple[str, str], ServiceNode] = {}
         self._selected_key: tuple[str, str] | None = None
         self._last_rebuild_args: tuple | None = None
+        self._error_monitor = error_monitor
+        if error_monitor is not None:
+            # Lines flow in continuously (any target's auto-tailing log
+            # panel, not just this page) -- a lightweight per-node badge
+            # update rather than a full rebuild() (which tears down and
+            # re-lays-out the entire scene) on every single matching line.
+            error_monitor.counts_changed.connect(self.refresh_error_counts)
 
         self._apply_theme_colors()
         theme.on_change(self._on_theme_changed)
@@ -305,6 +364,8 @@ class HealthDiagram(QGraphicsView):
                 container = by_service.get(service)
                 status = classify(container)
                 node.set_status(status, status_detail(container))
+                if self._error_monitor is not None:
+                    node.set_error_count(self._error_monitor.count_for(target.key, service))
                 node.clicked.connect(self._on_node_clicked)
                 node.export_logs_clicked.connect(self.export_logs_requested)
                 self.scene_.addItem(node)
@@ -344,6 +405,14 @@ class HealthDiagram(QGraphicsView):
         line.setPen(QPen(QColor("#555555"), 1, Qt.PenStyle.DashLine))
         line.setZValue(-5)
         self.scene_.addItem(line)
+
+    def refresh_error_counts(self) -> None:
+        """Updates every existing node's error badge in place, without
+        touching layout/edges -- see the counts_changed connection above."""
+        if self._error_monitor is None:
+            return
+        for (target_key, service), node in self.nodes.items():
+            node.set_error_count(self._error_monitor.count_for(target_key, service))
 
     def _on_node_clicked(self, target_key: str, service: str) -> None:
         if self._selected_key in self.nodes:

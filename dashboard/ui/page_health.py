@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 from core.content_sync_status import parse_content_sync_log
 from core.shell_ctl import build_shell_command
 from core.web_links import build_url, web_ui_for
+from ui.error_monitor import ErrorLogMonitor
 from ui.health_diagram import (
     HealthDiagram, STATUS_COLORS, classify, is_ready, status_detail,
 )
@@ -61,11 +62,19 @@ class LegendWidget(QWidget):
             lbl = QLabel(text)
             layout.addWidget(lbl)
             layout.addSpacing(12)
+
+        error_swatch = QLabel("!3")
+        error_swatch.setStyleSheet(
+            "background-color: #d9302c; color: white; font-weight: bold; "
+            "font-size: 10px; border-radius: 3px; padding: 1px 3px;"
+        )
+        layout.addWidget(error_swatch)
+        layout.addWidget(QLabel("Log line(s) containing \"error\" seen (bottom-right badge)"))
         layout.addStretch()
 
 
 class HealthPage(QWidget):
-    def __init__(self, get_targets, parent=None):
+    def __init__(self, get_targets, error_monitor: ErrorLogMonitor | None = None, parent=None):
         super().__init__(parent)
         self._get_targets = get_targets
         self._last_results: dict[str, list[dict]] = {}
@@ -78,7 +87,7 @@ class HealthPage(QWidget):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(splitter, stretch=1)
 
-        self.diagram = HealthDiagram()
+        self.diagram = HealthDiagram(error_monitor)
         self.diagram.node_selected.connect(self._on_node_selected)
         self.diagram.export_logs_requested.connect(self._export_logs)
         splitter.addWidget(self.diagram)
