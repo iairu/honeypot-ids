@@ -51,6 +51,7 @@ class LegendWidget(QWidget):
             "unhealthy": "Up, unhealthy",
             "exited_ok": "Exited OK (code 0)",
             "exited_bad": "Exited with error",
+            "created": "Created but never started (a prior Start/Restart got interrupted -- click Start again)",
             "down": "Down / not created",
         }
         for key, text in labels.items():

@@ -56,6 +56,7 @@ STATUS_COLORS = {
     "unhealthy": QColor("#d9534f"),      # running but unhealthy
     "exited_ok": QColor("#7d7d7d"),      # exited, code 0 (expected one-shot)
     "exited_bad": QColor("#c9302c"),     # exited, nonzero code
+    "created": QColor("#e0a030"),        # created but never started (see classify())
     "down": QColor("#2b2b2b"),           # not present at all
 }
 
@@ -115,6 +116,17 @@ def classify(container: dict | None) -> str:
         return "running"
     if state == "exited":
         return "exited_ok" if exit_code in ("0", "") else "exited_bad"
+    if state == "created":
+        # `docker compose up` creates every container in the dependency
+        # graph up front, then starts them in order -- if that process
+        # itself gets interrupted partway (closed terminal/app, killed
+        # mid-command), whatever hasn't been started yet is left sitting
+        # here indefinitely; it does NOT self-heal, and confirmed live
+        # this is otherwise visually indistinguishable from "down" (not
+        # created at all), which reads as "nothing's wrong yet, just
+        # hasn't been started on purpose" -- very different from "up got
+        # interrupted, re-run it."
+        return "created"
     return "down"
 
 

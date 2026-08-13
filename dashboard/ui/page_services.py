@@ -41,6 +41,17 @@ def summarize_status(containers: list[dict]) -> tuple[str, str]:
     )
     up = running + exited_ok
 
+    # A container `docker compose up` created but never got around to
+    # starting -- happens if that `up` itself got interrupted partway
+    # through (closed terminal/app, killed mid-command). Doesn't self-heal
+    # and looks identical to a healthy "just hasn't been started yet"
+    # state without calling it out specifically -- confirmed live this is
+    # otherwise easy to mistake for "0/N up" (not started ON PURPOSE)
+    # rather than "up got interrupted, re-run it."
+    created = sum(1 for c in containers if c.get("State") == "created")
+    if created:
+        return f"{up}/{total} up ({created} created but never started -- re-run Start)", "#d9534f"
+
     if unhealthy or exited_bad:
         return f"{up}/{total} up ({unhealthy} unhealthy, {exited_bad} exited with error)", "#d9534f"
     if up == total:

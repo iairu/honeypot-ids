@@ -72,9 +72,15 @@ setup wizard…** without losing existing values.
   (reverse proxy → backends → databases, edge Vector → SIEM Vector
   aggregator → Elasticsearch → Kibana, etc.). Node color = status (see
   the in-app legend: healthy / running-no-healthcheck / unhealthy /
-  exited-ok / exited-with-error / down — a container that exited with code
-  0 counts as "up", not down: run-once-and-exit jobs like `init_setup` and
-  `honeypot_db_migration` finishing cleanly is their expected end state).
+  exited-ok / exited-with-error / **created** / down — a container that
+  exited with code 0 counts as "up", not down: run-once-and-exit jobs like
+  `init_setup` and `honeypot_db_migration` finishing cleanly is their
+  expected end state. **Created** is its own distinct status (amber, not
+  lumped in with "down"): a `docker compose up` that gets interrupted
+  partway through (closed terminal/app, killed mid-command) leaves
+  whatever hasn't started yet sitting there indefinitely — it does not
+  self-heal, and looks identical to a normal "not started yet" state
+  unless called out specifically. Re-running Start clears it.
   Two small icons sit directly on every node, no click-through required:
   top-left **⬇** exports that container's logs to a file under
   `dashboard/logs/` (prompts for a line count, 0 = the entire log), and
