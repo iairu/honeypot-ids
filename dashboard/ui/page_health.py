@@ -8,7 +8,7 @@ from __future__ import annotations
 import html
 
 from PyQt6.QtCore import QProcess, QUrl, Qt
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QGroupBox, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton,
     QSplitter, QVBoxLayout, QWidget,
@@ -18,6 +18,7 @@ from core.content_sync_status import parse_content_sync_log
 from core.shell_ctl import build_shell_command
 from core.web_links import build_url, web_ui_for
 from ui.error_monitor import ErrorLogMonitor, is_error_log_line
+from ui.flow_layout import FlowLayout
 from ui.health_diagram import (
     HealthDiagram, STATUS_COLORS, classify, is_ready, status_detail,
 )
@@ -41,37 +42,75 @@ _POOL_STATUS_COLORS = {
 
 
 class LegendWidget(QWidget):
+    """Status-color key for the diagram below. Uses FlowLayout (not a plain
+    QHBoxLayout) so entries wrap onto additional rows instead of forcing
+    the whole page -- and the window -- wider to fit every entry on one
+    line; confirmed live a QHBoxLayout here just clipped/overflowed at
+    anything narrower than a very wide window."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        flow = FlowLayout(margin=0, h_spacing=16, v_spacing=6)
+        # Kept terse on purpose, matching every other entry's style -- a
+        # widget can never shrink narrower than its layout's reported
+        # minimum size, and FlowLayout's minimum is the width of its
+        # single WIDEST entry (not a sum), so one long sentence here would
+        # silently put a floor under how narrow the whole legend -- and
+        # the window containing it -- could ever actually get, defeating
+        # the point of wrapping at all. Confirmed live: an earlier full-
+        # sentence "created" entry alone forced a ~520px floor. Full
+        # context lives in the tooltip instead.
         labels = {
             "healthy": "Up, healthy",
             "running": "Up (no healthcheck)",
             "unhealthy": "Up, unhealthy",
             "exited_ok": "Exited OK (code 0)",
             "exited_bad": "Exited with error",
-            "created": "Created but never started (a prior Start/Restart got interrupted -- click Start again)",
+            "created": "Created (never started)",
             "down": "Down / not created",
         }
+        tooltips = {
+            "created": "A prior Start/Restart got interrupted partway through -- click Start again.",
+        }
         for key, text in labels.items():
-            color = STATUS_COLORS[key]
-            swatch = QLabel("  ")
-            swatch.setStyleSheet(f"background-color: {color.name()}; border-radius: 3px;")
-            swatch.setFixedSize(16, 16)
-            layout.addWidget(swatch)
-            lbl = QLabel(text)
-            layout.addWidget(lbl)
-            layout.addSpacing(12)
+            flow.addWidget(self._entry(text, swatch_color=STATUS_COLORS[key], tooltip=tooltips.get(key)))
 
-        error_swatch = QLabel("!3")
-        error_swatch.setStyleSheet(
-            "background-color: #d9302c; color: white; font-weight: bold; "
-            "font-size: 10px; border-radius: 3px; padding: 1px 3px;"
-        )
-        layout.addWidget(error_swatch)
-        layout.addWidget(QLabel("Log line(s) containing \"error\" seen (bottom-right badge)"))
-        layout.addStretch()
+        flow.addWidget(self._entry(
+            "Contains \"error\"", badge_text="!3",
+            tooltip="Bottom-right badge on a node: at least one log line for that service contains the word \"error\".",
+        ))
+
+        self.setLayout(flow)
+
+    @staticmethod
+    def _entry(
+        text: str, swatch_color: QColor | None = None, badge_text: str | None = None,
+        tooltip: str | None = None,
+    ) -> QWidget:
+        """One legend item (color swatch or error badge, plus its label)
+        as a single widget -- FlowLayout wraps whole widgets onto a new
+        row, so bundling each swatch with its own label here is what keeps
+        the two from ever being split apart across a wrap."""
+        entry = QWidget()
+        if tooltip:
+            entry.setToolTip(tooltip)
+        row = QHBoxLayout(entry)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(4)
+        if swatch_color is not None:
+            swatch = QLabel("  ")
+            swatch.setStyleSheet(f"background-color: {swatch_color.name()}; border-radius: 3px;")
+            swatch.setFixedSize(16, 16)
+            row.addWidget(swatch)
+        if badge_text is not None:
+            badge = QLabel(badge_text)
+            badge.setStyleSheet(
+                "background-color: #d9302c; color: white; font-weight: bold; "
+                "font-size: 10px; border-radius: 3px; padding: 1px 3px;"
+            )
+            row.addWidget(badge)
+        row.addWidget(QLabel(text))
+        return entry
 
 
 class HealthPage(QWidget):

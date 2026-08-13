@@ -80,7 +80,14 @@ setup wizard…** without losing existing values.
   partway through (closed terminal/app, killed mid-command) leaves
   whatever hasn't started yet sitting there indefinitely — it does not
   self-heal, and looks identical to a normal "not started yet" state
-  unless called out specifically. Re-running Start clears it.
+  unless called out specifically. Re-running Start clears it. The legend
+  itself wraps onto additional rows as the window narrows (`ui/
+  flow_layout.py`'s `FlowLayout`, the same one the Kibana page's bookmark
+  row uses) instead of clipping or forcing the window wider — each
+  swatch+label pair is one atomic entry that always wraps as a unit, and
+  entry text is kept short (full context in a tooltip where needed) since
+  a single overly long entry would otherwise put a floor under how narrow
+  the legend, and the window, could ever get.
   Two small icons sit directly on every node, no click-through required:
   top-left **⬇** exports that container's logs to a file under
   `dashboard/logs/` (prompts for a line count, 0 = the entire log), and
