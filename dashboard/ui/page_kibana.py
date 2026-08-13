@@ -44,12 +44,14 @@ _PROFILE_NAME = "kibana_dashboard"
 
 # (button label, path relative to the Kibana root) -- verified live against
 # this repo's own SIEM stack via `GET /api/saved_objects/_find?type=dashboard`
-# and `type=index-pattern` (2 dashboards, 1 data view "honeypot-*" -- both
-# dashboards and the single data view are all covered here).
+# and `type=index-pattern` (4 dashboards, 1 data view "honeypot-*" -- all
+# dashboards and the single data view are covered here).
 _BOOKMARKS = [
     ("Home", "/app/home"),
     ("Web Traffic & Threat Overview", "/app/dashboards#/view/dashboard-web-threat-overview"),
     ("IDS Alerts (Suricata)", "/app/dashboards#/view/dashboard-ids-alerts"),
+    ("Session Analysis", "/app/dashboards#/view/dashboard-session-analysis"),
+    ("Attack Patterns", "/app/dashboards#/view/dashboard-attack-patterns"),
     ("Discover", "/app/discover"),
 ]
 

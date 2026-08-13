@@ -53,7 +53,12 @@ setup wizard…** without losing existing values.
   automatically goes back to auto-tailing once the command finishes (Start
   uses `up -d`, which exits almost immediately once containers are up —
   without this the panel would just sit showing "process exited with code
-  0" instead of what the containers are actually doing). A single
+  0" instead of what the containers are actually doing). Start/Restart
+  also show a progress bar driven by live container status (not just the
+  compose command's own exit, which returns long before containers are
+  actually healthy) — indeterminate until the next status poll, then
+  N/total ready, red if any container reports unhealthy/exited-with-error,
+  and it hides itself once every container is up. A single
   **Download logs…** button exports that target's whole combined log to a
   file under `dashboard/logs/` (prompts for a line count, 0 = everything).
   *Purge* runs `docker compose down -v` (deletes volumes) and always asks
@@ -78,8 +83,10 @@ setup wizard…** without losing existing values.
   their only reachable entrypoint) opens it in your browser directly.
   Clicking a node also immediately starts live-tailing its logs in the
   detail panel — no separate "View logs" click needed (the button's still
-  there to re-trigger it manually if you want). Detail panel: **Restart**,
-  **View logs**, **Open web UI**, and **Open shell** (launches
+  there to re-trigger it manually if you want). Detail panel: **Restart**
+  (shows the same kind of progress bar as the Services page, tracking this
+  one container back to healthy/running), **View logs**, **Open web UI**,
+  and **Open shell** (launches
   `docker exec -it <container> sh -c 'exec bash || exec sh'` in your
   terminal emulator — over SSH first for remote targets). Every log
   console in the app (Services, Health, Certificates) has **Pause**

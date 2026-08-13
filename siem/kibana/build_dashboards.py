@@ -82,12 +82,19 @@ def _date_histogram_agg(agg_id: str = "2") -> dict:
     }
 
 
-def _terms_agg(field: str, agg_id: str = "2", size: int = 10, schema: str = "segment") -> dict:
+def _terms_agg(field: str, agg_id: str = "2", size: int = 10, schema: str = "segment",
+                order_by: str = "1") -> dict:
     return {
         "id": agg_id, "enabled": True, "type": "terms", "schema": schema,
-        "params": {"field": field, "orderBy": "1", "order": "desc", "size": size,
+        "params": {"field": field, "orderBy": order_by, "order": "desc", "size": size,
                     "otherBucket": False, "otherBucketLabel": "Other", "missingBucket": False},
     }
+
+
+def _metric_agg(agg_type: str, field: str, agg_id: str) -> dict:
+    """A non-count metric (cardinality/max/min/avg), schema=metric -- same
+    shape as _count_metric_agg() but for a real field."""
+    return {"id": agg_id, "enabled": True, "type": agg_type, "schema": "metric", "params": {"field": field}}
 
 
 def _histogram_agg(field: str, interval: int, agg_id: str = "2") -> dict:
@@ -110,6 +117,22 @@ def _histogram_agg(field: str, interval: int, agg_id: str = "2") -> dict:
 # on which fields happen to only exist on the intended type.
 _IDS_Q = 'log_type:"suricata" and event_type:"alert"'
 _WEB_Q = 'log_type:"nginx_security"'
+
+# session_id-bearing nginx_security requests -- the per-request threat-scored
+# traffic each attacker session is made of (§3.5/§6). attacker_sophistication_
+# classified events (nginx_error, parsed by the enrich transform's
+# log_security_event() JSON parsing -- see vector.yaml) carry the same
+# session_id, hoisted to the top level specifically so these two dashboards
+# can correlate on one field name.
+_SESSION_Q = 'log_type:"nginx_security" and session_id:*'
+_SOPHISTICATION_Q = 'log_type:"nginx_error" and security_event_type:"attacker_sophistication_classified"'
+
+# All log_security_event()-sourced events (honeytoken hits, session
+# compromise, CVE pattern matches, high-threat requests, honeypot routing
+# decisions, sophistication classification) -- see init.lua's
+# _G.utils.log_security_event() and the enrich transform's nginx_error
+# parsing block in vector.yaml.
+_ATTACK_Q = 'log_type:"nginx_error" and security_event_type:*'
 
 VISUALIZATIONS = [
     # -- IDS Alerts (Suricata) --------------------------------------------
@@ -147,6 +170,49 @@ VISUALIZATIONS = [
     _viz("viz-web-top-suspicious-ips", "Top IPs Flagged Suspicious", "table",
          [_count_metric_agg(), _terms_agg("remote_addr.keyword", agg_id="2", size=10, schema="bucket")],
          query=f"{_WEB_Q} and suspicious:true"),
+
+    # -- Session Analysis ---------------------------------------------------
+    _viz("viz-session-total-sessions", "Total Distinct Sessions", "metric",
+         [_metric_agg("cardinality", "session_id.keyword", "1")], query=_SESSION_Q),
+    _viz("viz-session-over-time", "Distinct Sessions Active Over Time", "histogram",
+         [_metric_agg("cardinality", "session_id.keyword", "1"), _date_histogram_agg()],
+         query=_SESSION_Q),
+    _viz("viz-session-requests-table", "Requests & Duration per Session", "table",
+         [_count_metric_agg(), _metric_agg("min", "timestamp", "2"), _metric_agg("max", "timestamp", "3"),
+          _terms_agg("session_id.keyword", agg_id="4", size=15, schema="bucket", order_by="1")],
+         query=_SESSION_Q),
+    _viz("viz-session-top-threat", "Top Sessions by Peak Threat Score", "table",
+         [_metric_agg("max", "threat_score", "1"),
+          _terms_agg("session_id.keyword", agg_id="2", size=15, schema="bucket", order_by="1")],
+         query=_SESSION_Q),
+    _viz("viz-session-sophistication-pie", "Sophistication Classifications", "pie",
+         [_count_metric_agg(), _terms_agg("security_event.classification.keyword", size=10)],
+         query=_SOPHISTICATION_Q),
+    _viz("viz-session-sophistication-confidence", "Sophistication Confidence Over Time", "histogram",
+         [_metric_agg("avg", "security_event.confidence", "1"), _date_histogram_agg()],
+         query=_SOPHISTICATION_Q),
+
+    # -- Attack Patterns ------------------------------------------------------
+    _viz("viz-attack-total-events", "Total Security Events", "metric",
+         [_count_metric_agg()], query=_ATTACK_Q),
+    _viz("viz-attack-events-over-time", "Security Events Over Time by Type", "histogram",
+         [_count_metric_agg(), _date_histogram_agg(),
+          _terms_agg("security_event_type.keyword", agg_id="3", size=8, schema="group")],
+         query=_ATTACK_Q),
+    _viz("viz-attack-events-by-type", "Events by Type", "pie",
+         [_count_metric_agg(), _terms_agg("security_event_type.keyword", size=10)], query=_ATTACK_Q),
+    _viz("viz-attack-routing-reasons", "Honeypot Routing Reasons", "pie",
+         [_count_metric_agg(), _terms_agg("security_event.reason.keyword", size=10)],
+         query=f'{_ATTACK_Q} and security_event_type:"routing_to_honeypot"'),
+    _viz("viz-attack-top-cves", "Top CVEs Detected", "table",
+         [_count_metric_agg(), _terms_agg("security_event.cve.keyword", agg_id="2", size=10, schema="bucket")],
+         query=f'{_ATTACK_Q} and security_event_type:"cve_pattern_detected"'),
+    _viz("viz-attack-top-ips", "Top Attacking IPs", "table",
+         [_count_metric_agg(), _terms_agg("remote_addr.keyword", agg_id="2", size=10, schema="bucket")],
+         query=_ATTACK_Q),
+    _viz("viz-attack-honeytoken-types", "Honeytoken Hits by Type", "table",
+         [_count_metric_agg(), _terms_agg("security_event.token_type.keyword", agg_id="2", size=10, schema="bucket")],
+         query=f'{_ATTACK_Q} and security_event_type:"honeytoken_used"'),
 ]
 
 
@@ -213,6 +279,31 @@ DASHBOARDS = [
             ("viz-web-top-uris", 0, 23, 16, 15),
             ("viz-web-top-user-agents", 16, 23, 16, 15),
             ("viz-web-top-suspicious-ips", 32, 23, 16, 15),
+        ],
+    ),
+    _dashboard(
+        "dashboard-session-analysis", "Honeypot: Session Analysis",
+        "Per-session request volume and duration, peak threat scores, and attacker-sophistication classification.",
+        [
+            ("viz-session-total-sessions", 0, 0, 12, 8),
+            ("viz-session-over-time", 12, 0, 36, 8),
+            ("viz-session-requests-table", 0, 8, 24, 15),
+            ("viz-session-top-threat", 24, 8, 24, 15),
+            ("viz-session-sophistication-pie", 0, 23, 16, 15),
+            ("viz-session-sophistication-confidence", 16, 23, 32, 15),
+        ],
+    ),
+    _dashboard(
+        "dashboard-attack-patterns", "Honeypot: Attack Patterns",
+        "log_security_event()-sourced events: honeypot routing reasons, CVE matches, honeytoken hits, top attacking IPs.",
+        [
+            ("viz-attack-total-events", 0, 0, 12, 8),
+            ("viz-attack-events-over-time", 12, 0, 36, 8),
+            ("viz-attack-events-by-type", 0, 8, 16, 15),
+            ("viz-attack-routing-reasons", 16, 8, 16, 15),
+            ("viz-attack-top-cves", 32, 8, 16, 15),
+            ("viz-attack-top-ips", 0, 23, 24, 15),
+            ("viz-attack-honeytoken-types", 24, 23, 24, 15),
         ],
     ),
 ]

@@ -513,13 +513,33 @@ end
 --- @param event_type  string  Short identifier (e.g. "cve_pattern_detected").
 --- @param details     table   Arbitrary key-value context for the event.
 function _G.utils.log_security_event(event_type, details)
+    -- lua-cjson can't tell an empty array from an empty object -- a Lua
+    -- table with zero elements is genuinely ambiguous -- and defaults to
+    -- encoding it as `{}`. Confirmed live: this locks Elasticsearch's
+    -- mapping for that field as `object` from whichever event reaches it
+    -- first, silently dropping every later event whose same field (e.g.
+    -- high_threat_request's/routing_to_honeypot's `cves`, or `patterns`/
+    -- `signals`) actually has real array contents -- the same class of
+    -- mapping-conflict bug the SIEM's vector.yaml already works around for
+    -- Docker labels. Every field this function is ever called with is
+    -- list-shaped when empty (never a genuinely-empty *object*), so
+    -- tagging every empty-table value here to encode as `[]` is safe and
+    -- fixes this at the source instead of downstream in Vector.
+    if details then
+        for _, v in pairs(details) do
+            if type(v) == "table" and next(v) == nil then
+                setmetatable(v, cjson.empty_array_mt)
+            end
+        end
+    end
+
     local log_entry = {
         timestamp = ngx.time(),
         event_type = event_type,
         details = details,
         server_time = os.date("%Y-%m-%d %H:%M:%S")
     }
-    
+
     ngx.log(ngx.WARN, "SECURITY_EVENT: ", cjson.encode(log_entry))
 end
 

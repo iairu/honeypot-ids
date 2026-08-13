@@ -5,11 +5,12 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea,
-    QTabWidget, QVBoxLayout, QWidget,
+    QGroupBox, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton,
+    QScrollArea, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core.docker_ctl import PROJECT_LABELS, Target
+from ui.health_diagram import is_problem, is_ready
 from ui.log_export import LogExporter
 from ui.process_runner import LogPanel
 
@@ -54,6 +55,16 @@ def summarize_status(containers: list[dict]) -> tuple[str, str]:
     return f"0/{total} up", "#888888"
 
 
+def _progress_counts(containers: list[dict]) -> tuple[int, int, bool]:
+    """(ready, total, problem) for the start/restart progress bar, built on
+    the same is_ready()/is_problem() the Health page uses so the notion of
+    "up" agrees everywhere in the app."""
+    total = len(containers)
+    ready = sum(1 for c in containers if is_ready(c))
+    problem = any(is_problem(c) for c in containers)
+    return ready, total, problem
+
+
 class TargetPanel(QGroupBox):
     def __init__(self, target: Target, parent=None):
         super().__init__(target.label, parent)
@@ -66,6 +77,14 @@ class TargetPanel(QGroupBox):
         # _on_log_finished).
         self._mutating_action = False
         self._log_exporter = LogExporter(self)
+        # Whether we're currently tracking containers coming up after a
+        # Start/Restart click, independent of _mutating_action -- `docker
+        # compose up -d`/`restart` themselves return almost immediately,
+        # long before the containers they started are actually healthy, so
+        # this stays true (and the progress bar visible) across that whole
+        # gap, driven by the same status-poll data that feeds status_label.
+        self._starting = False
+        self._start_verb = ""
 
         layout = QVBoxLayout(self)
 
@@ -75,6 +94,11 @@ class TargetPanel(QGroupBox):
         status_row.addWidget(self.status_label)
         status_row.addStretch()
         layout.addLayout(status_row)
+
+        self.progress = QProgressBar()
+        self.progress.setVisible(False)
+        self.progress.setTextVisible(True)
+        layout.addWidget(self.progress)
 
         button_row = QHBoxLayout()
         self.start_btn = QPushButton("Start")
@@ -126,6 +150,39 @@ class TargetPanel(QGroupBox):
         text, color = summarize_status(containers)
         self.status_label.setText(text)
         self.status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+        self._update_progress(containers)
+
+    def _begin_progress(self, verb: str) -> None:
+        self._starting = True
+        self._start_verb = verb
+        # Indeterminate ("busy") until the next status poll actually reports
+        # container counts -- otherwise the bar would have to sit at a
+        # meaningless 0/0 for up to one poll interval right after the click.
+        self.progress.setRange(0, 0)
+        self.progress.setFormat(f"{verb}…")
+        self.progress.setStyleSheet("")
+        self.progress.setVisible(True)
+
+    def _cancel_progress(self) -> None:
+        self._starting = False
+        self.progress.setVisible(False)
+
+    def _update_progress(self, containers: list[dict]) -> None:
+        if not self._starting:
+            return
+        if not containers:
+            return  # stay indeterminate -- nothing reported yet
+        ready, total, problem = _progress_counts(containers)
+        self.progress.setRange(0, max(total, 1))
+        self.progress.setValue(ready)
+        self.progress.setFormat(f"{self._start_verb}… {ready}/{total} ready (%p%)")
+        self.progress.setStyleSheet(
+            "QProgressBar::chunk { background-color: #d9534f; }" if problem
+            else "QProgressBar::chunk { background-color: #5cb85c; }"
+        )
+        if ready >= total:
+            self._starting = False
+            self.progress.setVisible(False)
 
     def is_mutating_action_running(self) -> bool:
         return self._mutating_action and self.log_panel.is_running()
@@ -146,6 +203,16 @@ class TargetPanel(QGroupBox):
         # immediately in a loop isn't useful there).
         if self._mutating_action:
             self._mutating_action = False
+            # A nonzero exit here means `up -d`/`restart` itself failed
+            # (bad compose file, image pull failure, etc.) -- no containers
+            # will ever come up to drive _update_progress() to 100%, so the
+            # bar would otherwise sit there indeterminate forever.
+            if self._starting and _exit_code != 0:
+                self._starting = False
+                self.progress.setFormat(f"{self._start_verb} failed (exit {_exit_code})")
+                self.progress.setRange(0, 1)
+                self.progress.setValue(1)
+                self.progress.setStyleSheet("QProgressBar::chunk { background-color: #d9534f; }")
             self._run("logs", "--tail=50", "-f", mutating=False)
 
     def _reload_logs(self) -> None:
@@ -155,12 +222,15 @@ class TargetPanel(QGroupBox):
         self._log_exporter.export(self.target, self.target.key, None, self.target.label)
 
     def _start(self) -> None:
+        self._begin_progress("Starting")
         self._run("up", "-d")
 
     def _restart(self) -> None:
+        self._begin_progress("Restarting")
         self._run("restart")
 
     def _stop(self) -> None:
+        self._cancel_progress()
         self._run("down")
 
     def _purge(self) -> None:
@@ -174,6 +244,7 @@ class TargetPanel(QGroupBox):
             QMessageBox.StandardButton.Cancel,
         )
         if reply == QMessageBox.StandardButton.Yes:
+            self._cancel_progress()
             self._run("down", "-v")
 
 

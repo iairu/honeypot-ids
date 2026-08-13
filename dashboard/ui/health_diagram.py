@@ -107,6 +107,29 @@ def classify(container: dict | None) -> str:
     return "down"
 
 
+def is_ready(container: dict | None) -> bool:
+    """True once a container is done starting, for start/restart progress
+    bars (page_services.py, page_health.py): a one-shot job that exited
+    cleanly, or a running container that either has no healthcheck or has
+    already passed one. Deliberately stricter than classify()=="running",
+    which also covers Health=="starting" -- a container still mid-
+    healthcheck is running but NOT ready yet, and that gap (State=running,
+    Health=starting) is exactly what a progress bar needs to show instead
+    of jumping to 100% the moment containers are merely created."""
+    if container is None:
+        return False
+    state = container.get("State")
+    if state == "exited":
+        return str(container.get("ExitCode", "0")) in ("0", "")
+    return state == "running" and container.get("Health", "") in ("", "healthy")
+
+
+def is_problem(container: dict | None) -> bool:
+    """True for a container classify() considers actively broken (as
+    opposed to merely not-ready-yet) -- used to color progress bars red."""
+    return classify(container) in ("unhealthy", "exited_bad")
+
+
 def status_detail(container: dict | None) -> str:
     if container is None:
         return "not created / never started"

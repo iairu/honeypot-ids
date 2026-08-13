@@ -22,7 +22,10 @@ from pathlib import Path
 
 import requests
 
-DASHBOARD_IDS = ["dashboard-ids-alerts", "dashboard-web-threat-overview"]
+DASHBOARD_IDS = [
+    "dashboard-ids-alerts", "dashboard-web-threat-overview",
+    "dashboard-session-analysis", "dashboard-attack-patterns",
+]
 OUTPUT_PATH = Path(__file__).resolve().parent / "saved_objects" / "honeypot-dashboards.ndjson"
 
 

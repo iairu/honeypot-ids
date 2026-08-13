@@ -10,14 +10,16 @@ import html
 from PyQt6.QtCore import QProcess, QUrl, Qt
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QSplitter,
-    QVBoxLayout, QWidget,
+    QGroupBox, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton,
+    QSplitter, QVBoxLayout, QWidget,
 )
 
 from core.content_sync_status import parse_content_sync_log
 from core.shell_ctl import build_shell_command
 from core.web_links import build_url, web_ui_for
-from ui.health_diagram import HealthDiagram, STATUS_COLORS, classify, status_detail
+from ui.health_diagram import (
+    HealthDiagram, STATUS_COLORS, classify, is_ready, status_detail,
+)
 from ui.log_export import LogExporter
 from ui.process_runner import LogPanel
 
@@ -98,6 +100,18 @@ class HealthPage(QWidget):
         btn_row.addWidget(self.logs_btn)
         detail_layout.addLayout(btn_row)
 
+        # Shown from the Restart click until the diagram reports this
+        # container healthy/running again -- `docker compose restart`
+        # itself returns almost immediately, well before a container with
+        # a healthcheck actually becomes ready again, which is exactly the
+        # gap this makes visible instead of leaving Restart looking like a
+        # no-op.
+        self.restart_progress = QProgressBar()
+        self.restart_progress.setVisible(False)
+        self.restart_progress.setTextVisible(True)
+        detail_layout.addWidget(self.restart_progress)
+        self._restarting = False
+
         btn_row2 = QHBoxLayout()
         self.web_ui_btn = QPushButton("Open web UI")
         self.web_ui_btn.setEnabled(False)
@@ -127,7 +141,9 @@ class HealthPage(QWidget):
 
         self.log_panel = LogPanel()
         self.log_panel.line_received.connect(self._on_log_line)
+        self.log_panel.finished.connect(self._on_log_finished)
         detail_layout.addWidget(self.log_panel, stretch=1)
+        self._pending_restart_service: str | None = None
 
         detail_panel.setMinimumWidth(320)
         splitter.addWidget(detail_panel)
@@ -143,6 +159,7 @@ class HealthPage(QWidget):
         self.diagram.rebuild(targets, results)
         if self._selected:
             self._refresh_detail_label()
+        self._update_restart_progress()
 
     def _selected_container(self) -> dict | None:
         if not self._selected:
@@ -155,6 +172,12 @@ class HealthPage(QWidget):
         self._selected = (target_key, service)
         self.restart_btn.setEnabled(True)
         self.logs_btn.setEnabled(True)
+        # A restart in progress belongs to whatever node was selected when
+        # it was started -- switching to a different node stops tracking
+        # it here (the diagram's own node coloring still reflects it).
+        self._restarting = False
+        self._pending_restart_service = None
+        self.restart_progress.setVisible(False)
         self._refresh_detail_label()
 
         self._sync_log_buffer = ""
@@ -192,8 +215,49 @@ class HealthPage(QWidget):
         target = self._targets_by_key.get(target_key)
         if target is None:
             return
+        self._restarting = True
+        self._pending_restart_service = service
+        self.restart_progress.setRange(0, 0)  # indeterminate until the next status poll
+        self.restart_progress.setFormat("Restarting…")
+        self.restart_progress.setStyleSheet("")
+        self.restart_progress.setVisible(True)
         argv, cwd = target.build("restart", service)
         self.log_panel.run(argv, cwd)
+
+    def _update_restart_progress(self) -> None:
+        if not self._restarting or not self._selected:
+            return
+        container = self._selected_container()
+        if container is None:
+            return  # container being recreated -- stay indeterminate
+        if is_ready(container):
+            self._restarting = False
+            self.restart_progress.setVisible(False)
+            return
+        status = classify(container)
+        if status in ("unhealthy", "exited_bad"):
+            self.restart_progress.setFormat(f"Restarting… ({status})")
+            self.restart_progress.setStyleSheet("QProgressBar::chunk { background-color: #d9534f; }")
+
+    def _on_log_finished(self, exit_code: int) -> None:
+        # Only the restart command itself is tracked here -- log_panel is
+        # shared with the plain `logs -f` tail, whose own exit (e.g.
+        # switching nodes) has nothing to do with a restart's success.
+        service = self._pending_restart_service
+        if service is None:
+            return
+        self._pending_restart_service = None
+        if exit_code != 0 and self._restarting:
+            self._restarting = False
+            self.restart_progress.setFormat(f"Restart failed (exit {exit_code})")
+            self.restart_progress.setRange(0, 1)
+            self.restart_progress.setValue(1)
+            self.restart_progress.setStyleSheet("QProgressBar::chunk { background-color: #d9534f; }")
+        # Resume the live log tail now that the one-shot restart command
+        # has finished, same as the Services page does for its own
+        # up/restart/down commands.
+        if self._selected and self._selected[1] == service:
+            self._view_logs_selected()
 
     def _view_logs_selected(self) -> None:
         if not self._selected:

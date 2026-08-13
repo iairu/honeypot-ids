@@ -71,6 +71,76 @@ transforms:
         }
       }
 
+      ##############################################################
+      ###### PARSE log_security_event() JSON OUT OF NGINX ERROR ######
+      ##############################################################
+
+      # init.lua's _G.utils.log_security_event() (honeytoken hits, session
+      # compromise, CVE pattern matches, high-threat requests, honeypot
+      # routing decisions, attacker-sophistication classification) writes a
+      # JSON blob via ngx.log(), which lands in nginx's error log with
+      # nginx's own request-context suffix appended after it, e.g.:
+      #   ... [lua] init.lua:523: log_security_event(): SECURITY_EVENT:
+      #   {"event_type":"...","details":{...},...}, client: 1.2.3.4,
+      #   server: localhost, request: "GET /x HTTP/2.0", host: "localhost"
+      # This was previously shipped as nginx_error's opaque `message` text
+      # like nginx_access/nginx_security used to be (see above) -- meaning
+      # none of session_id/classification/threat scores/CVEs was queryable,
+      # which is exactly the session-level and attack-pattern data the
+      # "session analysis" and "attack patterns" Kibana dashboards need
+      # (README §6/§8 listed both as blocked on this). Fixed by parsing the
+      # JSON out here, same as the access/security regex parse above.
+      if .log_type == "nginx_error" {
+        # `\{.*\}` is greedy, so it matches up to the LAST `}` immediately
+        # followed by the literal ", client: " nginx always appends in
+        # request context -- correct as long as no field value inside the
+        # JSON itself contains that exact substring (true for every event
+        # type currently logged; same class of assumption the access/
+        # security regex above already makes about its own delimiters).
+        evt, evt_err = parse_regex(.message,
+          r'SECURITY_EVENT: (?P<security_json>\{.*\}), client: (?P<remote_addr>[^,]*), server: (?P<server_name>[^,]*), request: "(?P<request_line>[^"]*)"')
+        if evt_err == null {
+          body, body_err = parse_json(evt.security_json)
+          if body_err == null {
+            body = object!(body)
+            .remote_addr = evt.remote_addr
+            .request_line = evt.request_line
+            .security_event_type = body.event_type
+            if exists(body.details) {
+              .security_event = object!(body.details)
+              # Hoisted to the SAME field name nginx_security's own regex
+              # parse above uses, so a session_id terms aggregation in
+              # Kibana can group both log types together on one field.
+              if exists(.security_event.session_id) {
+                .session_id = .security_event.session_id
+              }
+              # Some events log an empty array for these when nothing
+              # matched (e.g. high_threat_request's cves when the score
+              # came from patterns alone) -- confirmed live that whichever
+              # doc reaches ES FIRST for a given day's index locks that
+              # field's mapping from its own shape, and an empty array []
+              # locks it as `object`, not `keyword`. Every later doc in the
+              # same index that has a REAL (non-empty) array for the same
+              # field then fails Elasticsearch's mapping check and gets
+              # silently dropped by the bulk API (same class of issue the
+              # docker-label dot-flattening fix above already deals with).
+              # Deleting the field when empty means only ever a real
+              # populated array defines the mapping, so the field is never
+              # dropped for having the wrong shape.
+              if exists(.security_event.cves) && is_array(.security_event.cves) && (length(.security_event.cves) ?? 1) == 0 {
+                del(.security_event.cves)
+              }
+              if exists(.security_event.patterns) && is_array(.security_event.patterns) && (length(.security_event.patterns) ?? 1) == 0 {
+                del(.security_event.patterns)
+              }
+              if exists(.security_event.signals) && is_array(.security_event.signals) && (length(.security_event.signals) ?? 1) == 0 {
+                del(.security_event.signals)
+              }
+            }
+          }
+        }
+      }
+
       ###############################################
       ###### FLATTEN DOCKER LABEL KEYS (DOTTED) ######
       ###############################################
