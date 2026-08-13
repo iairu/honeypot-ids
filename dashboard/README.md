@@ -109,6 +109,16 @@ setup wizard…** without losing existing values.
   console sit side by side (not stacked) so every cert group is visible
   without scrolling. See `../ARCHITECTURE.md` for why the SIEM side uses a
   private CA this way.
+- **Log Search** — grep-style search across every selected target's
+  containers at once (`docker compose logs --tail=N`, no `-f`), instead of
+  only being able to tail one service at a time on the Services page.
+  **Collapse repeated lines** (on by default) folds a run of consecutive,
+  byte-identical matches (a crash-looping container repeating the same
+  line, a periodic job failing the same way every cycle) into one line
+  with a "(×N)" suffix, so that noise doesn't bury everything else in the
+  result list — a genuine recurrence with OTHER lines in between is left
+  alone, only a straight run collapses. Toggling it re-renders the
+  already-fetched results instantly rather than re-running the search.
 - **Settings** — each project's `.env` tab has a **Local / Remote** dropdown
   (secret fields are password-masked with a show/hide toggle and a
   "Generate" button for a fresh random value either way): Local edits the

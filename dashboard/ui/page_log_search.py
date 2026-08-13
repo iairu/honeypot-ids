@@ -90,6 +90,11 @@ class LogSearchPage(QWidget):
         self.state = state
         self._worker: LogSearchWorker | None = None
         self._target_checks: dict[str, QCheckBox] = {}
+        # The last search's raw results, kept around so toggling
+        # collapse_check re-renders instantly instead of re-running the
+        # (possibly slow/remote) search.
+        self._last_matches: list[str] = []
+        self._last_errors: list[str] = []
 
         layout = QVBoxLayout(self)
 
@@ -102,6 +107,17 @@ class LogSearchPage(QWidget):
 
         self.case_check = QCheckBox("Case sensitive")
         search_row.addWidget(self.case_check)
+
+        # On by default -- a burst of the same repeated message (a crash-
+        # looping container, a periodic job failing every cycle) is exactly
+        # the "wall of identical lines burying everything else" problem
+        # this page exists to cut through. Re-renders the already-fetched
+        # results on toggle (see _render_results) rather than re-running
+        # the search, so flipping it is instant.
+        self.collapse_check = QCheckBox("Collapse repeated lines")
+        self.collapse_check.setChecked(True)
+        self.collapse_check.toggled.connect(self._render_results)
+        search_row.addWidget(self.collapse_check)
 
         search_row.addWidget(QLabel("Lines/container:"))
         self.tail_spin = QSpinBox()
@@ -183,13 +199,47 @@ class LogSearchPage(QWidget):
 
     def _on_results(self, matches: list[str], errors: list[str]) -> None:
         self.search_btn.setEnabled(True)
+        self._last_matches = matches
+        self._last_errors = errors
+        self._render_results()
+
+    @staticmethod
+    def _collapse_repeated(lines: list[str]) -> list[str]:
+        """Collapses RUNS of consecutive, identical lines into one, with a
+        "(×N)" suffix -- classic `uniq -c` semantics, not a global/fuzzy
+        dedup: two identical lines with other lines between them are left
+        alone (that's a real recurrence pattern worth seeing, not noise),
+        and lines are only ever equal here if they're byte-identical
+        (target-label prefix included), so the same message from two
+        different services never collapses together.
+        """
+        collapsed: list[str] = []
+        prev: str | None = None
+        run_len = 0
+        for line in lines:
+            if line == prev:
+                run_len += 1
+                continue
+            if prev is not None:
+                collapsed.append(prev if run_len == 1 else f"{prev}  (×{run_len})")
+            prev = line
+            run_len = 1
+        if prev is not None:
+            collapsed.append(prev if run_len == 1 else f"{prev}  (×{run_len})")
+        return collapsed
+
+    def _render_results(self) -> None:
         self.results.clear()
+        matches = self._last_matches
+        errors = self._last_errors
+
+        display_lines = self._collapse_repeated(matches) if self.collapse_check.isChecked() else matches
 
         if not matches:
             self.results.setPlainText("(no matches)")
         else:
             default_color = ansi_render.panel_colors()[1]
-            for line in matches:
+            for line in display_lines:
                 # Fresh parser per line, not one shared across the whole
                 # result set -- each match is an independent line from
                 # (possibly) a different container/point in time, so SGR
@@ -199,6 +249,8 @@ class LogSearchPage(QWidget):
                 ansi_render.append(self.results, ansi_render.make_parser(), line + "\n", default_color)
 
         status = f"{len(matches)} match(es)"
+        if len(display_lines) != len(matches):
+            status += f" ({len(display_lines)} shown, repeats collapsed)"
         if len(matches) >= MAX_DISPLAYED_MATCHES:
             status += f" (capped at {MAX_DISPLAYED_MATCHES}, refine your search)"
         if errors:
