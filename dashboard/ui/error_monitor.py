@@ -32,6 +32,20 @@ _PREFIX_RE = re.compile(r"^(?P<service>[A-Za-z0-9_.]+)-\d+\s*\|\s?(?P<message>.*
 _ERROR_RE = re.compile(r"(?<![\w./-])error(?![\w./-])", re.IGNORECASE)
 
 
+def is_error_log_line(raw_line: str) -> bool:
+    """True if `raw_line` (a single line as delivered by `docker compose
+    logs` -- ANSI codes and the "<service>-N | " prefix intact, if
+    present) contains the word "error" in its message portion -- the
+    exact same test process_chunk() uses per-line to increment a badge
+    count, exposed for reuse by anything that wants to filter down to
+    just the lines that would increment it (e.g. the Health page's "view
+    this service's error lines only" action, clicking a node's badge)."""
+    plain = _ANSI_RE.sub("", raw_line)
+    m = _PREFIX_RE.match(plain)
+    message = m.group("message") if m else plain
+    return bool(_ERROR_RE.search(message))
+
+
 class ErrorLogMonitor(QObject):
     counts_changed = pyqtSignal()
 

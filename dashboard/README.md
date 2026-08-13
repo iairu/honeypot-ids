@@ -96,7 +96,13 @@ setup wizard…** without losing existing values.
   `--tail=50` scrollback forever. Hover a node for the exact count.
   Clicking a node also immediately starts live-tailing its logs in the
   detail panel — no separate "View logs" click needed (the button's still
-  there to re-trigger it manually if you want). Detail panel: **Restart**
+  there to re-trigger it manually if you want). **Clicking the badge
+  itself**, specifically, instead shows only that service's
+  error-containing lines — same live `docker compose logs -f <service>`
+  tail, filtered client-side down to whatever would increment the badge
+  (a banner line says so, and it keeps filtering new output as it streams
+  in). Clicking anywhere else on the node, or **View logs**, goes back to
+  the full, unfiltered tail. Detail panel: **Restart**
   (shows the same kind of progress bar as the Services page, tracking this
   one container back to healthy/running), **View logs**, **Open web UI**,
   and **Open shell** (launches

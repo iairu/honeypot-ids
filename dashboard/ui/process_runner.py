@@ -9,6 +9,8 @@ from this app).
 """
 from __future__ import annotations
 
+from typing import Callable
+
 from PyQt6.QtCore import QProcess, pyqtSignal
 from PyQt6.QtWidgets import (
     QHBoxLayout, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
@@ -35,6 +37,7 @@ class LogPanel(QWidget):
         self._ansi = ansi_render.make_parser()
         self._last_argv: list[str] | None = None
         self._last_cwd: str | None = None
+        self._last_line_filter: Callable[[str], bool] | None = None
         # Overrides what the Reload button does, instead of blindly
         # replaying the last command run() was given. Needed by the
         # Services page: its LogPanel's "last command" is often a
@@ -47,6 +50,13 @@ class LogPanel(QWidget):
         # the in-flight one and starts a fresh one, so it can never reach
         # the point where it would auto-resume tailing on its own).
         self._reload_action = reload_action
+        # Set per-run() (not constructor-only) so the same panel instance
+        # can switch between an unfiltered full tail and a filtered view
+        # across separate run() calls -- see page_health.py's error-badge
+        # click, which reuses its one LogPanel for both. None means "show
+        # everything" (unchanged default behavior for every other caller).
+        self._line_filter: Callable[[str], bool] | None = None
+        self._filter_buffer = ""
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -113,7 +123,10 @@ class LogPanel(QWidget):
         self.text.clear()
         self._ansi = ansi_render.make_parser()
 
-    def run(self, argv: list[str], cwd: str | None = None) -> None:
+    def run(
+        self, argv: list[str], cwd: str | None = None,
+        line_filter: Callable[[str], bool] | None = None,
+    ) -> None:
         self.stop()
         self.clear()
         self._paused = False
@@ -123,6 +136,9 @@ class LogPanel(QWidget):
         self.catchup_button.setText("Catch up (0)")
         self._last_argv = argv
         self._last_cwd = cwd
+        self._last_line_filter = line_filter
+        self._line_filter = line_filter
+        self._filter_buffer = ""
         self.reload_button.setEnabled(True)
         self.append(f"$ {' '.join(argv)}\n\n")
 
@@ -142,7 +158,7 @@ class LogPanel(QWidget):
         if self._reload_action is not None:
             self._reload_action()
         elif self._last_argv is not None:
-            self.run(self._last_argv, self._last_cwd)
+            self.run(self._last_argv, self._last_cwd, self._last_line_filter)
 
     def is_running(self) -> bool:
         return self.process is not None and self.process.state() != QProcess.ProcessState.NotRunning
@@ -197,8 +213,28 @@ class LogPanel(QWidget):
         if self.process is None:
             return
         data = self.process.readAllStandardOutput().data().decode(errors="replace")
+        # line_received always gets the full, unfiltered chunk -- other
+        # consumers (e.g. page_health.py's content-sync activity parser)
+        # want everything regardless of what the visible panel is
+        # currently filtered down to.
         self.line_received.emit(data)
+        if self._line_filter is not None:
+            data = self._filter_lines(data)
+            if not data:
+                return
         self._emit(data)
+
+    def _filter_lines(self, chunk: str) -> str:
+        """Keeps only whole lines that pass self._line_filter, buffering
+        any trailing incomplete line across calls (QProcess delivers
+        output in arbitrary-sized chunks that don't line up with line
+        boundaries) -- same pattern as ui/error_monitor.py's own chunk
+        buffering."""
+        text = self._filter_buffer + chunk
+        lines = text.split("\n")
+        self._filter_buffer = lines.pop()
+        kept = [line for line in lines if self._line_filter(line)]
+        return "\n".join(kept) + "\n" if kept else ""
 
     def _on_finished(self, exit_code: int, _exit_status) -> None:
         self._emit(f"\n\n[process exited with code {exit_code}]\n")

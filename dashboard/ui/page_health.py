@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
 from core.content_sync_status import parse_content_sync_log
 from core.shell_ctl import build_shell_command
 from core.web_links import build_url, web_ui_for
-from ui.error_monitor import ErrorLogMonitor
+from ui.error_monitor import ErrorLogMonitor, is_error_log_line
 from ui.health_diagram import (
     HealthDiagram, STATUS_COLORS, classify, is_ready, status_detail,
 )
@@ -90,6 +90,7 @@ class HealthPage(QWidget):
 
         self.diagram = HealthDiagram(error_monitor)
         self.diagram.node_selected.connect(self._on_node_selected)
+        self.diagram.error_badge_selected.connect(self._on_error_badge_selected)
         self.diagram.export_logs_requested.connect(self._export_logs)
         splitter.addWidget(self.diagram)
 
@@ -178,7 +179,11 @@ class HealthPage(QWidget):
         containers = self._last_results.get(target_key, [])
         return next((c for c in containers if c.get("Service") == service), None)
 
-    def _on_node_selected(self, target_key: str, service: str) -> None:
+    def _select_node_common(self, target_key: str, service: str) -> None:
+        """Shared setup for both ways a node can become selected -- clicking
+        the rest of its rectangle (_on_node_selected) or its error badge
+        (_on_error_badge_selected). Only what happens to the log panel
+        afterward differs between the two."""
         self._selected = (target_key, service)
         self.restart_btn.setEnabled(True)
         self.logs_btn.setEnabled(True)
@@ -195,9 +200,15 @@ class HealthPage(QWidget):
         if service == CONTENT_SYNC_SERVICE:
             self.sync_activity_label.setText("Content sync activity: waiting for log output…")
 
+    def _on_node_selected(self, target_key: str, service: str) -> None:
+        self._select_node_common(target_key, service)
         # Auto-start the live tail immediately -- no need to click "View
         # logs" separately just to see what a newly-selected node is doing.
         self._view_logs_selected()
+
+    def _on_error_badge_selected(self, target_key: str, service: str) -> None:
+        self._select_node_common(target_key, service)
+        self._view_error_logs_selected()
 
     def _refresh_detail_label(self) -> None:
         target_key, service = self._selected
@@ -278,6 +289,26 @@ class HealthPage(QWidget):
             return
         argv, cwd = target.build("logs", "--tail=300", "-f", service)
         self.log_panel.run(argv, cwd)
+
+    def _view_error_logs_selected(self) -> None:
+        """Same underlying `docker compose logs` command as
+        _view_logs_selected(), but the panel only shows lines that would
+        increment this node's error badge -- triggered by clicking the
+        badge itself. Clicking anywhere else on the node, or View logs,
+        goes through _view_logs_selected() instead and always shows
+        everything, unfiltered."""
+        if not self._selected:
+            return
+        target_key, service = self._selected
+        target = self._targets_by_key.get(target_key)
+        if target is None:
+            return
+        argv, cwd = target.build("logs", "--tail=300", "-f", service)
+        self.log_panel.run(argv, cwd, line_filter=is_error_log_line)
+        self.log_panel.append(
+            f'(showing only lines containing "error" for {service} -- '
+            "click elsewhere on the node, or View logs, for the full tail)\n\n"
+        )
 
     def _on_log_line(self, text: str) -> None:
         if not self._selected or self._selected[1] != CONTENT_SYNC_SERVICE:

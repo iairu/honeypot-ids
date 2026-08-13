@@ -162,6 +162,7 @@ def status_detail(container: dict | None) -> str:
 class ServiceNode(QGraphicsObject):
     clicked = pyqtSignal(str, str)  # target_key, service
     export_logs_clicked = pyqtSignal(str, str)  # target_key, service
+    error_badge_clicked = pyqtSignal(str, str)  # target_key, service
 
     def __init__(
         self, target_key: str, project_label: str, service: str,
@@ -296,6 +297,9 @@ class ServiceNode(QGraphicsObject):
         if self._export_icon_rect().contains(event.pos()):
             self.export_logs_clicked.emit(self.target_key, self.service)
             return
+        if self._error_count > 0 and self._error_badge_rect().contains(event.pos()):
+            self.error_badge_clicked.emit(self.target_key, self.service)
+            return
         self.clicked.emit(self.target_key, self.service)
         super().mousePressEvent(event)
 
@@ -303,6 +307,7 @@ class ServiceNode(QGraphicsObject):
 class HealthDiagram(QGraphicsView):
     node_selected = pyqtSignal(str, str)  # target_key, service
     export_logs_requested = pyqtSignal(str, str)  # target_key, service
+    error_badge_selected = pyqtSignal(str, str)  # target_key, service
 
     def __init__(self, error_monitor: ErrorLogMonitor | None = None, parent=None):
         super().__init__(parent)
@@ -380,6 +385,7 @@ class HealthDiagram(QGraphicsView):
                     node.set_error_count(self._error_monitor.count_for(target.key, service))
                 node.clicked.connect(self._on_node_clicked)
                 node.export_logs_clicked.connect(self.export_logs_requested)
+                node.error_badge_clicked.connect(self._on_error_badge_clicked)
                 self.scene_.addItem(node)
                 self.nodes[(target.key, service)] = node
 
@@ -426,13 +432,23 @@ class HealthDiagram(QGraphicsView):
         for (target_key, service), node in self.nodes.items():
             node.set_error_count(self._error_monitor.count_for(target_key, service))
 
-    def _on_node_clicked(self, target_key: str, service: str) -> None:
+    def _select_node(self, target_key: str, service: str) -> None:
         if self._selected_key in self.nodes:
             self.nodes[self._selected_key].set_selected_look(False)
         self._selected_key = (target_key, service)
         if self._selected_key in self.nodes:
             self.nodes[self._selected_key].set_selected_look(True)
+
+    def _on_node_clicked(self, target_key: str, service: str) -> None:
+        self._select_node(target_key, service)
         self.node_selected.emit(target_key, service)
+
+    def _on_error_badge_clicked(self, target_key: str, service: str) -> None:
+        # Selects the node too (same visual highlight, same detail-panel
+        # target) -- only which log VIEW comes up differs, via the
+        # separate error_badge_selected signal instead of node_selected.
+        self._select_node(target_key, service)
+        self.error_badge_selected.emit(target_key, service)
 
     def wheelEvent(self, event) -> None:
         factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
