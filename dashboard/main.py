@@ -5,7 +5,26 @@ Run via ./run.sh (creates the venv and installs dependencies on first
 use) rather than directly, unless you've already set up the venv
 yourself -- see requirements.txt.
 """
+import os
 import sys
+
+# Every site this app's embedded browsers ever point at (Kibana, the
+# eshop) uses a self-signed cert with no real CA --
+# ui/browser_widget.py's certificateError handler already accepts these
+# unconditionally for normal page navigation and its subresource loads
+# (it doesn't check origin either, same trade-off this makes), but
+# confirmed live it does NOT cover every connection Chromium's network
+# stack can open for a heavy page (WooCommerce/Elementor pull in dozens
+# of JS/CSS/font subresources): a stray parallel/speculative connection
+# occasionally fails the handshake with "certificate unknown" and lands
+# in reverse_proxy's error log, even though every other resource on the
+# same page load succeeds. Setting this before Chromium initializes
+# covers those too, at the engine level -- a supplement to the existing
+# signal handler (kept in place; still needed on some code paths), not a
+# new category of risk beyond what that handler already accepted. Must
+# be set before QtWebEngineWidgets is imported below -- Chromium reads
+# this env var once, at engine startup.
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--ignore-certificate-errors")
 
 # Must be imported before the QApplication instance is constructed below --
 # PyQt6 raises ImportError otherwise ("QtWebEngineWidgets must be imported
