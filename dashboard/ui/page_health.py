@@ -456,23 +456,32 @@ class HealthPage(QWidget):
         self.log_panel.run(argv, cwd)
 
     def _view_error_logs_selected(self) -> None:
-        """Same underlying `docker compose logs` command as
-        _view_logs_selected(), but the panel only shows lines that would
-        increment this node's error badge -- triggered by clicking the
-        badge itself. Clicking anywhere else on the node, or View logs,
-        goes through _view_logs_selected() instead and always shows
-        everything, unfiltered."""
+        """Similar to _view_logs_selected(), but the panel only shows
+        lines that would increment this node's error badge -- triggered
+        by clicking the badge itself. Clicking anywhere else on the node,
+        or View logs, goes through _view_logs_selected() instead and
+        always shows everything, unfiltered.
+
+        Deliberately `--tail=all`, not `--tail=300` like the plain view:
+        the whole point of clicking the badge is "show me every error
+        this service has logged", and a service whose error lines are a
+        small fraction of its total chatty output could easily have all
+        of them pushed out of a 300-line window by unrelated noise --
+        capping history here would silently hide exactly what this view
+        exists to surface. The client-side filter still means only the
+        (usually far smaller) matching lines actually get rendered.
+        """
         if not self._selected:
             return
         target_key, service = self._selected
         target = self._targets_by_key.get(target_key)
         if target is None:
             return
-        argv, cwd = target.build("logs", "--tail=300", "-f", service)
+        argv, cwd = target.build("logs", "--tail=all", "-f", service)
         self.log_panel.run(argv, cwd, line_filter=is_error_log_line)
         self.log_panel.append(
-            f'(showing only lines containing "error" for {service} -- '
-            "click elsewhere on the node, or View logs, for the full tail)\n\n"
+            f'(showing every line containing "error" for {service}, full history -- '
+            "click elsewhere on the node, or View logs, for the full recent tail)\n\n"
         )
 
     def _on_log_line(self, text: str) -> None:

@@ -116,11 +116,16 @@ setup wizard…** without losing existing values.
   detail panel — no separate "View logs" click needed (the button's still
   there to re-trigger it manually if you want). **Clicking the badge
   itself**, specifically, instead shows only that service's
-  error-containing lines — same live `docker compose logs -f <service>`
+  error-containing lines — a live `docker compose logs -f <service>`
   tail, filtered client-side down to whatever would increment the badge
   (a banner line says so, and it keeps filtering new output as it streams
-  in). Clicking anywhere else on the node, or **View logs**, goes back to
-  the full, unfiltered tail. Detail panel: **Restart**
+  in), deliberately over the service's **entire** log history
+  (`--tail=all`) rather than the plain view's last 300 lines — a service
+  whose errors are a small fraction of its total chatty output could
+  easily have all of them pushed out of a 300-line window by unrelated
+  noise, which would defeat the point of a view that exists specifically
+  to surface every one of them. Clicking anywhere else on the node, or
+  **View logs**, goes back to the normal recent-tail view. Detail panel: **Restart**
   (shows the same kind of progress bar as the Services page, tracking this
   one container back to healthy/running), **View logs**, **Open web UI**,
   and **Open shell** (launches
