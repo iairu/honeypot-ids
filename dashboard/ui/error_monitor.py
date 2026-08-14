@@ -40,6 +40,32 @@ _PREFIX_RE = re.compile(r"^(?P<service>[A-Za-z0-9_.]+)(?:-\d+)?\s*\|\s?(?P<messa
 # whitespace/punctuation outside this set) still does.
 _ERROR_RE = re.compile(r"(?<![\w./-])error(?![\w./-])", re.IGNORECASE)
 
+# Kibana's own structured log format: "[timestamp][LEVEL ][context] message"
+# (e.g. "[2026-08-13T16:49:29.727+00:00][INFO ][plugins.notifications] Email
+# Service Error: Email connector not specified."). When a line matches this
+# AND declares a quiet level, that declared severity is trusted over a raw
+# "error" keyword scan of the text -- same reasoning as nginx's own
+# [error]/[info] severity-tag fix elsewhere in this app. Confirmed live this
+# is real, not hypothetical: Kibana's notifications plugin logs exactly that
+# INFO line, unconditionally, at startup whenever no email connector is
+# configured -- which is the correct, expected state for this deployment (no
+# SMTP server exists anywhere in this system), not a fault. There's no
+# config knob to stop Kibana logging it at all (confirmed by reading
+# @kbn/notifications-plugin's source in the running container -- the
+# connectors.default.email config has no "disable this check" option), so
+# trusting the level tag it already carries is the only real fix available.
+# WARN/ERROR/FATAL (or any line not matching Kibana's format at all -- every
+# other service's logs) still fall through to the plain keyword scan.
+_KIBANA_LEVEL_RE = re.compile(r"^\[[^\]]+\]\[\s*([A-Z]+)\s*\]\[")
+_KIBANA_QUIET_LEVELS = {"TRACE", "DEBUG", "INFO"}
+
+
+def _message_is_error(message: str) -> bool:
+    kibana_level = _KIBANA_LEVEL_RE.match(message)
+    if kibana_level and kibana_level.group(1) in _KIBANA_QUIET_LEVELS:
+        return False
+    return bool(_ERROR_RE.search(message))
+
 
 def is_error_log_line(raw_line: str) -> bool:
     """True if `raw_line` (a single line as delivered by `docker compose
@@ -52,7 +78,7 @@ def is_error_log_line(raw_line: str) -> bool:
     plain = _ANSI_RE.sub("", raw_line)
     m = _PREFIX_RE.match(plain)
     message = m.group("message") if m else plain
-    return bool(_ERROR_RE.search(message))
+    return _message_is_error(message)
 
 
 class ErrorLogMonitor(QObject):
@@ -99,7 +125,7 @@ class ErrorLogMonitor(QObject):
             m = _PREFIX_RE.match(plain)
             if not m:
                 continue
-            if _ERROR_RE.search(m.group("message")):
+            if _message_is_error(m.group("message")):
                 key = (target_key, m.group("service"))
                 self._counts[key] = self._counts.get(key, 0) + 1
                 changed = True

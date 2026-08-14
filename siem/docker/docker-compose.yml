@@ -99,6 +99,23 @@ services:
       - ELASTICSEARCH_USERNAME=kibana_system
       - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
       - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
+      # This SIEM VM has no outbound internet access by design (see
+      # ARCHITECTURE.md -- the only network path in or out is the edge
+      # host's Vector shipper on port 6000), so every one of Kibana's
+      # attempts to reach the real internet fails, loudly and repeatedly:
+      # confirmed live, hours of "[WARN] plugins.securitySolution.
+      # telemetry_events.sender Error pinging telemetry services" (every
+      # ~5-15 minutes, indefinitely) plus the occasional matching
+      # "async_sender Runtime error". telemetry.enabled=false is the
+      # documented master opt-out switch for ALL of Kibana's telemetry
+      # collection/sending, including Security Solution's own telemetry
+      # sender (confirmed by reading @kbn/security-solution-plugin's
+      # sender.js in the running container: it checks the core Telemetry
+      # plugin's getIsOptedIn() FIRST and returns before ever attempting
+      # the network ping that was producing this warning) -- so this is a
+      # real fix, not a suppression of a real problem, since there's
+      # nothing this VM could ever successfully telemeter to anyway.
+      - TELEMETRY_ENABLED=false
     mem_limit: ${KIBANA_MEM_LIMIT}
     ports:
       - "${KIBANA_PORT}:${KIBANA_PORT}"
