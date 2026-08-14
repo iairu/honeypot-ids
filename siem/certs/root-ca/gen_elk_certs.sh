@@ -18,30 +18,32 @@ openssl req -x509 -new -nodes -key ${ROOT_CA_NAME}.key -sha256 -days $DAYS_VALID
 
 echo "✅ Root CA created: ${ROOT_CA_NAME}.crt"
 
-# "vector" is the aggregator's SERVER cert for the edge shipper's mTLS
-# connection -- the edge shipper's TLS client validates the hostname it
-# connected with against this cert's identity. A bare CN-only cert (what
-# every other service here uses) only matches a client connecting via the
-# exact string "vector", which breaks in two real cases: (1) single-host
-# dev/testing, where the edge shipper reaches this container through
-# host.docker.internal (its own compose project has no shared network with
-# this one -- see ids/docker-compose.yml's vector service
-# comment) instead of the container name "vector", and (2) genuine
-# two-host production, where the edge shipper's default VECTOR_HOST is the
-# SIEM VM's raw IP (see ids/vector/vector.yaml), which a
-# CN-only cert never matches either -- confirmed live: this was failing
-# with "hostname mismatch" even before single-host testing was a
-# consideration. Listing every hostname/IP this cert should be valid for
-# as Subject Alternative Names fixes both, without weakening verification
-# (verify_certificate + verify_hostname both stay enabled end to end) --
-# unlike a public CA, this is a private CA minted specifically for this
-# one shipper<->aggregator pairing, so the CA-chain trust already IS the
-# real security boundary; SANs here are about covering every legitimate
-# way to reach it, not about narrowing what's trusted.
+# "vector" is the aggregator's SERVER cert -- issued to the SIEM stack's
+# `vector_inbound` container -- for the edge shipper's (`vector_outbound`)
+# mTLS connection -- the edge shipper's TLS client validates the hostname
+# it connected with against this cert's identity. A bare CN-only cert
+# (what every other service here uses) only matches a client connecting
+# via the exact string "vector_inbound", which breaks in two real cases:
+# (1) single-host dev/testing, where the edge shipper reaches this
+# container through host.docker.internal (its own compose project has no
+# shared network with this one -- see ids/docker-compose.yml's
+# vector_outbound service comment) instead of the container name
+# "vector_inbound", and (2) genuine two-host production, where the edge
+# shipper's default VECTOR_HOST is the SIEM VM's raw IP (see
+# ids/vector/vector.yaml), which a CN-only cert never matches either --
+# confirmed live: this was failing with "hostname mismatch" even before
+# single-host testing was a consideration. Listing every hostname/IP this
+# cert should be valid for as Subject Alternative Names fixes both,
+# without weakening verification (verify_certificate + verify_hostname
+# both stay enabled end to end) -- unlike a public CA, this is a private
+# CA minted specifically for this one shipper<->aggregator pairing, so
+# the CA-chain trust already IS the real security boundary; SANs here are
+# about covering every legitimate way to reach it, not about narrowing
+# what's trusted.
 #
 # NOTE: if the real SIEM host ends up at a different IP/hostname than the
 # 147.175.151.193 placeholder below, add it here and re-run this script.
-VECTOR_SAN="DNS:vector,DNS:localhost,DNS:host.docker.internal,IP:127.0.0.1,IP:147.175.151.193"
+VECTOR_SAN="DNS:vector_inbound,DNS:localhost,DNS:host.docker.internal,IP:127.0.0.1,IP:147.175.151.193"
 
 # Generate certificates for each ELK component
 for SERVICE in "${ELASTIC_HOSTS[@]}"; do

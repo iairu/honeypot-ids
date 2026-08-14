@@ -6,9 +6,10 @@ since every SIEM service's cert is signed by the same CA and a full
 rotation invalidates all of them at once.
 
 Mirrors the exact behavior gen_elk_certs.sh already has (same subject
-format, same SAN list for the "vector" service -- see that script's own
-comments for why "vector" specifically needs SANs: it's reached via
-several different hostnames depending on local-vs-remote and
+format, same SAN list for the "vector" cert identity, issued to the
+`vector_inbound` SIEM container -- see that script's own comments for
+why it specifically needs SANs: it's reached via several different
+hostnames depending on local-vs-remote and
 single-host-testing-vs-real-deployment).
 """
 from __future__ import annotations
@@ -25,7 +26,7 @@ CA_KEY = CA_DIR / "rootCA.key"
 CA_CRT = CA_DIR / "rootCA.crt"
 DAYS_VALID = "365"
 
-VECTOR_SAN = "DNS:vector,DNS:localhost,DNS:host.docker.internal,IP:127.0.0.1,IP:147.175.151.193"
+VECTOR_SAN = "DNS:vector_inbound,DNS:localhost,DNS:host.docker.internal,IP:127.0.0.1,IP:147.175.151.193"
 
 SIEM_SERVICES = ["es01", "vector", "kibana", "vector-agent"]
 

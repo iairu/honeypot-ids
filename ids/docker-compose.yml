@@ -1503,7 +1503,7 @@ services:
     pids_limit: 50
     restart: unless-stopped
 
-  vector:
+  vector_outbound:
     image: timberio/vector:0.43.0-debian
     profiles:
       - elk
@@ -1549,7 +1549,7 @@ services:
     # what makes single-host testing/development work: this project and
     # siem are two INDEPENDENT compose
     # projects with no shared network, by design (see README's two-host
-    # split note) -- but the SIEM's vector aggregator already publishes its
+    # split note) -- but the SIEM's vector_inbound aggregator already publishes its
     # port to 0.0.0.0 on the host, so setting VECTOR_HOST=host.docker.internal
     # (instead of the real remote SIEM VM's IP) reaches it without needing
     # any change to the SIEM stack's own network topology or joining the
@@ -1671,7 +1671,7 @@ services:
 
   # DEAD CODE: log_aggregator (Fluent Bit)
   # Originally intended as an alternative log shipper. Superseded by the
-  # vector service which fulfils the same role (shipping Nginx + Suricata
+  # vector_outbound service which fulfils the same role (shipping Nginx + Suricata
   # logs to the ELK SIEM). No fluent_bit_config/ directory exists in the
   # project, so this service cannot be started without further work.
   # log_aggregator:

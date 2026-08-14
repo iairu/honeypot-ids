@@ -87,12 +87,12 @@ class Target:
         """Flags inserted between `docker compose` and the subcommand.
 
         --profile '*' (always): activates every profile, e.g. the edge
-        project's `vector` service, which is `profiles: [elk]` --
+        project's `vector_outbound` service, which is `profiles: [elk]` --
         confirmed live that without it, `docker compose down`/`up`/
         `restart` silently exclude profiled services from their scope
         entirely (docker compose ps does NOT have this filtering, which is
         why the dashboard's status display looked fine while Stop/Purge
-        quietly left `vector` running). `ps`/`logs` don't need it for
+        quietly left `vector_outbound` running). `ps`/`logs` don't need it for
         already-running containers but it's harmless there too, so it's
         applied unconditionally for every command rather than only the
         mutating ones.

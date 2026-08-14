@@ -106,7 +106,7 @@ class CertsPage(QWidget):
                 "service's certificate. Any previously-distributed "
                 "vector-agent client cert on the edge host becomes invalid "
                 "until it's re-copied (this tool does that automatically), "
-                "and es01/kibana/vector all need a restart afterward.\n\nContinue?",
+                "and es01/kibana/vector_inbound all need a restart afterward.\n\nContinue?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )

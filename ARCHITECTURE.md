@@ -23,7 +23,7 @@ This isn't an accident of two people building unrelated things — it's a delibe
 │                            │                              │                         │
 │                            ▼                              ▼                         │
 │                     ┌──────────────────────────────────────────┐                    │
-│                     │  vector (shipper, profile: elk)           │                   │
+│                     │  vector_outbound (shipper, profile: elk)  │                   │
 │                     │  tails: docker logs, nginx logs,          │                   │
 │                     │  suricata eve.json/fast.log, redis logs   │                   │
 │                     └──────────────────┬─────────────────────┘                      │
@@ -33,7 +33,7 @@ This isn't an accident of two people building unrelated things — it's a delibe
                                           ▼
 ┌────────────────────── SIEM host (siem/) ─────────────┐
 │                     ┌──────────────────────────────────────────┐                    │
-│                     │  vector (aggregator)                      │                   │
+│                     │  vector_inbound (aggregator)               │                   │
 │                     │  verifies client cert, tags/enriches,     │                   │
 │                     │  writes to honeypot-{log_type}-%Y.%m.%d   │                   │
 │                     └──────────────────┬─────────────────────┘                      │
@@ -49,26 +49,26 @@ Every log event picked up by the edge shipper is tagged with `log_type` (`docker
 
 ## Running for real (two hosts)
 
-1. **SIEM host**: `cd siem/certs/root-ca && ./gen_elk_certs.sh` (generates a CA + certs for `es01`/`kibana`/`vector`, and a `vector-agent` client cert bundle under `../../vector/certs/vector-agent/`), then `cd ../../docker && docker compose up -d`.
+1. **SIEM host**: `cd siem/certs/root-ca && ./gen_elk_certs.sh` (generates a CA + certs for `es01`/`kibana`/`vector` (the cert identity issued to the `vector_inbound` container), and a `vector-agent` client cert bundle under `../../vector/certs/vector-agent/`), then `cd ../../docker && docker compose up -d`.
 2. Copy `siem/vector/certs/vector-agent/{ca.crt,vector-agent.crt,vector-agent.key}` to the **edge host**'s `ids/vector/certs/` (this is a manual step by design — the client cert should never live in the same place as the CA's private key, and the two hosts don't share a filesystem).
-3. **Edge host**: set `VECTOR_HOST` to the SIEM host's real address (defaults to a placeholder IP, `147.175.151.193`, in `ids/vector/vector.yaml` — override it via `.env` or the environment) and bring the `elk` profile up: `docker compose --profile elk up -d vector`.
-4. If the SIEM host's real address differs from what's in `VECTOR_SAN` in `gen_elk_certs.sh` (currently `vector`, `localhost`, `host.docker.internal`, `127.0.0.1`, `147.175.151.193`), add it there and re-run the script — the aggregator's server certificate needs the address the edge shipper actually connects through as a Subject Alternative Name, or TLS hostname verification will fail (this bit single-host testing below until the SAN list was added — see that section for the exact error).
+3. **Edge host**: set `VECTOR_HOST` to the SIEM host's real address (defaults to a placeholder IP, `147.175.151.193`, in `ids/vector/vector.yaml` — override it via `.env` or the environment) and bring the `elk` profile up: `docker compose --profile elk up -d vector_outbound`.
+4. If the SIEM host's real address differs from what's in `VECTOR_SAN` in `gen_elk_certs.sh` (currently `vector_inbound`, `localhost`, `host.docker.internal`, `127.0.0.1`, `147.175.151.193`), add it there and re-run the script — the aggregator's server certificate needs the address the edge shipper actually connects through as a Subject Alternative Name, or TLS hostname verification will fail (this bit single-host testing below until the SAN list was added — see that section for the exact error).
 
 ## Running both on one host (testing / development)
 
 The two compose projects don't need to be merged to test them together — they already don't conflict on ports (`80`/`443` for the edge stack vs. `9200`/`5601`/`6000` for the SIEM stack), container names, or networks (each project gets its own bridge network; nothing is shared by default). The only thing standing between "two independent stacks happen to be running on the same machine" and "the edge shipper is actually delivering logs to the SIEM stack" is that they're on different Docker networks with no way to resolve each other by container name. Verified working this session:
 
-1. Bring up the SIEM stack: `cd siem/certs/root-ca && ./gen_elk_certs.sh && cd ../../docker && docker compose up -d`. Wait for `es01`, `kibana`, and `vector` to all report healthy (`docker ps` — first boot pulls the Elasticsearch and Kibana images, which are large; expect several minutes).
+1. Bring up the SIEM stack: `cd siem/certs/root-ca && ./gen_elk_certs.sh && cd ../../docker && docker compose up -d`. Wait for `es01`, `kibana`, and `vector_inbound` to all report healthy (`docker ps` — first boot pulls the Elasticsearch and Kibana images, which are large; expect several minutes).
 2. Copy the `vector-agent` client cert bundle to the edge host's cert directory (same as production step 2 above — on one host this is just a local `cp`, not a cross-host transfer):
    ```
    cp siem/vector/certs/vector-agent/{ca.crt,vector-agent.crt,vector-agent.key} ids/vector/certs/
    ```
 3. Bring up the edge stack as normal (`cd ids && docker compose up -d`), then start the Vector shipper pointed at the SIEM stack via the host's own network stack instead of a remote IP:
    ```
-   VECTOR_HOST=host.docker.internal VECTOR_PORT=6000 docker compose --profile elk up -d vector
+   VECTOR_HOST=host.docker.internal VECTOR_PORT=6000 docker compose --profile elk up -d vector_outbound
    ```
-   `ids/docker-compose.yml`'s `vector` service has `extra_hosts: ["host.docker.internal:host-gateway"]` specifically for this — it's what lets the edge shipper container reach a port the SIEM stack published on the same physical/VM host, without joining the two compose projects onto a shared Docker network (which would be a bigger, more invasive change purely for a dev/test convenience). This has zero effect on the real two-host deployment above: `host.docker.internal` is just an unused DNS alias there.
-4. Confirm data is flowing: `docker compose logs vector` on the edge side should show `Healthcheck passed.` (not "Retrying after error" / TLS failures); on the SIEM side, `docker exec es01 curl -s --cacert /usr/share/elasticsearch/config/certs/ca/ca.crt -u elastic:<password> "https://es01:9200/_cat/indices?v"` should show real, growing `honeypot-*` indices with non-zero `docs.count`.
+   `ids/docker-compose.yml`'s `vector_outbound` service has `extra_hosts: ["host.docker.internal:host-gateway"]` specifically for this — it's what lets the edge shipper container reach a port the SIEM stack published on the same physical/VM host, without joining the two compose projects onto a shared Docker network (which would be a bigger, more invasive change purely for a dev/test convenience). This has zero effect on the real two-host deployment above: `host.docker.internal` is just an unused DNS alias there.
+4. Confirm data is flowing: `docker compose logs vector_outbound` on the edge side should show `Healthcheck passed.` (not "Retrying after error" / TLS failures); on the SIEM side, `docker exec es01 curl -s --cacert /usr/share/elasticsearch/config/certs/ca/ca.crt -u elastic:<password> "https://es01:9200/_cat/indices?v"` should show real, growing `honeypot-*` indices with non-zero `docs.count`.
 
 ### Two real bugs found getting this far, both fixed
 

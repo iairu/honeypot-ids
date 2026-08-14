@@ -13,11 +13,20 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
-# docker compose logs' default multi-service line prefix, e.g.
-# "honeypot_eshop_1-1  | actual message" or "vector-1  | ...". Compose
-# service names are underscore-separated, so the "-<replica-number>"
-# suffix docker compose appends is unambiguous to strip back off.
-_PREFIX_RE = re.compile(r"^(?P<service>[A-Za-z0-9_.]+)-\d+\s*\|\s?(?P<message>.*)$")
+# docker compose logs' multi-service line prefix. Usually
+# "<service>-<replica-number>  | message" (e.g. "honeypot_eshop_1-1  | ...",
+# "vector_outbound-1  | ...") -- compose service names are underscore-separated, so
+# that trailing "-N" is unambiguous to strip back off. BUT: a service with
+# an explicit `container_name:` override (siem/docker/docker-compose.yml's
+# es01/kibana/vector_inbound) drops the "-N" entirely, e.g. "kibana  | ...".
+# Confirmed live this second form is real, not hypothetical: those three
+# SIEM services' error lines (including a genuine ERROR from vector_inbound's own
+# elasticsearch sink) were silently never counted before the "-\d+" here
+# became optional, since the old, mandatory version of it never matched
+# their prefix at all. The service-name character class itself (no
+# hyphen in it) is what keeps this unambiguous either way -- "-N" can
+# only ever be the optional replica suffix, never part of the name.
+_PREFIX_RE = re.compile(r"^(?P<service>[A-Za-z0-9_.]+)(?:-\d+)?\s*\|\s?(?P<message>.*)$")
 
 # NOT a plain \b word-boundary match -- confirmed live that Vector's own
 # routine startup log line ("component_id=nginx_error_in ... include=

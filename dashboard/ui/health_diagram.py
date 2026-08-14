@@ -16,7 +16,7 @@ from core.web_links import build_url, web_ui_for
 from ui import theme
 from ui.error_monitor import ErrorLogMonitor
 
-NODE_W, NODE_H = 150, 44
+NODE_W, NODE_H = 150, 44  # NODE_W is a MINIMUM now -- see _service_name_font()/rebuild()
 WEB_UI_ICON_SIZE = 16
 WEB_UI_ICON_MARGIN = 3
 EXPORT_ICON_SIZE = 16
@@ -27,6 +27,21 @@ ERROR_BADGE_COLOR = QColor("#d9302c")
 COL_GAP, ROW_GAP = 24, 18
 GROUP_PADDING = 30
 GROUP_GAP_Y = 60
+# Horizontal room a node's rounded rect needs beyond the service-name text
+# itself: 6px margin on each side (matches paint()'s own .adjusted(6, ...)),
+# plus room for the top-left export icon and top-right web-UI icon (16px
+# each) -- reserved on EVERY node regardless of whether that specific one
+# actually has a web-UI icon, so the whole diagram can use one uniform
+# node width (see rebuild()) without any node's text ever sitting closer
+# to one icon than another. A little extra slack on top so AlignCenter
+# text never looks flush against the rounded corners.
+_NODE_TEXT_PADDING = 6 + 6 + EXPORT_ICON_SIZE + WEB_UI_ICON_SIZE + 10
+
+
+def _service_name_font() -> QFont:
+    font = QFont()
+    font.setPointSize(9)
+    return font
 
 
 def _error_badge_font() -> QFont:
@@ -88,8 +103,8 @@ EDGE_RELATIONSHIPS = [
     ("honeypot_content_sync", "honeypot_database_2"),
     ("honeypot_content_sync", "honeypot_database_3"),
     ("honeypot_content_sync", "session_store"),
-    ("suricata_ids", "vector"),
-    ("vector", "es01"),
+    ("suricata_ids", "vector_outbound"),
+    ("vector_inbound", "es01"),
     ("es01", "kibana"),
     ("init-password", "es01"),
 ]
@@ -98,7 +113,7 @@ EDGE_RELATIONSHIPS = [
 # Only drawn when both targets are the ones currently shown (both local, or
 # whichever combination the user has configured/visible).
 CROSS_TARGET_EDGES = [
-    (("edge", "vector"), ("siem", "vector")),
+    (("edge", "vector_outbound"), ("siem", "vector_inbound")),
 ]
 
 
@@ -166,12 +181,13 @@ class ServiceNode(QGraphicsObject):
 
     def __init__(
         self, target_key: str, project_label: str, service: str,
-        x: float, y: float, project: str, host: str,
+        x: float, y: float, project: str, host: str, width: float = NODE_W,
     ):
         super().__init__()
         self.target_key = target_key
         self.project_label = project_label
         self.service = service
+        self.width = width
         self.setPos(x, y)
         self.setAcceptHoverEvents(True)
         self._status = "down"
@@ -182,11 +198,11 @@ class ServiceNode(QGraphicsObject):
         self._web_ui_label = web_ui_for(project, service).label if self.web_ui_url else None
 
     def boundingRect(self) -> QRectF:
-        return QRectF(0, 0, NODE_W, NODE_H)
+        return QRectF(0, 0, self.width, NODE_H)
 
     def _web_ui_icon_rect(self) -> QRectF:
         return QRectF(
-            NODE_W - WEB_UI_ICON_SIZE - WEB_UI_ICON_MARGIN, WEB_UI_ICON_MARGIN,
+            self.width - WEB_UI_ICON_SIZE - WEB_UI_ICON_MARGIN, WEB_UI_ICON_MARGIN,
             WEB_UI_ICON_SIZE, WEB_UI_ICON_SIZE,
         )
 
@@ -208,7 +224,7 @@ class ServiceNode(QGraphicsObject):
         fm = QFontMetrics(_error_badge_font())
         w = fm.horizontalAdvance(self._error_badge_text()) + 8
         return QRectF(
-            NODE_W - w - ERROR_BADGE_MARGIN, NODE_H - ERROR_BADGE_HEIGHT - ERROR_BADGE_MARGIN,
+            self.width - w - ERROR_BADGE_MARGIN, NODE_H - ERROR_BADGE_HEIGHT - ERROR_BADGE_MARGIN,
             w, ERROR_BADGE_HEIGHT,
         )
 
@@ -251,9 +267,7 @@ class ServiceNode(QGraphicsObject):
         painter.drawRoundedRect(self.boundingRect(), 8, 8)
 
         painter.setPen(QPen(QColor("#ffffff")))
-        font = QFont()
-        font.setPointSize(9)
-        painter.setFont(font)
+        painter.setFont(_service_name_font())
         text_rect = self.boundingRect().adjusted(6, 4, -6, -4)
         text_rect.setLeft(text_rect.left() + EXPORT_ICON_SIZE)
         if self.web_ui_url:
@@ -345,6 +359,18 @@ class HealthDiagram(QGraphicsView):
         self.scene_.clear()
         self.nodes.clear()
 
+        # One uniform width for every node in the whole diagram (rather than
+        # per-node) so the grid stays visually aligned -- sized to fit the
+        # single widest service name across ALL targets being drawn.
+        fm = QFontMetrics(_service_name_font())
+        service_names = [
+            c.get("Service") or ""
+            for target in targets
+            for c in results.get(target.key, [])
+        ] or ["(no containers found)"]
+        max_text_w = max(fm.horizontalAdvance(name) for name in service_names)
+        node_w = max(NODE_W, max_text_w + _NODE_TEXT_PADDING)
+
         y_cursor = 0.0
         group_origins: dict[str, tuple[float, float, int]] = {}  # target_key -> (x0, y0, n_cols)
 
@@ -357,7 +383,7 @@ class HealthDiagram(QGraphicsView):
             n_cols = max(1, min(4, len(services)))
             n_rows = (len(services) + n_cols - 1) // n_cols
 
-            group_w = n_cols * NODE_W + (n_cols - 1) * COL_GAP + 2 * GROUP_PADDING
+            group_w = n_cols * node_w + (n_cols - 1) * COL_GAP + 2 * GROUP_PADDING
             group_h = n_rows * NODE_H + (n_rows - 1) * ROW_GAP + 2 * GROUP_PADDING + 24
 
             title = QGraphicsSimpleTextItem(target.label)
@@ -374,10 +400,10 @@ class HealthDiagram(QGraphicsView):
 
             for i, service in enumerate(services):
                 col, row = i % n_cols, i // n_cols
-                x = GROUP_PADDING + col * (NODE_W + COL_GAP)
+                x = GROUP_PADDING + col * (node_w + COL_GAP)
                 y = group_top + GROUP_PADDING + row * (NODE_H + ROW_GAP)
 
-                node = ServiceNode(target.key, target.label, service, x, y, target.project, host)
+                node = ServiceNode(target.key, target.label, service, x, y, target.project, host, width=node_w)
                 container = by_service.get(service)
                 status = classify(container)
                 node.set_status(status, status_detail(container))
@@ -420,7 +446,7 @@ class HealthDiagram(QGraphicsView):
         p1 = n1.pos() + n1.boundingRect().center()
         p2 = n2.pos() + n2.boundingRect().center()
         line = QGraphicsLineItem(p1.x(), p1.y(), p2.x(), p2.y())
-        line.setPen(QPen(QColor("#555555"), 1, Qt.PenStyle.DashLine))
+        line.setPen(QPen(QColor("#555555"), 1, Qt.PenStyle.SolidLine))
         line.setZValue(-5)
         self.scene_.addItem(line)
 

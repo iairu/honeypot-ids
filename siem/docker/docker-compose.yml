@@ -172,9 +172,9 @@ services:
       - elastic
     restart: "no"
 
-  vector:
+  vector_inbound:
     image: timberio/vector:${VECTOR_VERSION}-debian
-    container_name: vector
+    container_name: vector_inbound
     environment:
       - ELASTIC_USERNAME=${ELASTIC_USERNAME}
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
@@ -185,7 +185,7 @@ services:
     # timberio/vector:*-debian image has neither wget nor curl installed,
     # only the vector binary itself, so this failed every single run with
     # "exec: wget: executable file not found in PATH" (confirmed live via
-    # `docker inspect vector` health log) despite Vector's own /health
+    # `docker inspect vector_inbound` health log) despite Vector's own /health
     # endpoint responding correctly the whole time -- confirmed separately
     # by hitting it through bash's /dev/tcp, which IS available in this
     # image. Explicitly invoking `bash -c` (not CMD-SHELL, which runs via
