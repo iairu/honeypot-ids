@@ -66,11 +66,14 @@ setup wizard…** without losing existing values.
   is still running (not the auto-tail, which is harmless to interrupt)
   asks for confirmation first.
 - **Health** — a live, auto-refreshing (every 5s by default — adjustable
-  in Settings → General) diagram of every
-  container across all configured targets, grouped by project/target and
-  connected by lines showing the real relationships between services
-  (reverse proxy → backends → databases, edge Vector → SIEM Vector
-  aggregator → Elasticsearch → Kibana, etc.). Node color = status (see
+  in Settings → General, plus an immediate refresh the moment this page
+  becomes visible) diagram of every
+  container across all configured targets, grouped by project/target.
+  Node rectangles size themselves to always fit their service-name text,
+  and the whole diagram automatically scales down (nodes and text
+  together, never scaled up past their natural size) to fit whatever
+  window/panel size is available, so it never requires horizontal
+  scrolling on a small window. Node color = status (see
   the in-app legend: healthy / running-no-healthcheck / unhealthy /
   exited-ok / exited-with-error / **created** / down — a container that
   exited with code 0 counts as "up", not down: run-once-and-exit jobs like

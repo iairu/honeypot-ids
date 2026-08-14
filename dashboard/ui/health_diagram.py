@@ -1,22 +1,22 @@
 """Cross-referenced service diagram: one node per container (grouped by
-target), colored by health status, connected by lines representing the
-real relationships between services (reverse proxy -> backends -> DBs,
-edge Vector -> SIEM Vector aggregator -> Elasticsearch -> Kibana, etc.).
+target), colored by health status. Nodes are laid out in a per-target
+grid, sized to always fit the current window (see HealthDiagram._fit_to_
+viewport()) rather than a fixed pixel size that could force scrolling on
+a small window or look tiny on a large one.
 """
 from __future__ import annotations
 
 from PyQt6.QtCore import QRectF, QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QDesktopServices, QFont, QFontMetrics, QPainter, QPen
 from PyQt6.QtWidgets import (
-    QGraphicsLineItem, QGraphicsObject, QGraphicsScene,
-    QGraphicsSimpleTextItem, QGraphicsView,
+    QGraphicsObject, QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsView,
 )
 
 from core.web_links import build_url, web_ui_for
 from ui import theme
 from ui.error_monitor import ErrorLogMonitor
 
-NODE_W, NODE_H = 150, 44  # NODE_W is a MINIMUM now -- see _service_name_font()/rebuild()
+NODE_W, NODE_H = 120, 34  # NODE_W is a MINIMUM now -- see _service_name_font()/rebuild()
 WEB_UI_ICON_SIZE = 16
 WEB_UI_ICON_MARGIN = 3
 EXPORT_ICON_SIZE = 16
@@ -24,9 +24,9 @@ EXPORT_ICON_MARGIN = 3
 ERROR_BADGE_MARGIN = 3
 ERROR_BADGE_HEIGHT = 14
 ERROR_BADGE_COLOR = QColor("#d9302c")
-COL_GAP, ROW_GAP = 24, 18
-GROUP_PADDING = 30
-GROUP_GAP_Y = 60
+COL_GAP, ROW_GAP = 16, 12
+GROUP_PADDING = 20
+GROUP_GAP_Y = 40
 # Horizontal room a node's rounded rect needs beyond the service-name text
 # itself: 6px margin on each side (matches paint()'s own .adjusted(6, ...)),
 # plus room for the top-left export icon and top-right web-UI icon (16px
@@ -74,48 +74,6 @@ STATUS_COLORS = {
     "created": QColor("#e0a030"),        # created but never started (see classify())
     "down": QColor("#2b2b2b"),           # not present at all
 }
-
-# Static relationship map, by service NAME (applied within each target's own
-# cluster -- an edge never crosses between e.g. edge-local and edge-remote,
-# except the two explicit cross-target edges added below for the Vector
-# shipper -> aggregator link).
-EDGE_RELATIONSHIPS = [
-    ("reverse_proxy", "production_eshop"),
-    ("reverse_proxy", "honeypot_eshop_1"),
-    ("reverse_proxy", "honeypot_eshop_2"),
-    ("reverse_proxy", "honeypot_eshop_3"),
-    ("reverse_proxy", "session_store"),
-    ("production_eshop", "production_database"),
-    ("honeypot_eshop_1", "honeypot_database_1"),
-    ("honeypot_eshop_2", "honeypot_database_2"),
-    ("honeypot_eshop_3", "honeypot_database_3"),
-    ("init_setup", "production_eshop"),
-    ("init_setup", "honeypot_eshop_1"),
-    ("init_setup", "honeypot_eshop_2"),
-    ("init_setup", "honeypot_eshop_3"),
-    ("honeypot_db_migration", "honeypot_database_1"),
-    ("honeypot_db_migration", "honeypot_database_2"),
-    ("honeypot_db_migration", "honeypot_database_3"),
-    ("backup_service", "production_database"),
-    ("backup_service", "production_eshop"),
-    ("honeypot_content_sync", "production_database"),
-    ("honeypot_content_sync", "honeypot_database_1"),
-    ("honeypot_content_sync", "honeypot_database_2"),
-    ("honeypot_content_sync", "honeypot_database_3"),
-    ("honeypot_content_sync", "session_store"),
-    ("suricata_ids", "vector_outbound"),
-    ("vector_inbound", "es01"),
-    ("es01", "kibana"),
-    ("init-password", "es01"),
-]
-
-# Cross-target edges: (from_project, from_service) -> (to_project, to_service).
-# Only drawn when both targets are the ones currently shown (both local, or
-# whichever combination the user has configured/visible).
-CROSS_TARGET_EDGES = [
-    (("edge", "vector_outbound"), ("siem", "vector_inbound")),
-]
-
 
 def classify(container: dict | None) -> str:
     if container is None:
@@ -333,6 +291,12 @@ class HealthDiagram(QGraphicsView):
         self.nodes: dict[tuple[str, str], ServiceNode] = {}
         self._selected_key: tuple[str, str] | None = None
         self._last_rebuild_args: tuple | None = None
+        # The unscaled scene size we last fit the viewport to -- see
+        # _maybe_fit_to_viewport(). Only re-fitting when this actually
+        # changes (a target's container/service count changing the grid,
+        # not just a status color/badge) is what keeps a routine poll-tick
+        # rebuild() from fighting a zoom level the user set with the wheel.
+        self._fitted_content_size = None
         self._error_monitor = error_monitor
         if error_monitor is not None:
             # Lines flow in continuously (any target's auto-tailing log
@@ -372,7 +336,6 @@ class HealthDiagram(QGraphicsView):
         node_w = max(NODE_W, max_text_w + _NODE_TEXT_PADDING)
 
         y_cursor = 0.0
-        group_origins: dict[str, tuple[float, float, int]] = {}  # target_key -> (x0, y0, n_cols)
 
         for target in targets:
             containers = results.get(target.key, [])
@@ -396,7 +359,6 @@ class HealthDiagram(QGraphicsView):
             self.scene_.addItem(title)
 
             group_top = y_cursor + 24
-            group_origins[target.key] = (GROUP_PADDING, group_top + GROUP_PADDING, n_cols)
 
             for i, service in enumerate(services):
                 col, row = i % n_cols, i // n_cols
@@ -423,36 +385,52 @@ class HealthDiagram(QGraphicsView):
 
             y_cursor = group_top + group_h + GROUP_GAP_Y
 
-        self._draw_edges(group_origins)
-
         if self._selected_key in self.nodes:
             self.nodes[self._selected_key].set_selected_look(True)
 
-    def _draw_edges(self, group_origins: dict[str, tuple[float, float, int]]) -> None:
-        for from_service, to_service in EDGE_RELATIONSHIPS:
-            for target_key in group_origins:
-                self._draw_edge_if_present(target_key, from_service, target_key, to_service)
+        self._maybe_fit_to_viewport()
 
-        for (from_proj, from_svc), (to_proj, to_svc) in CROSS_TARGET_EDGES:
-            for from_key in [k for k in group_origins if k.startswith(from_proj)]:
-                for to_key in [k for k in group_origins if k.startswith(to_proj)]:
-                    self._draw_edge_if_present(from_key, from_svc, to_key, to_svc)
-
-    def _draw_edge_if_present(self, from_key, from_service, to_key, to_service) -> None:
-        n1 = self.nodes.get((from_key, from_service))
-        n2 = self.nodes.get((to_key, to_service))
-        if n1 is None or n2 is None:
+    def _maybe_fit_to_viewport(self) -> None:
+        """Re-fits the view's zoom to the current content, but only when
+        the diagram's natural (unscaled) size actually changed since the
+        last fit -- a target's container/service count changing the grid
+        shape, or the very first rebuild -- not on every routine poll-tick
+        rebuild() (colors/badges only, same layout), so a data refresh
+        never fights a zoom level the user has already set with the mouse
+        wheel. resizeEvent() below always re-fits unconditionally instead
+        -- an actual window/splitter resize is a much stronger signal that
+        the available space changed than a status update is."""
+        rect = self.scene_.itemsBoundingRect()
+        size = rect.size()
+        if self._fitted_content_size is not None and size == self._fitted_content_size:
             return
-        p1 = n1.pos() + n1.boundingRect().center()
-        p2 = n2.pos() + n2.boundingRect().center()
-        line = QGraphicsLineItem(p1.x(), p1.y(), p2.x(), p2.y())
-        line.setPen(QPen(QColor("#555555"), 1, Qt.PenStyle.SolidLine))
-        line.setZValue(-5)
-        self.scene_.addItem(line)
+        self._fitted_content_size = size
+        self._fit_to_viewport(rect)
+
+    def _fit_to_viewport(self, rect: QRectF | None = None) -> None:
+        """Scales the whole diagram down -- never up past its natural 1:1
+        size -- so every node fits within the current viewport without
+        needing horizontal scrolling. Text shrinks right along with the
+        rectangles since it's drawn inside each node's own paint() and
+        gets the view's transform applied like everything else in the
+        scene, so there's no separate "smaller font" logic needed here."""
+        if rect is None:
+            rect = self.scene_.itemsBoundingRect()
+        viewport_size = self.viewport().size()
+        if rect.isEmpty() or viewport_size.width() <= 0 or viewport_size.height() <= 0:
+            return
+        factor = min(viewport_size.width() / rect.width(), viewport_size.height() / rect.height(), 1.0)
+        self.resetTransform()
+        self.scale(factor, factor)
+        self.centerOn(rect.center())
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_to_viewport()
 
     def refresh_error_counts(self) -> None:
         """Updates every existing node's error badge in place, without
-        touching layout/edges -- see the counts_changed connection above."""
+        touching layout -- see the counts_changed connection above."""
         if self._error_monitor is None:
             return
         for (target_key, service), node in self.nodes.items():

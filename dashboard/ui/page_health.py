@@ -270,6 +270,20 @@ class HealthPage(QWidget):
         self._selected: tuple[str, str] | None = None
         self._log_exporter = LogExporter(self)
 
+    def showEvent(self, event) -> None:
+        """Forces one fresh `docker compose ps` per target the moment this
+        page becomes visible, rather than leaving the diagram showing
+        whatever the background StatusPoller (ui/main_window.py) last
+        fetched -- that poller keeps running regardless of which page is
+        open, but at up to a 300s interval (Settings), so without this the
+        diagram could be showing up-to-5-minutes-stale data for as long as
+        it takes the next tick to land. Same pattern as ExploitsPage's own
+        showEvent()-driven reachability check. Selection/log-tail/restart-
+        progress state is untouched -- apply_status() only ever rebuilds
+        the diagram and refreshes the (still-selected) detail panel."""
+        super().showEvent(event)
+        self.apply_status({t.key: t.ps() for t in self._get_targets()})
+
     def apply_status(self, results: dict[str, list[dict]]) -> None:
         targets = self._get_targets()
         self._targets_by_key = {t.key: t for t in targets}

@@ -179,6 +179,18 @@ class BackupsPage(QWidget):
         self.target_combo.currentIndexChanged.connect(self.refresh)
         self.refresh()
 
+    def showEvent(self, event) -> None:
+        """Refreshes the backup listing + activity log the moment this
+        page becomes visible -- backup_service runs on its own 24h loop
+        independently of whether this page is open, so without this,
+        switching away and back could show a listing that's hours stale
+        (or still showing an unreachable-target error banner from before
+        the target came back up). refresh() only re-populates the tables/
+        log view and error banner -- the target dropdown selection is
+        untouched."""
+        super().showEvent(event)
+        self.refresh()
+
     def rebuild_targets(self) -> None:
         """Call when remote settings change (Settings page / setup wizard)
         -- rebuilds the target dropdown, mirroring RedisPage's own

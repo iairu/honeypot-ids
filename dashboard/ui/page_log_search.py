@@ -147,6 +147,20 @@ class LogSearchPage(QWidget):
         self._apply_theme_colors()
         theme.on_change(self._apply_theme_colors)
 
+    def showEvent(self, event) -> None:
+        """Retries the last search, but ONLY if it actually errored (e.g. a
+        target was unreachable) -- if results are already showing cleanly,
+        re-running an arbitrary `--tail=<N>` grep across every selected
+        target (potentially over SSH) just because the user switched tabs
+        would be wasted work at best and would blow away their current
+        results/scroll position at worst. Only fires if there's still a
+        query typed in and at least one target checked (both already
+        implied by _last_errors being non-empty from a real prior search,
+        but guarded explicitly in case targets were deselected since)."""
+        super().showEvent(event)
+        if self._last_errors and self.search_box.text().strip() and self._selected_targets():
+            self.run_search()
+
     def rebuild_targets(self) -> None:
         """Call when remote settings change -- rebuilds the target
         checkbox list without losing which ones were already checked, for

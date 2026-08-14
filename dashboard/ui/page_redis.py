@@ -96,6 +96,18 @@ class RedisPage(QWidget):
         self.target_combo.currentIndexChanged.connect(self.refresh)
         self.refresh()
 
+    def showEvent(self, event) -> None:
+        """Refreshes the key list/chart the moment this page becomes
+        visible -- session_store's keys (sessions, threat_ips, rate
+        limits...) change continuously from live traffic whether or not
+        this page is open, so without this, switching back to it could
+        show a listing that's stale (or still showing a since-resolved
+        "unreachable" error banner). refresh() only re-populates the
+        table/chart/error banner -- the target dropdown selection is
+        untouched."""
+        super().showEvent(event)
+        self.refresh()
+
     def rebuild_targets(self) -> None:
         """Call when remote settings change (Settings page) -- rebuilds the
         target dropdown without necessarily changing the current

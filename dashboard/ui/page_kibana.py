@@ -151,6 +151,19 @@ class KibanaPage(QWidget):
         self.browser: BrowserWidget | None = None
         self._build_browser()
 
+    def showEvent(self, event) -> None:
+        """Retries the load, but ONLY if the last one actually failed (the
+        red banner is still up) -- if Kibana is already showing whatever
+        dashboard/page the user navigated to, a blind reload here would
+        throw that away for no reason (and Kibana is a stateful SPA
+        session, unlike the mostly-stateless pages elsewhere in this app).
+        Reloads the same URL that failed (not the home page), so a retry
+        after e.g. the SIEM stack finishing its own startup lands back on
+        whatever the user was actually trying to reach."""
+        super().showEvent(event)
+        if self.banner.isVisible():
+            self.browser.view.reload()
+
     def _build_browser(self) -> None:
         profile_name = _PROFILE_NAME if self.state.kibana_remember_credentials else None
         self.browser = BrowserWidget(_default_kibana_url(self.state), profile_name=profile_name)
