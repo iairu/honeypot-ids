@@ -110,11 +110,38 @@ class Target:
             flags += ["--ansi", "always"]
         return flags
 
+    @staticmethod
+    def _augment_args(compose_args: tuple[str, ...]) -> tuple[str, ...]:
+        """--remove-orphans, appended for `up`/`down` only (it's a
+        subcommand-specific option, unlike _global_flags()'s -- it has to
+        come after `up`/`down` on the command line, not before it).
+
+        Confirmed live this is a real, not theoretical, gap: renaming a
+        service in docker-compose.yml (this project's own edge/SIEM Vector
+        rename, see README's Session History) leaves its OLD container
+        running forever afterward -- compose only ever manages containers
+        for services CURRENTLY defined in the file, so a plain `down`/`up`
+        for the renamed file doesn't know the old container exists at all
+        and just leaves it there. That orphan then held onto a network and
+        a named volume across a subsequent Purge, blocking their removal
+        (confirmed: `docker compose down -v` logged "Resource is still in
+        use" for both and silently left them behind) -- exactly the kind
+        of "purge didn't actually purge, next Start behaves oddly" gap
+        that undermines "starts reliably on the first try every time".
+        `--remove-orphans` makes both directions self-healing without
+        requiring anyone to notice and manually `docker rm`/`docker volume
+        rm`/`docker network rm` the leftovers, as this session had to."""
+        if compose_args and compose_args[0] in ("up", "down"):
+            return (*compose_args, "--remove-orphans")
+        return compose_args
+
     def build(self, *compose_args: str) -> tuple[list[str], str | None]:
         """Returns (argv, cwd). cwd is None for remote (the ssh command
         does its own `cd`). See _global_flags() for what's inserted
-        between `docker compose` and the subcommand."""
+        between `docker compose` and the subcommand, and _augment_args()
+        for what's appended after it."""
         global_flags = self._global_flags(compose_args)
+        compose_args = self._augment_args(compose_args)
 
         if not self.is_remote:
             return ["docker", "compose", *global_flags, *compose_args], self._local_dir()

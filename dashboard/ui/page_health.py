@@ -30,6 +30,18 @@ from ui.process_runner import LogPanel
 
 CONTENT_SYNC_SERVICE = "honeypot_content_sync"
 
+# Explicit, theme-INDEPENDENT progress-bar text/groove colors -- same fix,
+# same reasoning, as page_services.py's own _PROGRESS_BASE_CSS (its own
+# comment has the full rationale): the default/problem chunk colors below
+# don't change with the app's light/dark/high-contrast theme, so the text
+# drawn over them can't just inherit whatever the current QPalette's
+# WindowText happens to be without risking poor contrast in some themes.
+_PROGRESS_BASE_CSS = "QProgressBar { background-color: #3a3a3a; color: #ffffff; font-weight: bold; border-radius: 3px; }"
+
+
+def _progress_chunk_css(color: str) -> str:
+    return _PROGRESS_BASE_CSS + f"QProgressBar::chunk {{ background-color: {color}; border-radius: 3px; }}"
+
 # Bound on how much of the live log tail we keep re-parsing on every
 # chunk (see _on_log_line) -- a handful of lines per replication cycle
 # (default every 300s) means this easily covers many hours of history
@@ -419,7 +431,7 @@ class HealthPage(QWidget):
         self._pending_restart_service = service
         self.restart_progress.setRange(0, 0)  # indeterminate until the next status poll
         self.restart_progress.setFormat("Restarting…")
-        self.restart_progress.setStyleSheet("")
+        self.restart_progress.setStyleSheet(_PROGRESS_BASE_CSS)
         self.restart_progress.setVisible(True)
         argv, cwd = target.build("restart", service)
         self.log_panel.run(argv, cwd)
@@ -437,7 +449,7 @@ class HealthPage(QWidget):
         status = classify(container)
         if status in ("unhealthy", "exited_bad"):
             self.restart_progress.setFormat(f"Restarting… ({status})")
-            self.restart_progress.setStyleSheet("QProgressBar::chunk { background-color: #d9534f; }")
+            self.restart_progress.setStyleSheet(_progress_chunk_css("#d9534f"))
 
     def _on_log_finished(self, exit_code: int) -> None:
         # Only the restart command itself is tracked here -- log_panel is
@@ -452,7 +464,7 @@ class HealthPage(QWidget):
             self.restart_progress.setFormat(f"Restart failed (exit {exit_code})")
             self.restart_progress.setRange(0, 1)
             self.restart_progress.setValue(1)
-            self.restart_progress.setStyleSheet("QProgressBar::chunk { background-color: #d9534f; }")
+            self.restart_progress.setStyleSheet(_progress_chunk_css("#d9534f"))
         # Resume the live log tail now that the one-shot restart command
         # has finished, same as the Services page does for its own
         # up/restart/down commands.
