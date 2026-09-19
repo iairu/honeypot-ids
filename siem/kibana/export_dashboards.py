@@ -15,12 +15,9 @@ Usage: KIBANA_URL, ELASTIC_USERNAME, ELASTIC_PASSWORD env vars (or pass
 """
 from __future__ import annotations
 
-import argparse
-import os
-import sys
 from pathlib import Path
 
-import requests
+from _kibana_client import make_session, parse_connection_args
 
 DASHBOARD_IDS = [
     "dashboard-ids-alerts", "dashboard-web-threat-overview",
@@ -28,25 +25,13 @@ DASHBOARD_IDS = [
 ]
 OUTPUT_PATH = Path(__file__).resolve().parent / "saved_objects" / "honeypot-dashboards.ndjson"
 
-
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--kibana-url", default=os.environ.get("KIBANA_URL", "https://localhost:5601"))
-    parser.add_argument("--user", default=os.environ.get("ELASTIC_USERNAME", "elastic"))
-    parser.add_argument("--password", default=os.environ.get("ELASTIC_PASSWORD"))
-    args = parser.parse_args()
-
-    if not args.password:
-        print("ELASTIC_PASSWORD not set (env var or --password)", file=sys.stderr)
-        sys.exit(1)
-
-    requests.packages.urllib3.disable_warnings()
-    resp = requests.post(
+    args = parse_connection_args()
+    session = make_session(args.user, args.password)
+    resp = session.post(
         f"{args.kibana_url}/api/saved_objects/_export",
         json={"objects": [{"type": "dashboard", "id": d} for d in DASHBOARD_IDS],
               "includeReferencesDeep": True},
-        auth=(args.user, args.password),
-        headers={"kbn-xsrf": "true"},
         verify=False,
         timeout=30,
     )
@@ -55,7 +40,6 @@ def main() -> None:
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_PATH.write_bytes(resp.content)
     print(f"Wrote {OUTPUT_PATH} ({len(resp.content)} bytes)")
-
 
 if __name__ == "__main__":
     main()

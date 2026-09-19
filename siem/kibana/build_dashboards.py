@@ -20,12 +20,12 @@ Usage: KIBANA_URL, ELASTIC_USERNAME, ELASTIC_PASSWORD env vars (or pass
 """
 from __future__ import annotations
 
-import argparse
 import json
-import os
 import sys
 
 import requests
+
+from _kibana_client import make_session, parse_connection_args
 
 DATA_VIEW_ID = "honeypot-data-view"
 
@@ -319,20 +319,8 @@ def put(session: requests.Session, base: str, obj_type: str, obj_id: str, body: 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--kibana-url", default=os.environ.get("KIBANA_URL", "https://localhost:5601"))
-    parser.add_argument("--user", default=os.environ.get("ELASTIC_USERNAME", "elastic"))
-    parser.add_argument("--password", default=os.environ.get("ELASTIC_PASSWORD"))
-    args = parser.parse_args()
-
-    if not args.password:
-        print("ELASTIC_PASSWORD not set (env var or --password)", file=sys.stderr)
-        sys.exit(1)
-
-    requests.packages.urllib3.disable_warnings()  # self-signed cert, deliberate -k equivalent
-    session = requests.Session()
-    session.auth = (args.user, args.password)
-    session.headers["kbn-xsrf"] = "true"
+    args = parse_connection_args()
+    session = make_session(args.user, args.password)
 
     put(session, args.kibana_url, "index-pattern", DATA_VIEW_ID,
         {"attributes": {"title": "honeypot-*", "timeFieldName": "timestamp"}})
