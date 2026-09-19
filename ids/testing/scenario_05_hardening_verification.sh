@@ -52,6 +52,8 @@ TARGET_HOST="${1:-127.0.0.1}"
 TARGET_PORT="${2:-443}"
 BASE_URL="https://${TARGET_HOST}:${TARGET_PORT}"
 
+source "$(dirname "$0")/lib/scenario_common.sh"
+
 # Docker Compose project container names (adjust if project name differs).
 PROD_CONTAINER="honeypot-ids-system-v1-production_eshop-1"
 HP_CONTAINER="honeypot-ids-system-v1-honeypot_eshop_1-1"
@@ -61,21 +63,6 @@ PASS=0
 FAIL=0
 SKIP=0
 TOTAL=0
-
-# ---------------------------------------------------------------------------
-# Colour helpers
-# ---------------------------------------------------------------------------
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-banner() {
-    printf "\n${CYAN}================================================================${NC}\n"
-    printf "${CYAN}  %s${NC}\n" "$1"
-    printf "${CYAN}================================================================${NC}\n\n"
-}
 
 # ---------------------------------------------------------------------------
 # Utility: assert HTTP status code
