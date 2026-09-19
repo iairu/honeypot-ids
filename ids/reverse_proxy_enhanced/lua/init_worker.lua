@@ -3,6 +3,7 @@
 
 local cjson = require "cjson"
 local suricata_rules = require "suricata_rules"
+local threat_intel = require "threat_intel"
 
 -- Try to load optional modules
 local http_ok, http = pcall(require, "resty.http")
@@ -298,19 +299,9 @@ local function init_worker()
                                         alert.src_ip, " is private/internal (container-to-container hop, not ",
                                         "an attributable external client): ", alert.signature)
                             else
-                                -- Update threat intelligence.
-                                -- red:get() returns the ngx.null userdata sentinel for
-                                -- a missing key, not Lua nil -- "if current_intel then"
-                                -- doesn't catch that (ngx.null is truthy), so
-                                -- cjson.decode() would crash with "string expected,
-                                -- got userdata" on a fresh/flushed Redis (same bug
-                                -- already fixed this session in admin_handler.lua,
-                                -- upload_handler.lua, and vulnerability_handler.lua).
-                                local current_intel = red:get("threat_ips")
-                                local threat_ips = {}
-                                if current_intel and current_intel ~= ngx.null then
-                                    threat_ips = cjson.decode(current_intel)
-                                end
+                                -- Update threat intelligence (threat_intel.load
+                                -- handles the ngx.null-on-missing-key decode safely).
+                                local threat_ips = threat_intel.load(red)
 
                                 -- raw_score is graded by Suricata's own
                                 -- severity field (suricata_rules.
@@ -346,19 +337,7 @@ local function init_worker()
                                     alert_count = (previous and previous.alert_count or 0) + 1,
                                 }
 
-                                local encoded_threat_ips = cjson.encode(threat_ips)
-                                red:set("threat_ips", encoded_threat_ips)
-
-                                -- Mirror into the shared-memory cache threat_analyzer.lua
-                                -- actually reads on the hot path (it never touches Redis
-                                -- directly, for latency) -- without this, a Suricata
-                                -- alert would update Redis's durable threat_ips record
-                                -- but have zero effect on live routing/scoring until
-                                -- something else happened to refresh the shared dict.
-                                local threat_intel_shared = ngx.shared.threat_intel
-                                if threat_intel_shared then
-                                    threat_intel_shared:set("threat_ips", encoded_threat_ips)
-                                end
+                                threat_intel.persist(red, threat_ips)
 
                                 ngx.log(ngx.WARN, "Suricata alert processed: ", alert.src_ip, " -> ", alert.signature,
                                         " (severity ", alert.severity or "?", ", raw_score now ",

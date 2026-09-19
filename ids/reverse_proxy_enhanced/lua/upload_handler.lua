@@ -5,6 +5,7 @@ local cjson = require "cjson"
 local resty_sha1 = require "resty.sha1"
 local str = require "resty.string"
 local upload_rules = require "upload_rules"
+local threat_intel = require "threat_intel"
 
 local _M = {}
 
@@ -163,46 +164,21 @@ function _M.update_ip_threat_for_upload(ip, upload_threat_score)
         return
     end
     
-    -- red:get() returns the ngx.null userdata sentinel for a missing key,
-    -- not Lua nil -- "or '{}'" doesn't catch that (ngx.null is truthy), so
-    -- cjson.decode() crashed with "string expected, got userdata" on a
-    -- fresh/flushed Redis. Confirmed live: this crash aborted the request
-    -- (500) right after analyze_upload() had already correctly detected a
-    -- malicious upload, so the honeypot reroute never happened either.
-    local threat_data = red:get('threat_ips')
-    if not threat_data or threat_data == ngx.null then
-        threat_data = '{}'
-    end
-    local threats = cjson.decode(threat_data)
-    
-    if not threats[ip] then
-        threats[ip] = {
-            raw_score = 0,
-            reason = "clean",
-            updated = ngx.time()
-        }
-    end
+    -- Load, default, and persist (Redis + shared-dict mirror) all go
+    -- through threat_intel, which centralizes the ngx.null-on-missing-key
+    -- handling that used to crash this path on a fresh/flushed Redis.
+    local threats = threat_intel.load(red)
+    local entry = threat_intel.ensure(threats, ip)
 
-    -- Add upload-specific threat score
-    local additional_score = math.floor(upload_threat_score / 2)  -- Scale down for IP reputation
-    threats[ip].raw_score = math.min(threats[ip].raw_score + additional_score, 100)
-    threats[ip].reason = "suspicious_upload_activity"
-    threats[ip].updated = ngx.time()
-    threats[ip].upload_attempts = (threats[ip].upload_attempts or 0) + 1
-    
-    local encoded_threats = cjson.encode(threats)
-    red:set('threat_ips', encoded_threats)
+    -- Add upload-specific threat score (scaled down for IP reputation).
+    local additional_score = math.floor(upload_threat_score / 2)
+    entry.raw_score = math.min(entry.raw_score + additional_score, 100)
+    entry.reason = "suspicious_upload_activity"
+    entry.updated = ngx.time()
+    entry.upload_attempts = (entry.upload_attempts or 0) + 1
+
+    threat_intel.persist(red, threats)
     _G.redis_pool.close_connection(red)
-
-    -- Mirror into the shared-memory cache threat_analyzer.lua actually reads
-    -- on the hot path (it never touches Redis directly, for latency) --
-    -- without this, a suspicious-upload detection would update Redis's
-    -- durable threat_ips record but have zero effect on live routing/scoring
-    -- until something else happened to refresh the shared dict.
-    local threat_intel_shared = ngx.shared.threat_intel
-    if threat_intel_shared then
-        threat_intel_shared:set("threat_ips", encoded_threats)
-    end
 end
 
 -- Generate upload security report
