@@ -21,7 +21,7 @@ Alternatively, double-click (or `xdg-desktop-menu install`) the included
 `Dashboard.desktop` launcher for a normal GUI-app entry (menu/dock icon,
 no terminal window) instead of running `run.sh` from a shell. It calls
 `run.sh` with an absolute path baked in for this checkout
-(`/home/ondrej/Desktop/DP_Repository/dashboard`), so if you clone the
+(`/home/ondrej/Desktop/DP_honeypot/honeypot-ids/dashboard`), so if you clone the
 repo somewhere else, edit its `Exec=`/`Path=` lines to match.
 
 On first launch (no `state.json` yet), a setup wizard walks through the

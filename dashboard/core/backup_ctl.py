@@ -33,12 +33,12 @@ from __future__ import annotations
 import json
 import re
 import shlex
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from core.docker_ctl import Target
+from core.proc import run_checked
 from core.state import RemoteConfig
 
 BACKUP_SERVICE = "backup_service"
@@ -104,15 +104,7 @@ class BackupLogEntry:
 
 def _run(target: Target, *compose_args: str, timeout: float = 15.0) -> str:
     argv, cwd = target.build(*compose_args)
-    try:
-        result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise BackupCtlError("Command timed out.")
-    except OSError as e:
-        raise BackupCtlError(f"Could not run command: {e}")
-    if result.returncode != 0:
-        raise BackupCtlError(result.stderr.strip() or f"Command exited with code {result.returncode}")
-    return result.stdout
+    return run_checked(argv, error=BackupCtlError, cwd=cwd, timeout=timeout).stdout
 
 
 def _run_binary(
@@ -124,18 +116,9 @@ def _run_binary(
     stream, and an optional input_bytes piped to stdin (import's `cat >
     file` on the remote end)."""
     argv, cwd = target.build(*compose_args)
-    try:
-        result = subprocess.run(
-            argv, cwd=cwd, input=input_bytes, capture_output=True, timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        raise BackupCtlError("Command timed out.")
-    except OSError as e:
-        raise BackupCtlError(f"Could not run command: {e}")
-    if result.returncode != 0:
-        stderr = result.stderr.decode(errors="replace").strip()
-        raise BackupCtlError(stderr or f"Command exited with code {result.returncode}")
-    return result.stdout
+    return run_checked(
+        argv, error=BackupCtlError, cwd=cwd, timeout=timeout, input=input_bytes, text=False,
+    ).stdout
 
 
 def _backup_subdir(filename: str) -> str:

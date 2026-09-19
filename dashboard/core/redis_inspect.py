@@ -18,12 +18,11 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from dataclasses import dataclass
 
 from core.docker_ctl import Target
-from core.env_upload import download_env_text
-from core.paths import EDGE_ENV_FILE
+from core.env_upload import EnvUploadError, load_project_env
+from core.proc import run_checked
 from core.state import RemoteConfig
 
 REDIS_SERVICE = "session_store"
@@ -160,21 +159,16 @@ class RedisKeyInfo:
 
 
 def _get_redis_password(remote: RemoteConfig | None, timeout: float = 10.0) -> str:
-    if remote is None:
-        if not EDGE_ENV_FILE.exists():
-            raise RedisInspectError(f"{EDGE_ENV_FILE} not found -- run the setup wizard first.")
-        text = EDGE_ENV_FILE.read_text()
-    else:
-        try:
-            text = download_env_text("edge", remote, timeout=timeout)
-        except Exception as e:
-            raise RedisInspectError(f"Could not read remote .env: {e}")
-
-    for line in text.splitlines():
-        line = line.strip()
-        if line.startswith("REDIS_PASSWORD="):
-            return line.split("=", 1)[1].strip()
-    raise RedisInspectError("REDIS_PASSWORD not set in .env")
+    try:
+        env = load_project_env("edge", remote, timeout=timeout)
+    except EnvUploadError as e:
+        raise RedisInspectError(f"Could not read remote .env: {e}")
+    password = env.get("REDIS_PASSWORD")
+    if not password:
+        if remote is None and not env.path.exists():
+            raise RedisInspectError(f"{env.path} not found -- run the setup wizard first.")
+        raise RedisInspectError("REDIS_PASSWORD not set in .env")
+    return password
 
 
 def _run_redis_cli(
@@ -187,18 +181,13 @@ def _run_redis_cli(
         "exec", "-T", REDIS_SERVICE, "redis-cli", "-a", password, *raw_flag, *args,
     )
     try:
-        result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise RedisInspectError("redis-cli timed out.")
-    except OSError as e:
-        raise RedisInspectError(f"Could not run redis-cli: {e}")
-
-    if result.returncode != 0:
-        stderr = re.sub(r"^Warning: Using a password.*\n?", "", result.stderr).strip()
-        raise RedisInspectError(stderr or f"redis-cli exited with code {result.returncode}")
-
-    # The "-a" password warning goes to stderr, not stdout, so stdout is
-    # already clean -- no stripping needed there.
+        result = run_checked(argv, error=RedisInspectError, cwd=cwd, timeout=timeout, what="redis-cli")
+    except RedisInspectError as e:
+        # The "-a" password warning goes to stderr -- strip it out of a
+        # failure message so the actual error is what the user sees.
+        message = re.sub(r"^Warning: Using a password.*\n?", "", str(e), flags=re.MULTILINE).strip()
+        raise RedisInspectError(message or str(e))
+    # stdout is already clean (the warning only ever goes to stderr).
     return result.stdout
 
 

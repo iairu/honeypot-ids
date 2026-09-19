@@ -33,7 +33,7 @@ import json
 
 from PyQt6.QtWidgets import QCheckBox, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from core.docker_ctl import Target
+from core.docker_ctl import target_for
 from core.kibana_credentials import get_elastic_credentials
 from core.state import AppState
 from ui.browser_widget import BrowserWidget
@@ -201,8 +201,7 @@ class KibanaPage(QWidget):
             self._maybe_autologin()
             return
 
-        remote = self.state.remote_siem if self.state.remote_siem.is_configured() else None
-        target = Target(project="siem", remote=remote)
+        target = target_for("siem", self.state)
         containers = target.ps()
         kibana_container = next((c for c in containers if c.get("Service") == "kibana"), None)
 

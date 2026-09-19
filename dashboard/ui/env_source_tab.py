@@ -130,7 +130,7 @@ class EnvSourceTab(QWidget):
             return
 
         self._clear_editor()
-        remote_env_path = f"{Target(project=self.project, remote=remote).remote_compose_dir()}/.env"
+        remote_env_path = Target(project=self.project, remote=remote).remote_env_path()
         self.status_label.setText(f"Fetching {remote_env_path} from {remote.user}@{remote.host}…")
         self.status_label.setStyleSheet("color: #888888;")
         self.repaint()
@@ -172,7 +172,7 @@ class EnvSourceTab(QWidget):
             except EnvUploadError as e:
                 QMessageBox.warning(self, "Save to remote failed", str(e))
                 return
-            remote_env_path = f"{Target(project=self.project, remote=remote).remote_compose_dir()}/.env"
+            remote_env_path = Target(project=self.project, remote=remote).remote_env_path()
             QMessageBox.information(
                 self, "Saved",
                 f"Saved to {remote.user}@{remote.host}:{remote_env_path}",

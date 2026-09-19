@@ -22,9 +22,8 @@ from core.shell_ctl import build_shell_command
 from core.web_links import build_url, web_ui_for
 from ui.error_monitor import ErrorLogMonitor, is_error_log_line
 from ui.flow_layout import FlowLayout
-from ui.health_diagram import (
-    HealthDiagram, STATUS_COLORS, classify, is_ready, status_detail,
-)
+from core.container_status import classify, is_ready, status_detail
+from ui.health_diagram import HealthDiagram, STATUS_COLORS
 from ui.log_export import LogExporter
 from ui.process_runner import LogPanel
 
@@ -543,8 +542,7 @@ class HealthPage(QWidget):
         target = self._targets_by_key.get(target_key)
         if target is None:
             return
-        host = target.remote.host if target.is_remote else "127.0.0.1"
-        url = build_url(target.project, service, host)
+        url = build_url(target.project, service, target.host)
         if url:
             QDesktopServices.openUrl(QUrl(url))
 

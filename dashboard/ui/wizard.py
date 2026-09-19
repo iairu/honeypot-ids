@@ -264,7 +264,7 @@ class RemoteAwareEnvPage(TimelineMixin, QWizardPage):
         remote = self._remote_config()
 
         if remote.enabled and remote.is_configured():
-            remote_env_path = f"{Target(project=self.project, remote=remote).remote_compose_dir()}/.env"
+            remote_env_path = Target(project=self.project, remote=remote).remote_env_path()
             self.info.setText(f"Fetching {remote_env_path} from {remote.user}@{remote.host}…")
             self.repaint()
             try:
@@ -318,7 +318,7 @@ class RemoteAwareEnvPage(TimelineMixin, QWizardPage):
             try:
                 upload_env_text(self.env_file.render(), self.project, remote)
             except EnvUploadError as e:
-                remote_env_path = f"{Target(project=self.project, remote=remote).remote_compose_dir()}/.env"
+                remote_env_path = Target(project=self.project, remote=remote).remote_env_path()
                 QMessageBox.warning(
                     self, "Save to remote failed",
                     f"Could not write to {remote.user}@{remote.host}:"

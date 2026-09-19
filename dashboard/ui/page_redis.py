@@ -10,15 +10,17 @@ from PyQt6.QtCharts import QBarCategoryAxis, QBarSeries, QBarSet, QChart, QChart
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPainter
 from PyQt6.QtWidgets import (
-    QComboBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPlainTextEdit,
+    QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPlainTextEdit,
     QPushButton, QSplitter, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from core.docker_ctl import Target, targets_for
+from core.colors import RED
+from core.docker_ctl import targets_for
 from core.redis_inspect import (
     RedisInspectError, RedisKeyInfo, dbsize, flush_all, get_threat_scores, get_value, list_keys,
 )
 from core.state import AppState, RemoteConfig
+from ui.common import ErrorBanner, TargetSelector, confirm, danger_button, set_status
 from ui.process_runner import LogPanel
 
 
@@ -26,14 +28,13 @@ class RedisPage(QWidget):
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.state = state
-        self._targets: list[Target] = []
         self._keys: list[RedisKeyInfo] = []
 
         layout = QVBoxLayout(self)
 
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("Target:"))
-        self.target_combo = QComboBox()
+        self.target_combo = TargetSelector(lambda: targets_for("edge", self.state))
         toolbar.addWidget(self.target_combo)
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.clicked.connect(self.refresh)
@@ -41,18 +42,11 @@ class RedisPage(QWidget):
         self.dbsize_label = QLabel("")
         toolbar.addWidget(self.dbsize_label)
         toolbar.addStretch()
-        self.reset_btn = QPushButton("Reset Redis KV store…")
-        self.reset_btn.setStyleSheet("QPushButton { color: #d9534f; }")
-        self.reset_btn.clicked.connect(self._reset)
+        self.reset_btn = danger_button("Reset Redis KV store…", self._reset)
         toolbar.addWidget(self.reset_btn)
         layout.addLayout(toolbar)
 
-        self.error_banner = QLabel("")
-        self.error_banner.setWordWrap(True)
-        self.error_banner.setStyleSheet(
-            "background-color: #d9534f; color: white; padding: 6px; border-radius: 4px;"
-        )
-        self.error_banner.setVisible(False)
+        self.error_banner = ErrorBanner()
         layout.addWidget(self.error_banner)
 
         # Only ever shows output for the Reset action's reverse_proxy
@@ -92,7 +86,6 @@ class RedisPage(QWidget):
         splitter.addWidget(right)
         splitter.setSizes([500, 500])
 
-        self.rebuild_targets()
         self.target_combo.currentIndexChanged.connect(self.refresh)
         self.refresh()
 
@@ -109,31 +102,14 @@ class RedisPage(QWidget):
         self.refresh()
 
     def rebuild_targets(self) -> None:
-        """Call when remote settings change (Settings page) -- rebuilds the
-        target dropdown without necessarily changing the current
-        selection's meaning if it still exists."""
-        self.target_combo.blockSignals(True)
-        self.target_combo.clear()
-        self._targets = targets_for("edge", self.state.remote_edge, self.state.remote_siem)
-        for t in self._targets:
-            self.target_combo.addItem(t.label)
-        self.target_combo.blockSignals(False)
-
-    def _current_target(self) -> Target | None:
-        idx = self.target_combo.currentIndex()
-        if 0 <= idx < len(self._targets):
-            return self._targets[idx]
-        return None
-
-    def _current_remote(self) -> RemoteConfig | None:
-        target = self._current_target()
-        return target.remote if target else None
+        """Call when remote settings change (Settings page)."""
+        self.target_combo.rebuild()
 
     def _reset(self) -> None:
-        target = self._current_target()
+        target = self.target_combo.current_target()
         if target is None:
             return
-        reply = QMessageBox.warning(
+        if not confirm(
             self, "Confirm Redis reset",
             "This wipes EVERY key in session_store's Redis (FLUSHALL) -- "
             "including attacker IP classification/reputation (threat_ips, "
@@ -147,10 +123,7 @@ class RedisPage(QWidget):
             "-- without the restart, stale scores would keep being applied "
             "despite Redis itself being empty. This cannot be undone. "
             "Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        ):
             return
         try:
             flush_all(target.remote)
@@ -167,7 +140,7 @@ class RedisPage(QWidget):
             self.refresh()
 
     def refresh(self) -> None:
-        remote = self._current_remote()
+        remote = self.target_combo.current_remote()
         try:
             self._keys = list_keys(remote)
             size = dbsize(remote)
@@ -178,14 +151,10 @@ class RedisPage(QWidget):
             error = str(e)
 
         if error:
-            self.dbsize_label.setText("unreachable")
-            self.dbsize_label.setStyleSheet("color: #d9534f;")
-            self.error_banner.setText(f"⚠ session_store (Redis) unreachable: {error}")
-            self.error_banner.setVisible(True)
+            set_status(self.dbsize_label, "unreachable", RED)
         else:
-            self.dbsize_label.setText(f"{size} keys")
-            self.dbsize_label.setStyleSheet("")
-            self.error_banner.setVisible(False)
+            set_status(self.dbsize_label, f"{size} keys")
+        self.error_banner.set_error(error, prefix="⚠ session_store (Redis) unreachable: ")
 
         self.table.setRowCount(len(self._keys))
         for row, info in enumerate(self._keys):
@@ -206,7 +175,7 @@ class RedisPage(QWidget):
         if row >= len(self._keys):
             return
         info = self._keys[row]
-        remote = self._current_remote()
+        remote = self.target_combo.current_remote()
         try:
             value = get_value(remote, info.name, info.type)
         except RedisInspectError as e:

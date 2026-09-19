@@ -17,7 +17,7 @@ import html
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog,
+    QFileDialog, QGroupBox, QHBoxLayout, QHeaderView, QInputDialog,
     QLabel, QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -27,8 +27,10 @@ from core.backup_ctl import (
     list_backups, read_backup_log, reseed_command, restore_db_command,
     restore_wp_command, set_label,
 )
-from core.docker_ctl import Target, targets_for
-from core.state import AppState, RemoteConfig
+from core.colors import GREEN, RED
+from core.docker_ctl import targets_for
+from core.state import AppState
+from ui.common import ErrorBanner, TargetSelector, confirm, danger_button
 from ui.process_runner import LogPanel
 
 
@@ -75,13 +77,12 @@ class BackupsPage(QWidget):
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.state = state
-        self._targets: list[Target] = []
 
         layout = QVBoxLayout(self)
 
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel("Target:"))
-        self.target_combo = QComboBox()
+        self.target_combo = TargetSelector(lambda: targets_for("edge", self.state))
         toolbar.addWidget(self.target_combo)
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.clicked.connect(self.refresh)
@@ -92,72 +93,24 @@ class BackupsPage(QWidget):
         # core/backup_ctl.reseed_command). Not a "backup" action itself,
         # but lives here since it's the same "reset the eshop's data to a
         # known state" family of operation as restore.
-        self.reseed_btn = QPushButton("Reset demo store…")
-        self.reseed_btn.setStyleSheet("QPushButton { color: #d9534f; }")
-        self.reseed_btn.clicked.connect(self._reseed)
+        self.reseed_btn = danger_button("Reset demo store…", self._reseed)
         toolbar.addWidget(self.reseed_btn)
         layout.addLayout(toolbar)
 
-        self.error_banner = QLabel("")
-        self.error_banner.setWordWrap(True)
-        self.error_banner.setStyleSheet(
-            "background-color: #d9534f; color: white; padding: 6px; border-radius: 4px;"
-        )
-        self.error_banner.setVisible(False)
+        self.error_banner = ErrorBanner()
         layout.addWidget(self.error_banner)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(splitter, stretch=2)
 
-        db_box = QGroupBox("Database dumps")
-        db_layout = QVBoxLayout(db_box)
         self.db_table = _BackupTable()
-        db_layout.addWidget(self.db_table)
-        db_btn_row = QHBoxLayout()
-        self.label_db_btn = QPushButton("Label…")
-        self.label_db_btn.clicked.connect(lambda: self._label(self.db_table))
-        db_btn_row.addWidget(self.label_db_btn)
-        self.export_db_btn = QPushButton("Export…")
-        self.export_db_btn.clicked.connect(lambda: self._export(self.db_table))
-        db_btn_row.addWidget(self.export_db_btn)
-        self.import_db_btn = QPushButton("Import…")
-        self.import_db_btn.clicked.connect(lambda: self._import("db"))
-        db_btn_row.addWidget(self.import_db_btn)
-        self.delete_db_btn = QPushButton("Delete")
-        self.delete_db_btn.setStyleSheet("QPushButton { color: #d9534f; }")
-        self.delete_db_btn.clicked.connect(lambda: self._delete(self.db_table))
-        db_btn_row.addWidget(self.delete_db_btn)
-        db_layout.addLayout(db_btn_row)
-        self.restore_db_btn = QPushButton("Restore selected dump…")
-        self.restore_db_btn.setStyleSheet("QPushButton { color: #d9534f; }")
-        self.restore_db_btn.clicked.connect(self._restore_db)
-        db_layout.addWidget(self.restore_db_btn)
-        splitter.addWidget(db_box)
-
-        wp_box = QGroupBox("WordPress file archives")
-        wp_layout = QVBoxLayout(wp_box)
+        splitter.addWidget(self._build_backup_group(
+            "Database dumps", self.db_table, "db", "Restore selected dump…", self._restore_db,
+        ))
         self.wp_table = _BackupTable()
-        wp_layout.addWidget(self.wp_table)
-        wp_btn_row = QHBoxLayout()
-        self.label_wp_btn = QPushButton("Label…")
-        self.label_wp_btn.clicked.connect(lambda: self._label(self.wp_table))
-        wp_btn_row.addWidget(self.label_wp_btn)
-        self.export_wp_btn = QPushButton("Export…")
-        self.export_wp_btn.clicked.connect(lambda: self._export(self.wp_table))
-        wp_btn_row.addWidget(self.export_wp_btn)
-        self.import_wp_btn = QPushButton("Import…")
-        self.import_wp_btn.clicked.connect(lambda: self._import("wp"))
-        wp_btn_row.addWidget(self.import_wp_btn)
-        self.delete_wp_btn = QPushButton("Delete")
-        self.delete_wp_btn.setStyleSheet("QPushButton { color: #d9534f; }")
-        self.delete_wp_btn.clicked.connect(lambda: self._delete(self.wp_table))
-        wp_btn_row.addWidget(self.delete_wp_btn)
-        wp_layout.addLayout(wp_btn_row)
-        self.restore_wp_btn = QPushButton("Restore selected archive…")
-        self.restore_wp_btn.setStyleSheet("QPushButton { color: #d9534f; }")
-        self.restore_wp_btn.clicked.connect(self._restore_wp)
-        wp_layout.addWidget(self.restore_wp_btn)
-        splitter.addWidget(wp_box)
+        splitter.addWidget(self._build_backup_group(
+            "WordPress file archives", self.wp_table, "wp", "Restore selected archive…", self._restore_wp,
+        ))
 
         activity_box = QGroupBox("Recent backup activity (backup.log)")
         activity_layout = QVBoxLayout(activity_box)
@@ -168,16 +121,38 @@ class BackupsPage(QWidget):
         activity_layout.addWidget(self.activity_view)
         layout.addWidget(activity_box)
 
-        log_label = QLabel("Restore / reset output:")
-        layout.addWidget(log_label)
+        layout.addWidget(QLabel("Restore / reset output:"))
         self.log_panel = LogPanel(show_stop_button=False)
         self.log_panel.setMinimumHeight(140)
         self.log_panel.finished.connect(self._on_action_finished)
         layout.addWidget(self.log_panel, stretch=1)
 
-        self.rebuild_targets()
         self.target_combo.currentIndexChanged.connect(self.refresh)
         self.refresh()
+
+    def _build_backup_group(
+        self, title: str, table: _BackupTable, kind: str, restore_text: str, restore_fn,
+    ) -> QGroupBox:
+        """One of the two backup-kind panels: its table, the shared
+        Label/Export/Import/Delete row, and the kind's restore button."""
+        box = QGroupBox(title)
+        box_layout = QVBoxLayout(box)
+        box_layout.addWidget(table)
+
+        btn_row = QHBoxLayout()
+        for text, handler in (
+            ("Label…", lambda: self._label(table)),
+            ("Export…", lambda: self._export(table)),
+            ("Import…", lambda: self._import(kind)),
+        ):
+            btn = QPushButton(text)
+            btn.clicked.connect(handler)
+            btn_row.addWidget(btn)
+        btn_row.addWidget(danger_button("Delete", lambda: self._delete(table)))
+        box_layout.addLayout(btn_row)
+
+        box_layout.addWidget(danger_button(restore_text, restore_fn))
+        return box
 
     def showEvent(self, event) -> None:
         """Refreshes the backup listing + activity log the moment this
@@ -192,28 +167,11 @@ class BackupsPage(QWidget):
         self.refresh()
 
     def rebuild_targets(self) -> None:
-        """Call when remote settings change (Settings page / setup wizard)
-        -- rebuilds the target dropdown, mirroring RedisPage's own
-        rebuild_targets()."""
-        self.target_combo.blockSignals(True)
-        self.target_combo.clear()
-        self._targets = targets_for("edge", self.state.remote_edge, self.state.remote_siem)
-        for t in self._targets:
-            self.target_combo.addItem(t.label)
-        self.target_combo.blockSignals(False)
-
-    def _current_target(self) -> Target | None:
-        idx = self.target_combo.currentIndex()
-        if 0 <= idx < len(self._targets):
-            return self._targets[idx]
-        return None
-
-    def _current_remote(self) -> RemoteConfig | None:
-        target = self._current_target()
-        return target.remote if target else None
+        """Call when remote settings change (Settings page / setup wizard)."""
+        self.target_combo.rebuild()
 
     def refresh(self) -> None:
-        remote = self._current_remote()
+        remote = self.target_combo.current_remote()
         try:
             db_files, wp_files = list_backups(remote)
             log_entries = read_backup_log(remote, tail=50)
@@ -227,23 +185,19 @@ class BackupsPage(QWidget):
 
         self.activity_view.clear()
         for entry in log_entries:
-            color = "#d9534f" if entry.status == "failure" else "#5cb85c"
+            color = RED if entry.status == "failure" else GREEN
             line = f"{entry.timestamp}  {entry.status:8s} {entry.step:12s} {entry.detail}"
             line_html = html.escape(line).replace(" ", "&nbsp;")
             self.activity_view.appendHtml(f'<span style="color:{color};">{line_html}</span>')
 
-        if error:
-            self.error_banner.setText(f"⚠ backup_service unreachable: {error}")
-            self.error_banner.setVisible(True)
-        else:
-            self.error_banner.setVisible(False)
+        self.error_banner.set_error(error, prefix="⚠ backup_service unreachable: ")
 
     def _restore_db(self) -> None:
-        target = self._current_target()
+        target = self.target_combo.current_target()
         selected = self.db_table.selected_file()
         if target is None or selected is None:
             return
-        reply = QMessageBox.warning(
+        if not confirm(
             self, "Confirm database restore",
             f"This will overwrite the LIVE production database on {target.label} "
             f"with the contents of:\n\n{selected.filename}\n"
@@ -251,10 +205,7 @@ class BackupsPage(QWidget):
             "Any data written since that backup was taken (including anything "
             "an attacker may have added since) will be lost. This cannot be undone. "
             "Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        ):
             return
         try:
             argv, cwd = restore_db_command(target.remote, selected.filename)
@@ -264,11 +215,11 @@ class BackupsPage(QWidget):
         self.log_panel.run(argv, cwd)
 
     def _restore_wp(self) -> None:
-        target = self._current_target()
+        target = self.target_combo.current_target()
         selected = self.wp_table.selected_file()
         if target is None or selected is None:
             return
-        reply = QMessageBox.warning(
+        if not confirm(
             self, "Confirm WordPress file restore",
             f"This will overwrite the LIVE production WordPress files on {target.label} "
             f"with the contents of:\n\n{selected.filename}\n"
@@ -277,10 +228,7 @@ class BackupsPage(QWidget):
             "an attacker may have uploaded since) will be overwritten where the "
             "archive has a matching file, though nothing added since is deleted. "
             "This cannot be undone. Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        ):
             return
         try:
             argv, cwd = restore_wp_command(target.remote, selected.filename)
@@ -290,7 +238,7 @@ class BackupsPage(QWidget):
         self.log_panel.run(argv, cwd)
 
     def _label(self, table: _BackupTable) -> None:
-        remote = self._current_remote()
+        remote = self.target_combo.current_remote()
         selected = table.selected_file()
         if selected is None:
             return
@@ -308,19 +256,16 @@ class BackupsPage(QWidget):
         self.refresh()
 
     def _delete(self, table: _BackupTable) -> None:
-        remote = self._current_remote()
+        remote = self.target_combo.current_remote()
         selected = table.selected_file()
         if selected is None:
             return
-        reply = QMessageBox.warning(
+        if not confirm(
             self, "Confirm delete",
             f"This permanently deletes the backup file:\n\n{selected.filename}\n\n"
             "This does not affect the live production database/files -- only the "
             "backup copy itself. This cannot be undone. Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        ):
             return
         try:
             delete_backup(remote, selected.filename)
@@ -330,7 +275,7 @@ class BackupsPage(QWidget):
         self.refresh()
 
     def _export(self, table: _BackupTable) -> None:
-        remote = self._current_remote()
+        remote = self.target_combo.current_remote()
         selected = table.selected_file()
         if selected is None:
             return
@@ -345,7 +290,7 @@ class BackupsPage(QWidget):
         QMessageBox.information(self, "Exported", f"Saved {selected.filename} to:\n{dest}")
 
     def _import(self, kind: str) -> None:
-        remote = self._current_remote()
+        remote = self.target_combo.current_remote()
         name_filter = "DB dumps (*.sql.gz)" if kind == "db" else "WP archives (*.tar.gz)"
         src, _ = QFileDialog.getOpenFileName(self, "Import backup…", "", name_filter)
         if not src:
@@ -359,19 +304,16 @@ class BackupsPage(QWidget):
         QMessageBox.information(self, "Imported", f"Imported as {imported_name}")
 
     def _reseed(self) -> None:
-        target = self._current_target()
+        target = self.target_combo.current_target()
         if target is None:
             return
-        reply = QMessageBox.warning(
+        if not confirm(
             self, "Confirm demo store reset",
             f"This wipes and rebuilds the ENTIRE live production database on {target.label} "
             "(WordPress, WooCommerce, Elementor, every product/page/order) from a clean "
             "seed -- everything currently there, including anything an attacker has done, "
             "will be lost. This cannot be undone. Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        ):
             return
         try:
             argv, cwd = reseed_command(target.remote, force=True)

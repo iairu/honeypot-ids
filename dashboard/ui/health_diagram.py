@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QGraphicsObject, QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsView,
 )
 
+from core.container_status import classify, is_ready, status_detail  # noqa: F401 -- re-exported
 from core.web_links import build_url, web_ui_for
 from ui import theme
 from ui.error_monitor import ErrorLogMonitor
@@ -74,58 +75,6 @@ STATUS_COLORS = {
     "created": QColor("#e0a030"),        # created but never started (see classify())
     "down": QColor("#2b2b2b"),           # not present at all
 }
-
-def classify(container: dict | None) -> str:
-    if container is None:
-        return "down"
-    state = container.get("State", "")
-    health = container.get("Health", "")
-    exit_code = str(container.get("ExitCode", "0"))
-    if state == "running":
-        if health == "unhealthy":
-            return "unhealthy"
-        if health == "healthy":
-            return "healthy"
-        return "running"
-    if state == "exited":
-        return "exited_ok" if exit_code in ("0", "") else "exited_bad"
-    if state == "created":
-        # `docker compose up` creates every container in the dependency
-        # graph up front, then starts them in order -- if that process
-        # itself gets interrupted partway (closed terminal/app, killed
-        # mid-command), whatever hasn't been started yet is left sitting
-        # here indefinitely; it does NOT self-heal, and confirmed live
-        # this is otherwise visually indistinguishable from "down" (not
-        # created at all), which reads as "nothing's wrong yet, just
-        # hasn't been started on purpose" -- very different from "up got
-        # interrupted, re-run it."
-        return "created"
-    return "down"
-
-
-def is_ready(container: dict | None) -> bool:
-    """True once a container is done starting, for the Health page's
-    per-node restart progress bar (page_health.py): a one-shot job that
-    exited cleanly, or a running container that either has no healthcheck
-    or has already passed one. Deliberately stricter than
-    classify()=="running", which also covers Health=="starting" -- a
-    container still mid-healthcheck is running but NOT ready yet, and
-    that gap (State=running, Health=starting) is exactly what a progress
-    bar needs to show instead of jumping to 100% the moment containers
-    are merely created."""
-    if container is None:
-        return False
-    state = container.get("State")
-    if state == "exited":
-        return str(container.get("ExitCode", "0")) in ("0", "")
-    return state == "running" and container.get("Health", "") in ("", "healthy")
-
-
-def status_detail(container: dict | None) -> str:
-    if container is None:
-        return "not created / never started"
-    return container.get("Status", container.get("State", "unknown"))
-
 
 class ServiceNode(QGraphicsObject):
     clicked = pyqtSignal(str, str)  # target_key, service
@@ -313,8 +262,8 @@ class HealthDiagram(QGraphicsView):
             self.rebuild(targets, results)
 
     def rebuild(self, targets, results: dict[str, list[dict]]) -> None:
-        self._last_rebuild_args = (targets, results)
         """targets: list[Target]; results: target_key -> list of container dicts."""
+        self._last_rebuild_args = (targets, results)
         self.scene_.clear()
         self.nodes.clear()
 
@@ -336,7 +285,7 @@ class HealthDiagram(QGraphicsView):
             containers = results.get(target.key, [])
             by_service = {c.get("Service"): c for c in containers}
             services = sorted(by_service.keys()) or ["(no containers found)"]
-            host = target.remote.host if target.is_remote else "127.0.0.1"
+            host = target.host
 
             n_cols = max(1, min(4, len(services)))
             n_rows = (len(services) + n_cols - 1) // n_cols

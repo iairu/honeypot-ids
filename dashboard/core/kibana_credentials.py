@@ -9,9 +9,8 @@ Local/Remote .env toggle already does for editing it.
 """
 from __future__ import annotations
 
-from core.env_file import EnvFile
-from core.env_upload import EnvUploadError, download_env_text
-from core.paths import SIEM_ENV_FILE
+from core.docker_ctl import remote_for
+from core.env_upload import EnvUploadError, load_project_env
 from core.state import AppState
 
 
@@ -20,11 +19,7 @@ def get_elastic_credentials(state: AppState) -> tuple[str, str] | None:
     the remote .env couldn't be fetched -- callers should treat None as
     "skip autologin, let the user log in manually" rather than an error."""
     try:
-        if state.remote_siem.is_configured():
-            text = download_env_text("siem", state.remote_siem)
-            env = EnvFile.from_text(text, path=SIEM_ENV_FILE)
-        else:
-            env = EnvFile.load(SIEM_ENV_FILE)
+        env = load_project_env("siem", remote_for("siem", state))
     except EnvUploadError:
         return None
 

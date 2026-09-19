@@ -5,63 +5,16 @@ from __future__ import annotations
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
-    QScrollArea, QTabWidget, QVBoxLayout, QWidget,
+    QGroupBox, QHBoxLayout, QLabel, QPushButton, QScrollArea, QTabWidget,
+    QVBoxLayout, QWidget,
 )
 
-from core.docker_ctl import PROJECT_LABELS, Target
+from core.container_status import summarize
+from core.docker_ctl import Target
+from ui.common import confirm, danger_button, muted_label, set_status
 from ui.error_monitor import ErrorLogMonitor
 from ui.log_export import LogExporter
 from ui.process_runner import LogPanel
-
-
-def summarize_status(containers: list[dict]) -> tuple[str, str]:
-    """Returns (summary_text, color) for a target's container list. A
-    container mid-Start/Restart legitimately passes through State=created
-    and State=running/Health=starting on its way up -- deliberately no
-    special-cased wording for either (a prior version of this function
-    tried to call out "created but never started -- re-run Start", which
-    read as an alarming, confusing false positive during a completely
-    normal in-progress Start on a target with many services, since
-    `docker compose up` creates every container up front before starting
-    any of them). Both simply don't count toward `up` below; the log tail
-    beneath the buttons is the place to watch what's actually happening."""
-    if not containers:
-        return "not running / unreachable", "#888888"
-
-    total = len(containers)
-    running = sum(1 for c in containers if c.get("State") == "running")
-    healthy = sum(1 for c in containers if c.get("Health") == "healthy")
-    unhealthy = sum(1 for c in containers if c.get("Health") == "unhealthy")
-    exited_bad = sum(
-        1 for c in containers
-        if c.get("State") == "exited" and str(c.get("ExitCode", "0")) not in ("0", "")
-    )
-    # Run-once-and-exit services (init_setup, honeypot_db_migration,
-    # init-password, ...) are expected to end in State=exited/ExitCode=0 --
-    # that's their successful terminal state, not a sign anything is down.
-    # Count them toward "up" alongside actually-running containers so a
-    # fully healthy stack doesn't sit permanently at "N/total up" (orange)
-    # just because some of its services are one-shot jobs by design.
-    exited_ok = sum(
-        1 for c in containers
-        if c.get("State") == "exited" and str(c.get("ExitCode", "0")) in ("0", "")
-    )
-    up = running + exited_ok
-
-    if unhealthy or exited_bad:
-        return f"{up}/{total} up ({unhealthy} unhealthy, {exited_bad} exited with error)", "#d9534f"
-    if up == total:
-        details = []
-        if healthy:
-            details.append(f"{healthy} healthy")
-        if exited_ok:
-            details.append(f"{exited_ok} completed")
-        detail = f" ({', '.join(details)})" if details else ""
-        return f"all {total} up{detail}", "#5cb85c"
-    if up > 0:
-        return f"{up}/{total} up", "#f0ad4e"
-    return f"0/{total} up", "#888888"
 
 
 class TargetPanel(QGroupBox):
@@ -91,8 +44,7 @@ class TargetPanel(QGroupBox):
         self.start_btn = QPushButton("Start")
         self.restart_btn = QPushButton("Restart")
         self.stop_btn = QPushButton("Stop")
-        self.purge_btn = QPushButton("Purge (⚠ deletes volumes)")
-        self.purge_btn.setStyleSheet("QPushButton { color: #d9534f; }")
+        self.purge_btn = danger_button("Purge (⚠ deletes volumes)")
         self.download_btn = QPushButton("Download logs…")
         for b in (self.start_btn, self.restart_btn, self.stop_btn, self.purge_btn, self.download_btn):
             button_row.addWidget(b)
@@ -104,12 +56,10 @@ class TargetPanel(QGroupBox):
         self.purge_btn.clicked.connect(self._purge)
         self.download_btn.clicked.connect(self._download_logs)
 
-        log_label = QLabel(
+        layout.addWidget(muted_label(
             "Logs (auto-tailing -- Start/Restart/Stop/Purge takes over this "
             "panel, then returns to auto-tailing once the command finishes):"
-        )
-        log_label.setStyleSheet("color: #888888;")
-        layout.addWidget(log_label)
+        ))
 
         # No Stop button on this LogPanel -- Start/Restart/Stop/Purge above
         # already cover stopping/controlling this target, a second "Stop"
@@ -136,9 +86,8 @@ class TargetPanel(QGroupBox):
         self._run("logs", "--tail=50", "-f", mutating=False)
 
     def update_status(self, containers: list[dict]) -> None:
-        text, color = summarize_status(containers)
-        self.status_label.setText(text)
-        self.status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+        text, color = summarize(containers)
+        set_status(self.status_label, text, color, bold=True)
 
     def is_mutating_action_running(self) -> bool:
         return self._mutating_action and self.log_panel.is_running()
@@ -189,16 +138,13 @@ class TargetPanel(QGroupBox):
         self._run("down")
 
     def _purge(self) -> None:
-        reply = QMessageBox.warning(
+        if confirm(
             self, "Confirm purge",
             f"This will run 'docker compose down -v' for {self.target.label}, "
             "permanently deleting all named volumes (databases, Redis data, "
             "Elasticsearch indices, everything) for this stack.\n\n"
             "This cannot be undone. Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
+        ):
             self._run("down", "-v")
 
 

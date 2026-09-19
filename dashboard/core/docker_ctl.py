@@ -7,7 +7,7 @@ UI layer runs long commands (up/restart/purge) through QProcess for live,
 non-blocking output streaming, but status polling (`ps`) is short-lived
 enough to run synchronously from a background QThread. Both paths need
 the same argv/cwd, hence this module returns argv+cwd rather than running
-anything itself except the small `ps`/`logs` synchronous helpers.
+anything itself except the small `ps`/reachability synchronous helpers.
 """
 from __future__ import annotations
 
@@ -16,18 +16,14 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 
-from core.paths import EDGE_DIR, SIEM_COMPOSE_DIR
-from core.state import RemoteConfig
+from core import ssh
+from core.proc import succeeds
+from core.projects import PROJECT_IDS, Project, project as project_for
+from core.state import AppState, RemoteConfig
 
-PROJECT_DIRS = {
-    "edge": EDGE_DIR,
-    "siem": SIEM_COMPOSE_DIR,
-}
-
-PROJECT_LABELS = {
-    "edge": "ids",
-    "siem": "siem",
-}
+# Kept for callers that only need the label of a project id; the full
+# descriptor is core.projects.PROJECTS.
+PROJECT_LABELS = {pid: project_for(pid).label for pid in PROJECT_IDS}
 
 
 @dataclass
@@ -36,51 +32,46 @@ class Target:
     remote: RemoteConfig | None = None  # None == local
 
     @property
+    def spec(self) -> Project:
+        return project_for(self.project)
+
+    @property
     def is_remote(self) -> bool:
         return self.remote is not None
 
     @property
     def label(self) -> str:
-        base = PROJECT_LABELS[self.project]
+        base = self.spec.label
         return f"{base} (remote: {self.remote.host})" if self.is_remote else f"{base} (local)"
 
     @property
     def key(self) -> str:
         return f"{self.project}-{'remote' if self.is_remote else 'local'}"
 
+    @property
+    def host(self) -> str:
+        """Where this target's published ports are reachable FROM THIS
+        MACHINE -- the remote host's address, or loopback for local."""
+        return self.remote.host if self.is_remote else "127.0.0.1"
+
     def _local_dir(self) -> str:
-        return str(PROJECT_DIRS[self.project])
+        return str(self.spec.compose_dir)
 
     def remote_compose_dir(self) -> str:
-        """The directory docker-compose.yml actually lives in on the
-        remote host, given self.remote.remote_path -- which is meant to be
-        the PROJECT ROOT (matching what "project directory" means
-        everywhere else in this app: EDGE_DIR/SIEM_DIR, the same thing the
-        user points "Upload entire project to remote" at), not wherever
-        docker-compose.yml itself happens to live.
-
-        For "edge" those are the SAME directory (EDGE_DIR IS where
-        docker-compose.yml lives, matching PROJECT_DIRS["edge"]). For
-        "siem" they are NOT the same: docker-compose.yml lives in a
-        "docker" subdirectory one level inside the project root
-        (PROJECT_DIRS["siem"] == SIEM_COMPOSE_DIR == SIEM_DIR / "docker"
-        locally) -- so remote_path needs that same "/docker" appended here
-        to reach it, same as SIEM_COMPOSE_DIR does locally. The user never
-        has to know this locally (PROJECT_DIRS already encodes it); this
-        is what makes remote match that instead of requiring them to type
-        the "docker" subdirectory into remote_path themselves.
-
-        Only remote_path itself gets this treatment -- an EMPTY remote_path
-        (falls back to _local_dir(), i.e. mirrors this exact machine's
-        checkout) already has the right structure baked in, so appending
-        "/docker" again there would double it.
-        """
+        """The directory docker-compose.yml lives in on the remote host.
+        RemoteConfig.remote_path is the PROJECT ROOT (the same thing
+        "Upload entire project to remote" syncs), so SIEM's "docker/"
+        subdirectory gets appended here exactly as Project.compose_dir
+        already does locally -- the user never types it. An EMPTY
+        remote_path mirrors this machine's own checkout layout, which
+        already has the subdirectory baked in."""
         if not self.remote.remote_path:
             return self._local_dir()
-        remote_dir = self.remote.remote_path.rstrip("/")
-        if self.project == "siem":
-            remote_dir = f"{remote_dir}/docker"
-        return remote_dir
+        return self.spec.remote_compose_dir(self.remote.remote_path)
+
+    def remote_env_path(self) -> str:
+        """`.env` sits right next to docker-compose.yml on the remote host."""
+        return f"{self.remote_compose_dir()}/.env"
 
     @staticmethod
     def _global_flags(compose_args: tuple[str, ...]) -> list[str]:
@@ -92,16 +83,12 @@ class Target:
         `restart` silently exclude profiled services from their scope
         entirely (docker compose ps does NOT have this filtering, which is
         why the dashboard's status display looked fine while Stop/Purge
-        quietly left `vector_outbound` running). `ps`/`logs` don't need it for
-        already-running containers but it's harmless there too, so it's
-        applied unconditionally for every command rather than only the
-        mutating ones.
+        quietly left `vector_outbound` running). Harmless for ps/logs, so
+        applied unconditionally.
 
         --ansi always (logs only): docker compose's default --ansi auto
         disables ANSI color whenever stdout isn't a TTY, which QProcess's
-        pipes never are -- confirmed live that `logs` output was
-        colorless through this app without it. Scoped to `logs`
-        specifically (not applied to every command) so it can never affect
+        pipes never are. Scoped to `logs` so it can never affect
         machine-parsed output like `ps --format json`. See ui/ansi.py for
         the LogPanel-side rendering of the resulting escape codes.
         """
@@ -112,76 +99,45 @@ class Target:
 
     @staticmethod
     def _augment_args(compose_args: tuple[str, ...]) -> tuple[str, ...]:
-        """--remove-orphans, appended for `up`/`down` only (it's a
-        subcommand-specific option, unlike _global_flags()'s -- it has to
-        come after `up`/`down` on the command line, not before it).
+        """--remove-orphans, appended for `up`/`down` only (a subcommand
+        option, so it goes after the subcommand, unlike _global_flags()).
 
-        Confirmed live this is a real, not theoretical, gap: renaming a
-        service in docker-compose.yml (this project's own edge/SIEM Vector
-        rename, see README's Session History) leaves its OLD container
-        running forever afterward -- compose only ever manages containers
-        for services CURRENTLY defined in the file, so a plain `down`/`up`
-        for the renamed file doesn't know the old container exists at all
-        and just leaves it there. That orphan then held onto a network and
-        a named volume across a subsequent Purge, blocking their removal
-        (confirmed: `docker compose down -v` logged "Resource is still in
-        use" for both and silently left them behind) -- exactly the kind
-        of "purge didn't actually purge, next Start behaves oddly" gap
-        that undermines "starts reliably on the first try every time".
-        `--remove-orphans` makes both directions self-healing without
-        requiring anyone to notice and manually `docker rm`/`docker volume
-        rm`/`docker network rm` the leftovers, as this session had to."""
+        Confirmed live this is a real gap: renaming a service in
+        docker-compose.yml leaves its OLD container running forever
+        afterward -- compose only manages containers for services
+        CURRENTLY defined in the file, so a plain `down`/`up` doesn't know
+        the old one exists. That orphan then held a network and a named
+        volume across a subsequent Purge (`down -v` logged "Resource is
+        still in use" and silently left them behind). --remove-orphans
+        makes both directions self-healing."""
         if compose_args and compose_args[0] in ("up", "down"):
             return (*compose_args, "--remove-orphans")
         return compose_args
 
     def build(self, *compose_args: str) -> tuple[list[str], str | None]:
         """Returns (argv, cwd). cwd is None for remote (the ssh command
-        does its own `cd`). See _global_flags() for what's inserted
-        between `docker compose` and the subcommand, and _augment_args()
-        for what's appended after it."""
+        does its own `cd`)."""
         global_flags = self._global_flags(compose_args)
         compose_args = self._augment_args(compose_args)
 
         if not self.is_remote:
             return ["docker", "compose", *global_flags, *compose_args], self._local_dir()
 
-        remote_dir = self.remote_compose_dir()
-        remote_cmd = (
-            f"cd {shlex.quote(remote_dir)} && docker compose "
-            f"{' '.join(shlex.quote(a) for a in global_flags)} "
-            f"{' '.join(shlex.quote(a) for a in compose_args)}"
-        )
-        return self._ssh_argv(remote_cmd), None
+        remote_cmd = "docker compose " + " ".join(shlex.quote(a) for a in (*global_flags, *compose_args))
+        return self.build_shell(remote_cmd)
 
     def build_shell(self, command: str) -> tuple[list[str], str | None]:
         """Like build(), but for callers that need more than one `docker
-        compose` invocation chained together in one shell line (e.g.
-        piping one container's stdout into another's stdin -- see
-        core/backup_ctl.py's WP-file restore, which streams an archive
-        straight from backup_service into production_eshop rather than
-        via any new mount). `command` is a raw POSIX shell one-liner the
-        caller has already assembled (its own `docker compose --profile
-        '*' ...` invocations, arguments already shlex.quote'd), run as-is
-        rather than built up from compose_args."""
+        compose` invocation chained in one shell line (e.g. piping one
+        container's stdout into another's stdin -- see core/backup_ctl.py's
+        WP-file restore). `command` is a raw POSIX shell one-liner the
+        caller has already assembled (arguments already shlex.quote'd),
+        run in the compose directory as-is."""
         if not self.is_remote:
             return ["sh", "-c", command], self._local_dir()
 
-        remote_dir = self.remote_compose_dir()
-        remote_cmd = f"cd {shlex.quote(remote_dir)} && {command}"
-        return self._ssh_argv(remote_cmd), None
-
-    def _ssh_argv(self, remote_cmd: str) -> list[str]:
-        return [
-            "ssh",
-            "-i", self.remote.key_path,
-            "-p", str(self.remote.port),
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "BatchMode=yes",
-            "-o", "ConnectTimeout=8",
-            f"{self.remote.user}@{self.remote.host}",
-            remote_cmd,
-        ]
+        remote_cmd = f"cd {shlex.quote(self.remote_compose_dir())} && {command}"
+        return ssh.ssh_argv(self.remote, remote_cmd), None
 
     # ---- one-shot synchronous helpers (call from a background thread) ----
 
@@ -210,61 +166,52 @@ class Target:
         return containers
 
     def remote_compose_file_exists(self, timeout: float = 8.0) -> bool:
-        """For remote targets only: does the resolved remote_compose_dir()
-        actually contain a docker-compose.yml/compose.yaml/compose.yml?
-        Purely informational (see RemoteConfigWidget._test_connection())
-        -- a brand new remote host legitimately has no compose file yet
-        until "Upload entire project to remote" puts one there, so this
-        never blocks anything, it just tells you plainly whether it's
-        there BEFORE that upload."""
+        """For remote targets only: does remote_compose_dir() actually
+        contain a compose file? Purely informational (see
+        RemoteConfigWidget._test_connection()) -- a brand new remote host
+        legitimately has none until "Upload entire project" puts one
+        there, so this never blocks anything."""
         if not self.is_remote:
             return True
-        remote_dir = self.remote_compose_dir()
-        check_cmd = (
-            f"[ -f {shlex.quote(remote_dir)}/docker-compose.yml ] || "
-            f"[ -f {shlex.quote(remote_dir)}/compose.yaml ] || "
-            f"[ -f {shlex.quote(remote_dir)}/compose.yml ]"
-        )
-        argv = [
-            "ssh", "-i", self.remote.key_path, "-p", str(self.remote.port),
-            "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes",
-            "-o", f"ConnectTimeout={int(timeout)}",
-            f"{self.remote.user}@{self.remote.host}", check_cmd,
-        ]
-        try:
-            result = subprocess.run(argv, capture_output=True, timeout=timeout + 2)
-        except (subprocess.TimeoutExpired, OSError):
-            return False
-        return result.returncode == 0
+        d = shlex.quote(self.remote_compose_dir())
+        check_cmd = f"[ -f {d}/docker-compose.yml ] || [ -f {d}/compose.yaml ] || [ -f {d}/compose.yml ]"
+        return self._ssh_succeeds(check_cmd, timeout)
 
     def is_reachable(self, timeout: float = 8.0) -> bool:
         """For remote targets: can we even SSH in? Local is always
-        reachable (if `docker` itself is missing that surfaces via ps()
-        returning [], same as "nothing running")."""
+        reachable (a missing `docker` surfaces via ps() returning [])."""
         if not self.is_remote:
             return True
-        argv = [
-            "ssh", "-i", self.remote.key_path, "-p", str(self.remote.port),
-            "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes",
-            "-o", f"ConnectTimeout={int(timeout)}",
-            f"{self.remote.user}@{self.remote.host}", "true",
-        ]
-        try:
-            result = subprocess.run(argv, capture_output=True, timeout=timeout + 2)
-        except (subprocess.TimeoutExpired, OSError):
-            return False
-        return result.returncode == 0
+        return self._ssh_succeeds("true", timeout)
+
+    def _ssh_succeeds(self, remote_cmd: str, timeout: float) -> bool:
+        return succeeds(ssh.ssh_argv(self.remote, remote_cmd, timeout=timeout), timeout=timeout + 2)
 
 
-def targets_for(project: str, remote_edge: RemoteConfig, remote_siem: RemoteConfig) -> list[Target]:
+def remote_for(project: str, state: AppState) -> RemoteConfig | None:
+    """The project's RemoteConfig if it's enabled AND fully filled in,
+    else None -- i.e. exactly what Target(remote=...) wants."""
+    remote = state.remote_edge if project == "edge" else state.remote_siem
+    return remote if remote.is_configured() else None
+
+
+def target_for(project: str, state: AppState) -> Target:
+    """The ONE target a single-target feature should talk to for `project`:
+    its remote host when one is configured, otherwise local. Used by pages
+    that don't offer a local/remote choice (Exploits, Kibana, the
+    security feed)."""
+    return Target(project=project, remote=remote_for(project, state))
+
+
+def targets_for(project: str, state: AppState) -> list[Target]:
     """All targets to show for a project: always local, plus remote if
     configured."""
     result = [Target(project=project, remote=None)]
-    remote = remote_edge if project == "edge" else remote_siem
-    if remote.is_configured():
+    remote = remote_for(project, state)
+    if remote is not None:
         result.append(Target(project=project, remote=remote))
     return result
 
 
-def all_targets(remote_edge: RemoteConfig, remote_siem: RemoteConfig) -> list[Target]:
-    return targets_for("edge", remote_edge, remote_siem) + targets_for("siem", remote_edge, remote_siem)
+def all_targets(state: AppState) -> list[Target]:
+    return [t for pid in PROJECT_IDS for t in targets_for(pid, state)]

@@ -70,36 +70,30 @@ def _run_version(argv: list[str], timeout: float = 5.0) -> tuple[bool, str]:
     return True, (result.stdout or result.stderr or "").strip().splitlines()[0]
 
 
+# (display name, binary to look for, version argv, required, "not found" detail).
+# `docker compose` is a plugin of the docker binary, so its presence check
+# is docker's own; its version command is what proves the plugin exists.
+_TOOLS = [
+    ("docker", "docker", ["docker", "--version"], True, "not found"),
+    ("docker compose", "docker", ["docker", "compose", "version"], True, "not found (needs docker itself first)"),
+    ("ssh", "ssh", ["ssh", "-V"], False, "not found -- needed for remote-target features"),
+    ("rsync", "rsync", ["rsync", "--version"], False, "not found -- needed for whole-project upload"),
+]
+
+
 def check_dependencies() -> list[DependencyStatus]:
     statuses = []
-
-    if shutil.which("docker") is None:
-        statuses.append(DependencyStatus("docker", True, False, "not found"))
-    else:
-        ok, detail = _run_version(["docker", "--version"])
-        statuses.append(DependencyStatus("docker", True, ok, detail))
-
-    if shutil.which("docker") is None:
-        statuses.append(DependencyStatus("docker compose", True, False, "not found (needs docker itself first)"))
-    else:
-        ok, detail = _run_version(["docker", "compose", "version"])
-        statuses.append(DependencyStatus("docker compose", True, ok, detail))
-
-    if shutil.which("ssh") is None:
-        statuses.append(DependencyStatus("ssh", False, False, "not found -- needed for remote-target features"))
-    else:
-        ok, detail = _run_version(["ssh", "-V"])
-        # OpenSSH prints its version to stderr with no real "success" exit
-        # semantics for -V alone in some builds -- shutil.which() finding it
-        # is good enough evidence it's actually usable.
-        statuses.append(DependencyStatus("ssh", False, True, detail or "found"))
-
-    if shutil.which("rsync") is None:
-        statuses.append(DependencyStatus("rsync", False, False, "not found -- needed for whole-project upload"))
-    else:
-        ok, detail = _run_version(["rsync", "--version"])
-        statuses.append(DependencyStatus("rsync", False, ok, detail))
-
+    for name, binary, version_argv, required, missing_detail in _TOOLS:
+        if shutil.which(binary) is None:
+            statuses.append(DependencyStatus(name, required, False, missing_detail))
+            continue
+        ok, detail = _run_version(version_argv)
+        if name == "ssh":
+            # OpenSSH prints its version to stderr with no real "success"
+            # exit semantics for -V alone in some builds -- shutil.which()
+            # finding it is good enough evidence it's actually usable.
+            ok, detail = True, detail or "found"
+        statuses.append(DependencyStatus(name, required, ok, detail))
     return statuses
 
 

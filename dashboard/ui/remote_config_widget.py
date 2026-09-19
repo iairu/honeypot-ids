@@ -174,7 +174,7 @@ class RemoteConfigWidget(QWidget):
         config = self.to_config()
         local_path = _LOCAL_ENV_FILES[self.project]
         env_label = _PROJECT_ENV_LABELS[self.project]
-        remote_env_path = f"{Target(project=self.project, remote=config).remote_compose_dir()}/.env"
+        remote_env_path = Target(project=self.project, remote=config).remote_env_path()
 
         reply = QMessageBox.warning(
             self, "Confirm upload",

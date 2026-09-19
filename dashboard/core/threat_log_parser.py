@@ -30,11 +30,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 
+from core.colors import BLUE, GREEN, ORANGE, RED
+from core.line_buffer import LineBuffer  # noqa: F401 -- re-exported for existing importers
+
 # Diagram/badge color palette -- reused across both.
-COLOR_LOW = "#5cb85c"    # green: benign / production / small score delta
-COLOR_MED = "#f0ad4e"    # orange: elevated / medium score delta
-COLOR_HIGH = "#d9534f"   # red: honeypot / suspicious / large score delta
-COLOR_INFO = "#5bc0de"   # blue: informational context, not a score itself
+COLOR_LOW = GREEN    # benign / production / small score delta
+COLOR_MED = ORANGE   # elevated / medium score delta
+COLOR_HIGH = RED     # honeypot / suspicious / large score delta
+COLOR_INFO = BLUE    # informational context, not a score itself
 
 
 @dataclass(frozen=True)
@@ -194,19 +197,3 @@ def _parse_line_body(line: str) -> ThreatEvent | None:
         return ThreatEvent("signal", f"{clean_label} (+{delta})", _strip_seps(rest), _signal_color(delta))
 
     return None
-
-
-class LineBuffer:
-    """Reassembles complete lines from arbitrary-sized text chunks (same
-    problem ui/ansi.py solves for escape sequences) -- QProcess delivers
-    output in whatever chunk boundaries the OS pipe gives it, which don't
-    line up with log line boundaries."""
-
-    def __init__(self) -> None:
-        self._pending = ""
-
-    def feed(self, chunk: str) -> list[str]:
-        text = self._pending + chunk
-        lines = text.split("\n")
-        self._pending = lines.pop()  # last element: either "" or an incomplete line
-        return lines

@@ -11,6 +11,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 
+from core import ssh
 from core.docker_ctl import Target
 
 # Tried in order; the first one found on PATH is used. Covers the common
@@ -51,15 +52,7 @@ def build_shell_command(target: Target, container_id_or_service: str) -> ShellCo
     if not target.is_remote:
         argv = ["sh", "-c", inner_cmd]
     else:
-        remote = target.remote
-        argv = [
-            "ssh", "-t",
-            "-i", remote.key_path,
-            "-p", str(remote.port),
-            "-o", "StrictHostKeyChecking=accept-new",
-            f"{remote.user}@{remote.host}",
-            inner_cmd,
-        ]
+        argv = ssh.ssh_argv(target.remote, inner_cmd, tty=True)
 
     terminal = find_terminal()
     if terminal is None:

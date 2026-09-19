@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import re
 import shlex
-import subprocess
 from pathlib import Path
 
+from core import ssh
+from core.proc import run_checked
 from core.state import RemoteConfig
 
 
@@ -44,16 +45,8 @@ EXCLUDE_PATTERNS = [
 ]
 
 
-def _base_ssh_command(remote: RemoteConfig, timeout: float) -> str:
-    return (
-        f"ssh -i {shlex.quote(remote.key_path)} -p {remote.port} "
-        "-o StrictHostKeyChecking=accept-new -o BatchMode=yes "
-        f"-o ConnectTimeout={int(timeout)}"
-    )
-
-
 def build_rsync_argv(local_dir: Path, remote: RemoteConfig, timeout: float = 10.0) -> list[str]:
-    argv = ["rsync", "-az", "--info=progress2", "-e", _base_ssh_command(remote, timeout)]
+    argv = ["rsync", "-az", "--info=progress2", "-e", ssh.ssh_command_string(remote, timeout)]
     for pattern in EXCLUDE_PATTERNS:
         argv += ["--exclude", pattern]
     # Trailing slash on the source: copies the DIRECTORY'S CONTENTS into
@@ -63,12 +56,12 @@ def build_rsync_argv(local_dir: Path, remote: RemoteConfig, timeout: float = 10.
     # not wherever docker-compose.yml itself happens to live). For SIEM,
     # Target.build() (docker_ctl.py) appends "/docker" onto remote_path
     # internally when actually running compose commands there, the same
-    # way PROJECT_DIRS["siem"] already does locally -- this sync target
+    # way Project.compose_dir already does locally -- this sync target
     # stays remote_path itself since it's syncing the WHOLE project
     # (docker/ included, as one of several sibling directories), not just
     # the compose-file directory.
     local_src = str(local_dir).rstrip("/") + "/"
-    remote_dst = f"{remote.user}@{remote.host}:{remote.remote_path.rstrip('/')}/"
+    remote_dst = f"{remote.address}:{remote.remote_path.rstrip('/')}/"
     argv += [local_src, remote_dst]
     return argv
 
@@ -85,22 +78,8 @@ def remote_dir_has_content(remote: RemoteConfig, timeout: float = 8.0) -> bool:
         f"[ -d {shlex.quote(remote_dir)} ] && "
         f"[ -n \"$(ls -A {shlex.quote(remote_dir)} 2>/dev/null)\" ] && echo YES || echo NO"
     )
-    argv = [
-        "ssh", "-i", remote.key_path, "-p", str(remote.port),
-        "-o", "StrictHostKeyChecking=accept-new", "-o", "BatchMode=yes",
-        "-o", f"ConnectTimeout={int(timeout)}",
-        f"{remote.user}@{remote.host}", check_cmd,
-    ]
-    try:
-        result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout + 5)
-    except subprocess.TimeoutExpired:
-        raise ProjectUploadError("ssh timed out while checking the remote directory.")
-    except OSError as e:
-        raise ProjectUploadError(f"Could not run ssh: {e}")
-
-    if result.returncode != 0:
-        raise ProjectUploadError(result.stderr.strip() or f"ssh exited with code {result.returncode}")
-
+    argv = ssh.ssh_argv(remote, check_cmd, timeout=timeout)
+    result = run_checked(argv, error=ProjectUploadError, timeout=timeout + 5, what="ssh")
     return result.stdout.strip() == "YES"
 
 

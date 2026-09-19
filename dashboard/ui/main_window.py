@@ -14,12 +14,12 @@ from PyQt6.QtWidgets import (
     QSplitter, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
-from core.docker_ctl import Target, all_targets
+from core.docker_ctl import all_targets, target_for
 from core.paths import DASHBOARD_DIR
 from core.state import AppState
 from ui.dependency_banner import DependencyBanner
 from ui.error_monitor import ErrorLogMonitor
-from ui.health_diagram import classify
+from core.container_status import classify
 from ui.page_backups import BackupsPage
 from ui.page_certs import CertsPage
 from ui.page_exploits import ExploitsPage
@@ -168,14 +168,13 @@ class MainWindow(QMainWindow):
     # ---- navigation / target plumbing ----
 
     def _get_targets(self):
-        return all_targets(self.state.remote_edge, self.state.remote_siem)
+        return all_targets(self.state)
 
-    def _edge_target(self) -> Target:
-        """Same target selection logic as page_exploits.py's own -- the
-        security feed tails the same reverse_proxy the Exploits page's
-        score badge does."""
-        remote = self.state.remote_edge if self.state.remote_edge.is_configured() else None
-        return Target(project="edge", remote=remote)
+    def _edge_target(self):
+        """The reverse_proxy target the security feed tails -- the same one
+        the Exploits page's score badge uses (target_for picks remote when
+        configured, else local)."""
+        return target_for("edge", self.state)
 
     def _on_nav_changed(self, row: int) -> None:
         if 0 <= row < len(PAGES):

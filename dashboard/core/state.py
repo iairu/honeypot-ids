@@ -6,7 +6,7 @@ gitignored)."""
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 
 from core.paths import STATE_FILE
 
@@ -24,6 +24,19 @@ class RemoteConfig:
 
     def is_configured(self) -> bool:
         return bool(self.enabled and self.host and self.user and self.key_path)
+
+    @property
+    def address(self) -> str:
+        """``user@host`` -- the ssh/scp/rsync destination spelling."""
+        return f"{self.user}@{self.host}"
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "RemoteConfig":
+        """Tolerates unknown keys (a state.json/export bundle written by a
+        newer or older dashboard) instead of crashing the whole load over
+        one unrecognized field; missing keys take the field defaults."""
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
 
 @dataclass
@@ -63,39 +76,30 @@ class AppState:
 
     @classmethod
     def load(cls) -> "AppState":
+        """Reads STATE_FILE; any missing/unparseable file or field falls
+        back to the dataclass defaults, so a state.json from an older
+        version always loads."""
         if not STATE_FILE.exists():
             return cls()
         try:
             raw = json.loads(STATE_FILE.read_text())
         except (json.JSONDecodeError, OSError):
             return cls()
+        if not isinstance(raw, dict):
+            return cls()
+
         state = cls()
-        state.first_run_complete = raw.get("first_run_complete", False)
-        state.window_geometry_b64 = raw.get("window_geometry_b64", "")
-        state.last_page = raw.get("last_page", "services")
-        if "remote_edge" in raw:
-            state.remote_edge = RemoteConfig(**raw["remote_edge"])
-        if "remote_siem" in raw:
-            state.remote_siem = RemoteConfig(**raw["remote_siem"])
-        state.poll_interval_ms = raw.get("poll_interval_ms", 5000)
-        state.tray_notifications_enabled = raw.get("tray_notifications_enabled", True)
-        state.kibana_remember_credentials = raw.get("kibana_remember_credentials", True)
-        state.theme = raw.get("theme", "system")
-        state.security_events = raw.get("security_events", [])
+        for f in fields(cls):
+            if f.name not in raw:
+                continue
+            value = raw[f.name]
+            if f.default_factory is RemoteConfig:
+                if isinstance(value, dict):
+                    setattr(state, f.name, RemoteConfig.from_dict(value))
+            else:
+                setattr(state, f.name, value)
         return state
 
     def save(self) -> None:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "first_run_complete": self.first_run_complete,
-            "window_geometry_b64": self.window_geometry_b64,
-            "last_page": self.last_page,
-            "remote_edge": asdict(self.remote_edge),
-            "remote_siem": asdict(self.remote_siem),
-            "poll_interval_ms": self.poll_interval_ms,
-            "tray_notifications_enabled": self.tray_notifications_enabled,
-            "kibana_remember_credentials": self.kibana_remember_credentials,
-            "theme": self.theme,
-            "security_events": self.security_events,
-        }
-        STATE_FILE.write_text(json.dumps(data, indent=2))
+        STATE_FILE.write_text(json.dumps(asdict(self), indent=2))

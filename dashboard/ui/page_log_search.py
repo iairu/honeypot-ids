@@ -173,7 +173,7 @@ class LogSearchPage(QWidget):
                 item.widget().deleteLater()
         self._target_checks.clear()
 
-        for target in all_targets(self.state.remote_edge, self.state.remote_siem):
+        for target in all_targets(self.state):
             cb = QCheckBox(target.label)
             cb.setChecked(target.key in previously_checked or not previously_checked)
             self._targets_container.addWidget(cb)
@@ -188,7 +188,7 @@ class LogSearchPage(QWidget):
         self.search_box.selectAll()
 
     def _selected_targets(self) -> list[Target]:
-        all_t = all_targets(self.state.remote_edge, self.state.remote_siem)
+        all_t = all_targets(self.state)
         return [t for t in all_t if self._target_checks.get(t.key) and self._target_checks[t.key].isChecked()]
 
     def run_search(self) -> None:

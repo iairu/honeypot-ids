@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
+from core.line_buffer import LineBuffer
 from ui import ansi_render, theme
 
 
@@ -56,7 +57,7 @@ class LogPanel(QWidget):
         # click, which reuses its one LogPanel for both. None means "show
         # everything" (unchanged default behavior for every other caller).
         self._line_filter: Callable[[str], bool] | None = None
-        self._filter_buffer = ""
+        self._filter_buffer = LineBuffer()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -138,7 +139,7 @@ class LogPanel(QWidget):
         self._last_cwd = cwd
         self._last_line_filter = line_filter
         self._line_filter = line_filter
-        self._filter_buffer = ""
+        self._filter_buffer = LineBuffer()
         self.reload_button.setEnabled(True)
         self.append(f"$ {' '.join(argv)}\n\n")
 
@@ -225,15 +226,9 @@ class LogPanel(QWidget):
         self._emit(data)
 
     def _filter_lines(self, chunk: str) -> str:
-        """Keeps only whole lines that pass self._line_filter, buffering
-        any trailing incomplete line across calls (QProcess delivers
-        output in arbitrary-sized chunks that don't line up with line
-        boundaries) -- same pattern as ui/error_monitor.py's own chunk
-        buffering."""
-        text = self._filter_buffer + chunk
-        lines = text.split("\n")
-        self._filter_buffer = lines.pop()
-        kept = [line for line in lines if self._line_filter(line)]
+        """Keeps only whole lines that pass self._line_filter (see
+        core.line_buffer for the chunk-boundary handling)."""
+        kept = [line for line in self._filter_buffer.feed(chunk) if self._line_filter(line)]
         return "\n".join(kept) + "\n" if kept else ""
 
     def _on_finished(self, exit_code: int, _exit_status) -> None:

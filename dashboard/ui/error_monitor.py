@@ -11,6 +11,8 @@ import re
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from core.line_buffer import LineBuffer
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 # docker compose logs' multi-service line prefix. Usually
@@ -87,10 +89,7 @@ class ErrorLogMonitor(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._counts: dict[tuple[str, str], int] = {}
-        # Holds each target's trailing incomplete line across process_chunk()
-        # calls -- QProcess delivers output in arbitrary-sized chunks that
-        # don't line up with line boundaries.
-        self._buffers: dict[str, str] = {}
+        self._buffers: dict[str, LineBuffer] = {}
 
     def count_for(self, target_key: str, service: str) -> int:
         return self._counts.get((target_key, service), 0)
@@ -112,12 +111,7 @@ class ErrorLogMonitor(QObject):
             self.counts_changed.emit()
 
     def process_chunk(self, target_key: str, chunk: str) -> None:
-        text = self._buffers.pop(target_key, "") + chunk
-        lines = text.split("\n")
-        # The last element is either "" (chunk ended exactly on a newline)
-        # or an incomplete line -- either way, hold it for the next chunk
-        # rather than matching a truncated line now.
-        self._buffers[target_key] = lines.pop()
+        lines = self._buffers.setdefault(target_key, LineBuffer()).feed(chunk)
 
         changed = False
         for line in lines:
