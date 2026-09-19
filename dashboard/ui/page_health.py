@@ -432,7 +432,11 @@ class HealthPage(QWidget):
         self.restart_progress.setFormat("Restarting…")
         self.restart_progress.setStyleSheet(_PROGRESS_BASE_CSS)
         self.restart_progress.setVisible(True)
-        argv, cwd = target.build("restart", service)
+        # up -d --force-recreate rather than `restart`: `restart` no-ops on
+        # a service that isn't currently running (down/created/exited), so
+        # it couldn't bring a stopped node back up -- force-recreate cycles
+        # it from any state. Scoped to the one selected service.
+        argv, cwd = target.build("up", "-d", "--force-recreate", service)
         self.log_panel.run(argv, cwd)
 
     def _update_restart_progress(self) -> None:

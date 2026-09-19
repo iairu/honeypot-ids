@@ -132,7 +132,14 @@ class TargetPanel(QGroupBox):
         self._run("up", "-d")
 
     def _restart(self) -> None:
-        self._run("restart")
+        # `docker compose restart` only acts on containers that already
+        # exist and are running -- after a Purge (down -v), a Stop, or a
+        # partially-created state it silently does nothing, so "Restart"
+        # appeared broken (nothing came up). `up -d --force-recreate`
+        # (with --remove-orphans appended by Target._augment_args) cycles
+        # every service from ANY prior state -- down, created, or running
+        # -- so Restart reliably lands the stack in a fresh running state.
+        self._run("up", "-d", "--force-recreate")
 
     def _stop(self) -> None:
         self._run("down")

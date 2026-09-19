@@ -32,6 +32,16 @@ class LogPanel(QWidget):
     def __init__(self, parent=None, show_stop_button: bool = True, reload_action=None):
         super().__init__(parent)
         self.process: QProcess | None = None
+        # Set only while run() is killing the PREVIOUS process to start a
+        # new one -- see run()/_on_finished. Suppresses that killed
+        # process's finished/error signals so they don't re-enter the
+        # consumer's finished handler mid-run (QProcess delivers finished
+        # synchronously inside waitForFinished(), so without this the
+        # `finished` from the auto-tail this app kills on every Start/
+        # Restart fires reentrantly -- corrupting TargetPanel's
+        # mutating-action guard, leaking the resumed log tail, and leaving
+        # the panel stuck on "[process exited]" instead of tailing again.
+        self._suppress_finish = False
         self._paused = False
         self._pending: list[str] = []
         self._default_text_color = ansi_render.panel_colors()[1]
@@ -128,7 +138,13 @@ class LogPanel(QWidget):
         self, argv: list[str], cwd: str | None = None,
         line_filter: Callable[[str], bool] | None = None,
     ) -> None:
+        # Kill any in-flight process WITHOUT letting its finished/error
+        # signal reach our consumers -- that stale "the thing I just killed
+        # exited" event is not a real completion of anything the caller
+        # cares about (see self._suppress_finish).
+        self._suppress_finish = True
         self.stop()
+        self._suppress_finish = False
         self.clear()
         self._paused = False
         self.pause_button.setText("Pause")
@@ -232,10 +248,14 @@ class LogPanel(QWidget):
         return "\n".join(kept) + "\n" if kept else ""
 
     def _on_finished(self, exit_code: int, _exit_status) -> None:
+        if self._suppress_finish:
+            return  # a process we killed to start a new one -- not a real completion
         self._emit(f"\n\n[process exited with code {exit_code}]\n")
         self.stop_button.setEnabled(False)
         self.finished.emit(exit_code)
 
     def _on_error(self, error) -> None:
+        if self._suppress_finish:
+            return
         self._emit(f"\n[process error: {error}]\n")
         self.stop_button.setEnabled(False)
