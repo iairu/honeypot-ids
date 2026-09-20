@@ -48,8 +48,23 @@ _G.config = {
     --   password   – Read from REDIS_PASSWORD env var injected by docker-compose.
     --                Fallback value is for local development only; MUST be
     --                changed in any internet-facing deployment.
-    --   timeout    – Socket I/O timeout in milliseconds.  1 s is generous;
-    --                Redis on the same host typically responds in < 1 ms.
+    --   timeout    – Connect/send timeout in milliseconds.  Redis on the
+    --                same host typically responds in < 1 ms, so 1 s only
+    --                ever trips when something is genuinely wrong.
+    --   read_timeout – Reply timeout in milliseconds. Deliberately looser
+    --                than `timeout`: confirmed live (session_store's own
+    --                slowlog empty, no AOF/fork warnings) that the sporadic
+    --                "lua tcp socket read timed out, upstream:
+    --                session_store:6379" errors were not Redis being slow
+    --                to execute anything, but the reply not being delivered
+    --                within 1 s while the host (4 CPUs shared with ES,
+    --                Kibana, Suricata, 4x MySQL, 4x PHP) was under load --
+    --                a scheduling stall, not a Redis one. Failing a whole
+    --                background cycle (Suricata parsing, replication-flag
+    --                mirroring) over a 1 s hiccup is worse than waiting a
+    --                bit longer, and per-request Redis use is off the hot
+    --                path (see init_worker.lua's mirror_replication_flags
+    --                note), so this doesn't add latency to normal requests.
     --   pool_size  – Max keepalive connections per Nginx worker to Redis.
     --                100 connections × N workers; tune based on worker count.
     --   backlog    – Nginx connection backlog size (nil = use system default).
@@ -59,6 +74,7 @@ _G.config = {
         port = 6379,
         password = os.getenv("REDIS_PASSWORD") or "session_redis_password",  -- Fallback for backwards compatibility
         timeout = 1000,
+        read_timeout = 3000,
         pool_size = 100,
         backlog = nil
     },
@@ -565,7 +581,9 @@ _G.redis_pool = {}
 --- @return redis|nil, string|nil  Connection object or nil + error message.
 function _G.redis_pool.get_connection()
     local red = redis:new()
-    red:set_timeout(_G.config.redis.timeout)
+    -- set_timeouts(connect, send, read) -- see the config block's
+    -- read_timeout note for why the reply timeout is the looser one.
+    red:set_timeouts(_G.config.redis.timeout, _G.config.redis.timeout, _G.config.redis.read_timeout)
     
     local ok, err = red:connect(_G.config.redis.host, _G.config.redis.port)
     if not ok then

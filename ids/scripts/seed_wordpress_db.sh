@@ -105,29 +105,70 @@ log() { echo "[SEED] $(now_iso) $*"; }
 # against this container if that dependency were ever missing or
 # insufficient).
 #
-# A plain TCP-readiness check, not `wp db check`/`mysql -e` -- confirmed
-# live those fail here with "TLS/SSL error: Certificate verification
-# failure", unrelated to credentials: this image's bundled mysql CLI
-# client (MariaDB 15.2) defaults to verifying certs and rejects the
-# self-signed one a mysql:5.7 server presents, the same class of issue
-# backup.sh already works around for mysqldump with --skip-ssl. `wp core
-# install` itself, just below, does NOT go through that CLI binary at
-# all -- WordPress/wpdb connects via PHP's mysqli extension directly,
-# which doesn't hit this -- so a CLI-based pre-flight check was actively
+# A PHP mysqli connect with the real WORDPRESS_DB_* credentials, not
+# `wp db check`/`mysql -e` -- confirmed live those fail here with
+# "TLS/SSL error: Certificate verification failure", unrelated to
+# credentials: this image's bundled mysql CLI client (MariaDB 15.2)
+# defaults to verifying certs and rejects the self-signed one a
+# mysql:5.7 server presents, the same class of issue backup.sh already
+# works around for mysqldump with --skip-ssl. `wp core install` itself,
+# just below, does NOT go through that CLI binary at all --
+# WordPress/wpdb connects via PHP's mysqli extension directly, which
+# doesn't hit this -- so a CLI-based pre-flight check was actively
 # wrong here, not just unnecessary: it could fail (and block startup)
 # on a perfectly healthy database that `wp core install` would have
-# connected to just fine. A raw TCP connect (PHP's fsockopen, still
-# nothing MySQL-protocol-specific) is what actually waits out a genuine
-# "container just started, not accepting connections yet" race without
-# reintroducing that mismatch.
+# connected to just fine. Probing through the same mysqli extension
+# with the same credentials wp-config.php will use is the one check
+# that proves exactly what `wp core install` needs.
+#
+# Not a raw TCP connect (fsockopen) either, as this used to be:
+# confirmed live that connecting and closing without a MySQL handshake
+# makes mysqld log '[Note] Got an error reading communication packets'
+# for every probe -- one per seed container per boot. A completed
+# handshake with valid credentials logs nothing. Only a connect-level
+# failure (mysqli errno 2002/2003 "Can't connect", 2006 "gone away")
+# keeps waiting -- that's the genuine "container just started, not
+# accepting connections yet" race this loop exists for. Anything else
+# (e.g. 1045 access denied) means the server IS up but these
+# credentials won't work, and waiting wouldn't change that: fail
+# immediately with the server's own message rather than looping 60s
+# and then having `wp core install` fail with the same error anyway.
 db_host="${WORDPRESS_DB_HOST%%:*}"
 db_port="${WORDPRESS_DB_HOST##*:}"
 [ "$db_port" = "$WORDPRESS_DB_HOST" ] && db_port=3306  # no ":port" suffix present
 
+# Exit 0: connected. Exit 1: not accepting connections yet (retry).
+# Exit 2: server answered but rejected the connection (fatal); the
+# reason is printed on stdout.
+db_probe() {
+    DB_HOST="$db_host" DB_PORT="$db_port" php -r '
+        mysqli_report(MYSQLI_REPORT_OFF);
+        $m = mysqli_init();
+        $m->options(MYSQLI_OPT_CONNECT_TIMEOUT, 2);
+        if (@$m->real_connect(getenv("DB_HOST"), getenv("WORDPRESS_DB_USER"),
+                getenv("WORDPRESS_DB_PASSWORD"), getenv("WORDPRESS_DB_NAME"),
+                (int) getenv("DB_PORT"))) {
+            $m->close();
+            exit(0);
+        }
+        if (in_array($m->connect_errno, [2002, 2003, 2006], true)) {
+            exit(1);
+        }
+        echo $m->connect_errno, ": ", $m->connect_error, "\n";
+        exit(2);
+    '
+}
+
 log "Waiting for ${db_host}:${db_port} to accept connections..."
 attempt=0
 max_attempts=30
-until php -r "exit(@fsockopen('${db_host}', ${db_port}, \$e, \$s, 2) ? 0 : 1);"; do
+while :; do
+    probe_out=$(db_probe) && break
+    probe_rc=$?
+    if [ "$probe_rc" -eq 2 ]; then
+        log "ERROR: ${db_host}:${db_port} rejected the connection: ${probe_out} -- giving up."
+        exit 1
+    fi
     attempt=$((attempt + 1))
     if [ "$attempt" -ge "$max_attempts" ]; then
         log "ERROR: ${db_host}:${db_port} still not accepting connections after ${max_attempts} attempts (60s) -- giving up."

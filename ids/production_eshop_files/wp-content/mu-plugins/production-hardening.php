@@ -264,8 +264,22 @@ add_action( 'init', function (): void {
  * without printing anything if so -- this is Elementor's own first-class
  * "Generator Tag: Disable" setting (Settings > Advanced in wp-admin),
  * used here instead of fighting the hook system.
+ *
+ * Guarded on is_blog_installed(): mu-plugins load on EVERY WordPress
+ * bootstrap, including WP-CLI's `wp core is-installed` pre-flight in
+ * scripts/seed_wordpress_db.sh, which runs against a database that has
+ * no wp_* tables yet on a fresh boot. get_option() itself tolerates that
+ * (it suppresses wpdb errors), but the update_option() -> add_option()
+ * INSERT does not, and logged "WordPress database error Table
+ * 'production_database.wp_options' doesn't exist" from every seed
+ * container on every first boot. is_blog_installed() checks for the
+ * schema with errors suppressed, and once installed the option is
+ * written on the very next bootstrap anyway.
  */
 add_action( 'init', function (): void {
+    if ( ! is_blog_installed() ) {
+        return;
+    }
     if ( get_option( 'elementor_meta_generator_tag' ) !== '1' ) {
         update_option( 'elementor_meta_generator_tag', '1' );
     }

@@ -250,11 +250,86 @@ local function init_worker()
             local alert_file = "/var/log/suricata/eve.json"
             local file = io.open(alert_file, "r")
             if file then
-                local last_position = red:get("suricata_eve_log_position") or 0
-                file:seek("set", tonumber(last_position))
+                -- Where to resume from. This used to be
+                -- `red:get(...) or 0`, which conflated three very
+                -- different answers into "start from byte 0":
+                --   * a Redis ERROR (nil, err -- e.g. the 1s read timeout
+                --     under host contention): the key is still there, we
+                --     just didn't get it. Restarting from 0 then rescans
+                --     the ENTIRE file -- 600MB+ after a day, since nothing
+                --     rotates eve.json -- synchronously, inside nginx
+                --     worker 0's event loop. Every request that worker
+                --     serves and every other timer (health checks, the
+                --     Redis-backed replication-flag mirror) stalls for the
+                --     duration, which is how one 1s Redis blip cascaded
+                --     into a burst of cosocket timeouts a minute later.
+                --     Now: skip this cycle, try again in 30s.
+                --   * the key genuinely MISSING (ngx.null -- first run
+                --     after session_store's start-time `rm -rf /data/*`):
+                --     there is no history worth replaying. suricata_alerts
+                --     is capped at the last 1000 entries and threat_ips
+                --     scores are time-decayed, so scanning hours of stale
+                --     events to rebuild them is the same full-file stall as
+                --     above for no benefit. Now: start at the current end
+                --     of the file and only ever process new events.
+                --   * the stored position being PAST the end of the file
+                --     (eve.json truncated/rotated underneath us): seeking
+                --     there reads nothing, forever. Now: restart from 0.
+                local file_size = file:seek("end")
+                local stored, get_err = red:get("suricata_eve_log_position")
+                if stored == nil then
+                    ngx.log(ngx.WARN, "Suricata log parser: could not read resume position from Redis: ",
+                            get_err, " -- skipping this cycle")
+                    file:close()
+                    _G.redis_pool.close_connection(red)
+                    return
+                end
+
+                local last_position = tonumber(stored)  -- ngx.null -> nil
+                if not last_position then
+                    last_position = file_size
+                    ngx.log(ngx.INFO, "Suricata log parser: no resume position stored, starting at current end of ",
+                            alert_file, " (", file_size, " bytes) -- not replaying history")
+                elseif last_position > file_size then
+                    ngx.log(ngx.WARN, "Suricata log parser: stored position ", last_position, " is past the end of ",
+                            alert_file, " (", file_size, " bytes) -- file was truncated/rotated, restarting from 0")
+                    last_position = 0
+                end
+                file:seek("set", last_position)
+
+                -- Hard cap on how much of the file one cycle may consume.
+                -- File reads here are plain blocking io, not cosockets:
+                -- everything in this worker (requests AND the other
+                -- timers) waits until this loop returns. 8MB is a few
+                -- seconds of Suricata output at the very busiest, so a
+                -- normal 30s cycle never comes near it -- it only bites
+                -- when catching up after a long stall, where it turns one
+                -- multi-second freeze into several short ones 30s apart.
+                -- `consumed` counts only lines that were fully processed
+                -- (each line plus its "\n"), so last_position + consumed
+                -- is always the exact byte to resume from -- whether the
+                -- loop ended at EOF, at the cap, or at a partial line.
+                local MAX_BYTES_PER_CYCLE = 8 * 1024 * 1024
+                local consumed = 0
 
                 local alerts_processed = 0
                 for line in file:lines() do
+                    local line_len = #line + 1
+                    if last_position + consumed + line_len > file_size then
+                        -- Suricata is mid-write on this line (no trailing
+                        -- newline yet when we measured the file): leave it
+                        -- for next cycle rather than feeding a truncated
+                        -- JSON object to the decoder and then skipping
+                        -- past it for good.
+                        break
+                    end
+                    if consumed + line_len > MAX_BYTES_PER_CYCLE then
+                        ngx.log(ngx.WARN, "Suricata log parser: hit the ", MAX_BYTES_PER_CYCLE,
+                                "-byte per-cycle cap -- resuming from byte ", last_position + consumed,
+                                " next cycle")
+                        break
+                    end
+                    consumed = consumed + line_len
                     -- Cheap substring pre-check before paying for a JSON
                     -- decode -- eve.json interleaves alert/flow/netflow/
                     -- http/dns/tls/... event types in one file, and
@@ -349,8 +424,15 @@ local function init_worker()
                     end
                 end
 
-                -- Update file position
-                red:set("suricata_eve_log_position", file:seek())
+                -- Persist the resume position -- see `consumed` above for
+                -- why this is computed rather than read back via
+                -- file:seek() (lines() has already pulled in whichever line
+                -- the loop broke on, so seek() would skip it).
+                local ok, set_err = red:set("suricata_eve_log_position", last_position + consumed)
+                if not ok then
+                    ngx.log(ngx.WARN, "Suricata log parser: could not persist resume position to Redis: ",
+                            set_err, " -- the same events may be processed again next cycle")
+                end
                 file:close()
 
                 if alerts_processed > 0 then
