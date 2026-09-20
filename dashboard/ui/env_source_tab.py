@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.docker_ctl import Target
-from core.env_file import EnvFile, seed_from_example
+from core.env_file import EnvFile, merge_example_keys, seed_from_example
 from core.env_upload import EnvUploadError, download_env_text, upload_env_text
 from core.state import RemoteConfig
 from ui.env_editor import EnvEditorWidget
@@ -112,8 +112,22 @@ class EnvSourceTab(QWidget):
         self.env_file = seed_from_example(self.local_path, self.local_example)
         self.editor = EnvEditorWidget(self.env_file)
         self._editor_slot.addWidget(self.editor)
-        self.status_label.setText(f"Editing local file: {self.local_path}")
+        self.status_label.setText(
+            f"Editing local file: {self.local_path}" + self._added_keys_note()
+        )
         self.status_label.setStyleSheet("color: #888888;")
+
+    def _added_keys_note(self) -> str:
+        """Suffix for the status line naming keys that .env.example has
+        but the loaded file doesn't (they're in the form with template
+        defaults, and get written on Save)."""
+        added = self.env_file.added_keys if self.env_file else []
+        if not added:
+            return ""
+        return (
+            f"\nNot in this file yet, added from .env.example (saved on Save): "
+            + ", ".join(added)
+        )
 
     def _load_remote(self) -> None:
         remote = self._get_remote_config()
@@ -148,18 +162,23 @@ class EnvSourceTab(QWidget):
         self._source_is_remote = True
         display_path = Path(f"{remote.user}@{remote.host}:{remote_env_path}")
         self.env_file = EnvFile.from_text(text, display_path)
+        # The template is part of this repo, so it describes what the
+        # remote deployment of the same code needs too -- an empty remote
+        # file becomes the full template, an old one gains new keys.
+        self.env_file.added_keys = merge_example_keys(self.env_file, self.local_example)
         self.editor = EnvEditorWidget(self.env_file)
         self._editor_slot.addWidget(self.editor)
 
         if text:
             self.status_label.setText(
                 f"Editing REMOTE file: {remote.user}@{remote.host}:{remote_env_path}"
+                + self._added_keys_note()
             )
         else:
             self.status_label.setText(
                 f"No .env found yet at {remote.user}@{remote.host}:"
-                f"{remote_env_path} -- starting from an empty form; "
-                "Save will create it there."
+                f"{remote_env_path} -- starting from the .env.example "
+                "template; Save will create it there."
             )
         self.status_label.setStyleSheet("color: #5cb85c;")
 

@@ -81,10 +81,21 @@ class EnvEditorWidget(QWidget):
         scroll.setWidget(inner)
 
         shown_keys = keys if keys is not None else env_file.keys()
+        added = set(env_file.added_keys)
         for key in shown_keys:
             row = EnvFieldRow(key, env_file.get(key))
             self.rows[key] = row
-            form.addRow(QLabel(key), row)
+            label = QLabel(key)
+            if key in added:
+                # Pulled in from .env.example because the file lacks it --
+                # not on disk until saved (see EnvFile.added_keys).
+                label.setText(f"{key}  <span style='color:#e0a800;'>(new, from .env.example)</span>")
+                label.setToolTip(
+                    "This key exists in .env.example but not in this .env yet. "
+                    "It is shown with the template's placeholder value and will "
+                    "be written when you Save."
+                )
+            form.addRow(label, row)
 
         if not shown_keys:
             form.addRow(QLabel(f"No .env found yet at {env_file.path}"))

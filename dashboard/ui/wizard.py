@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.docker_ctl import Target
-from core.env_file import EnvFile, seed_from_example
+from core.env_file import EnvFile, merge_example_keys, seed_from_example
 from core.env_upload import EnvUploadError, download_env_text, upload_env_text
 from core.paths import (
     EDGE_ENV_EXAMPLE, EDGE_ENV_FILE, SIEM_ENV_EXAMPLE, SIEM_ENV_FILE,
@@ -282,6 +282,7 @@ class RemoteAwareEnvPage(TimelineMixin, QWizardPage):
                 self._source_is_remote = True
                 display_path = Path(f"{remote.user}@{remote.host}:{remote_env_path}")
                 self.env_file = EnvFile.from_text(text, display_path)
+                self.env_file.added_keys = merge_example_keys(self.env_file, self.local_example)
                 if text:
                     self.info.setText(
                         f"Writes to REMOTE {remote.user}@{remote.host}:"

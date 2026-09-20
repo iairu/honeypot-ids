@@ -166,7 +166,14 @@ setup wizard…** without losing existing values.
   from the remote host over SSH into the same form, and Save writes it
   straight back there instead of touching the local file. A **Refresh**
   button re-fetches from whichever source is currently selected, discarding
-  unsaved edits in the form. Also: configure/test remote SSH access per
+  unsaved edits in the form. The form always shows every key the project's
+  `.env.example` defines, Local or Remote: any key the loaded file lacks
+  (e.g. one added to the template after that deployment's `.env` was
+  created, like `STRIPE_TEST_*`) is pulled in with the template's
+  placeholder value and its comment block, flagged "(new, from
+  .env.example)" and listed in the status line, and only written on Save
+  — existing keys, values and comments are never touched, and a key that
+  exists only in `.env` is left alone. Also: configure/test remote SSH access per
   project, adjust the Health/Services status-refresh interval and toggle
   unhealthy-container tray notifications (**General** tab), and
   **export/import** the whole configuration — both `.env` files' values
