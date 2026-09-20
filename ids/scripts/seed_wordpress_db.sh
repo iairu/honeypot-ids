@@ -92,6 +92,18 @@ cd /var/www/html
 # multi-user shared hosting, irrelevant here.
 WP="wp --allow-root --path=/var/www/html"
 
+# `wp rewrite ... --hard` only writes mod_rewrite rules into .htaccess if
+# WP-CLI is told Apache has mod_rewrite -- from the CLI there is no Apache
+# to ask, so without this WordPress's got_mod_rewrite() is false and the
+# .htaccess keeps an EMPTY "# BEGIN WordPress ... # END WordPress" block.
+# Confirmed live: that's exactly why /shop/, /product/<slug>/ and every
+# other pretty permalink 404'd from Apache on all four instances while
+# ?post_type=product worked fine. Kept out of the web root (not a
+# wp-cli.yml in /var/www/html) so it is never served to a client.
+WP_CLI_CONFIG_PATH=/tmp/wp-cli-seed.yml
+export WP_CLI_CONFIG_PATH
+printf 'apache_modules:\n  - mod_rewrite\n' > "$WP_CLI_CONFIG_PATH"
+
 now_iso() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 log() { echo "[SEED] $(now_iso) $*"; }
 
@@ -178,9 +190,109 @@ while :; do
 done
 log "${db_host}:${db_port} reachable."
 
+# ---------------------------------------------------------------------------
+# configure_storefront -- everything a visitor needs to actually browse and
+# BUY: pretty permalinks written to .htaccess, a shipping method, and
+# payment gateways. Idempotent and cheap (a handful of option writes), so
+# it runs on EVERY boot, including the "already installed" no-op path
+# below -- these live in wp_options, which honeypot_content_sync
+# deliberately never replicates (it mirrors content rows only), so each
+# of the four instances has to get them from its own seed run, and an
+# instance seeded before this step existed picks it up on its next boot
+# without a FORCE_RESEED.
+#
+# Payment:
+#   * Stripe (woocommerce-gateway-stripe, already shipped under
+#     wp-content/plugins) in TEST MODE, when STRIPE_TEST_PUBLISHABLE_KEY /
+#     STRIPE_TEST_SECRET_KEY are set in .env -- Stripe's own sandbox, card
+#     4242 4242 4242 4242 with any future expiry/CVC completes an order.
+#     The keys come from a free Stripe account's "Test mode" dashboard;
+#     Stripe refuses to enable the gateway on made-up keys, so there is no
+#     built-in default. Not activated at all when the keys are absent, so
+#     an offline stack never tries to reach api.stripe.com.
+#   * "Cash on delivery" and "Direct bank transfer" (WooCommerce core's
+#     offline gateways) are always enabled as the "something similar"
+#     fallback: checkout completes end-to-end with no external service,
+#     so an order can be placed on every instance regardless of Stripe.
+# Shipping: one "Free shipping" method on the default (rest of the world)
+#   zone -- without ANY shipping method WooCommerce blocks checkout with
+#   "no shipping options were found" for every physical product, which was
+#   the case on all four instances.
+# ---------------------------------------------------------------------------
+configure_storefront() {
+    log "Configuring storefront (permalinks, shipping, payment gateways)..."
+
+    # --hard: regenerate .htaccess (see WP_CLI_CONFIG_PATH above).
+    $WP rewrite structure '/%postname%/' --hard
+    $WP rewrite flush --hard
+
+    # Activate before writing its settings so the plugin's own activation
+    # defaults never overwrite them.
+    if [ -n "${STRIPE_TEST_PUBLISHABLE_KEY:-}" ] && [ -n "${STRIPE_TEST_SECRET_KEY:-}" ]; then
+        $WP plugin activate woocommerce-gateway-stripe
+    fi
+
+    $WP eval-file - <<'PHP'
+<?php
+// Shipping: a free-shipping method on the default zone, once.
+$zone = WC_Shipping_Zones::get_zone( 0 );
+if ( empty( $zone->get_shipping_methods() ) ) {
+    $zone->add_shipping_method( 'free_shipping' );
+    WP_CLI::log( '  Added Free shipping to the default shipping zone' );
+}
+
+// Offline gateways (always on).
+$merge = function ( $option, array $values ) {
+    $current = get_option( $option );
+    if ( ! is_array( $current ) ) {
+        $current = [];
+    }
+    update_option( $option, array_merge( $current, $values ) );
+};
+$merge( 'woocommerce_cod_settings', [
+    'enabled'            => 'yes',
+    'title'              => 'Cash on delivery',
+    'description'        => 'Pay with cash upon delivery.',
+    'instructions'       => 'Pay with cash upon delivery.',
+    'enable_for_methods' => [],
+    'enable_for_virtual' => 'yes',
+] );
+$merge( 'woocommerce_bacs_settings', [
+    'enabled'      => 'yes',
+    'title'        => 'Direct bank transfer',
+    'description'  => 'Make your payment directly into our bank account. Your order will not be shipped until the funds have cleared.',
+    'instructions' => 'Make your payment directly into our bank account. Please use your Order ID as the payment reference.',
+] );
+WP_CLI::log( '  Enabled Cash on delivery + Direct bank transfer' );
+
+// Stripe test mode, only with real sandbox keys.
+$pk = getenv( 'STRIPE_TEST_PUBLISHABLE_KEY' );
+$sk = getenv( 'STRIPE_TEST_SECRET_KEY' );
+if ( $pk && $sk ) {
+    $merge( 'woocommerce_stripe_settings', [
+        'enabled'                         => 'yes',
+        'title'                           => 'Credit / debit card',
+        'description'                     => 'Pay securely with your card via Stripe.',
+        'testmode'                        => 'yes',
+        'test_publishable_key'            => $pk,
+        'test_secret_key'                 => $sk,
+        'capture'                         => 'yes',
+        'payment_request'                 => 'no',
+        'upe_checkout_experience_enabled' => 'yes',
+        'logging'                         => 'no',
+    ] );
+    WP_CLI::log( '  Configured Stripe gateway (test mode)' );
+} else {
+    WP_CLI::log( '  STRIPE_TEST_PUBLISHABLE_KEY/STRIPE_TEST_SECRET_KEY not set -- Stripe gateway left off' );
+}
+PHP
+}
+
 if $WP core is-installed 2>/dev/null; then
     if [ "${FORCE_RESEED:-0}" != "1" ]; then
-        log "WordPress already installed -- nothing to do (set FORCE_RESEED=1 to wipe and rebuild)."
+        log "WordPress already installed -- skipping install (set FORCE_RESEED=1 to wipe and rebuild)."
+        configure_storefront
+        log "Storefront configuration refreshed."
         exit 0
     fi
     log "FORCE_RESEED=1 -- dropping and recreating all WordPress tables..."
@@ -195,9 +307,6 @@ $WP core install \
     --admin_password="$WP_ADMIN_PASSWORD" \
     --admin_email="$WP_ADMIN_EMAIL" \
     --skip-email
-
-log "Setting permalink structure..."
-$WP rewrite structure '/%postname%/' --hard
 
 log "Activating theme (Omega Storefront)..."
 if $WP theme is-installed omega-storefront 2>/dev/null; then
@@ -238,6 +347,8 @@ $WP option update woocommerce_onboarding_profile '{"skipped":true}' --format=jso
 # WooCommerce's own activation hook (triggered by `plugin activate` above)
 # already creates the Shop/Cart/Checkout/My Account pages and their
 # associated wc_get_page_id() option entries -- no separate step needed.
+
+configure_storefront
 
 if [ "${IMPORT_SAMPLE_CONTENT:-1}" != "1" ]; then
     log "IMPORT_SAMPLE_CONTENT=0 -- schema/theme/plugins ready, skipping content"

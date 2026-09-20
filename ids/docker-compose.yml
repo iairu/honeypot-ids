@@ -634,6 +634,11 @@ services:
       # see the dashboard's Backups page "Reset demo store" action /
       # manage_backups.sh, or export it in the shell before `up`.
       - FORCE_RESEED=${FORCE_RESEED:-0}
+      # Optional Stripe sandbox keys -- see scripts/seed_wordpress_db.sh's
+      # configure_storefront(). Empty = Stripe gateway stays off, offline
+      # gateways (cash on delivery / bank transfer) still make checkout work.
+      - STRIPE_TEST_PUBLISHABLE_KEY=${STRIPE_TEST_PUBLISHABLE_KEY:-}
+      - STRIPE_TEST_SECRET_KEY=${STRIPE_TEST_SECRET_KEY:-}
       # Production is the one real source of content -- see
       # scripts/seed_wordpress_db.sh's IMPORT_SAMPLE_CONTENT note.
       - IMPORT_SAMPLE_CONTENT=1
@@ -704,6 +709,11 @@ services:
       - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
       - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
       - FORCE_RESEED=${FORCE_RESEED:-0}
+      # Optional Stripe sandbox keys -- see scripts/seed_wordpress_db.sh's
+      # configure_storefront(). Empty = Stripe gateway stays off, offline
+      # gateways (cash on delivery / bank transfer) still make checkout work.
+      - STRIPE_TEST_PUBLISHABLE_KEY=${STRIPE_TEST_PUBLISHABLE_KEY:-}
+      - STRIPE_TEST_SECRET_KEY=${STRIPE_TEST_SECRET_KEY:-}
       - IMPORT_SAMPLE_CONTENT=0
     volumes:
       - honeypot_eshop_files:/var/www/html
@@ -758,6 +768,11 @@ services:
       - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
       - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
       - FORCE_RESEED=${FORCE_RESEED:-0}
+      # Optional Stripe sandbox keys -- see scripts/seed_wordpress_db.sh's
+      # configure_storefront(). Empty = Stripe gateway stays off, offline
+      # gateways (cash on delivery / bank transfer) still make checkout work.
+      - STRIPE_TEST_PUBLISHABLE_KEY=${STRIPE_TEST_PUBLISHABLE_KEY:-}
+      - STRIPE_TEST_SECRET_KEY=${STRIPE_TEST_SECRET_KEY:-}
       - IMPORT_SAMPLE_CONTENT=0
     volumes:
       - honeypot_eshop_files_2:/var/www/html
@@ -803,6 +818,11 @@ services:
       - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
       - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
       - FORCE_RESEED=${FORCE_RESEED:-0}
+      # Optional Stripe sandbox keys -- see scripts/seed_wordpress_db.sh's
+      # configure_storefront(). Empty = Stripe gateway stays off, offline
+      # gateways (cash on delivery / bank transfer) still make checkout work.
+      - STRIPE_TEST_PUBLISHABLE_KEY=${STRIPE_TEST_PUBLISHABLE_KEY:-}
+      - STRIPE_TEST_SECRET_KEY=${STRIPE_TEST_SECRET_KEY:-}
       - IMPORT_SAMPLE_CONTENT=0
     volumes:
       - honeypot_eshop_files_3:/var/www/html
