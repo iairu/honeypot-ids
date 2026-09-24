@@ -219,21 +219,49 @@ log "${db_host}:${db_port} reachable."
 #   "no shipping options were found" for every physical product, which was
 #   the case on all four instances.
 # ---------------------------------------------------------------------------
+#
+# Startup cost: every $WP call boots all of WordPress + WooCommerce +
+# Elementor (~0.6s+ each), and this runs on every boot of all four seed
+# containers, so the warm path is kept to ONE boot (the eval-file below).
+# The Stripe activation happens inside it (activate_plugin() is exactly
+# what `wp plugin activate` calls), and the permalink step -- two more
+# boots, since `wp rewrite structure --hard` itself re-launches `wp
+# rewrite flush --hard` -- only runs when the eval-file reports the
+# structure/.htaccess/rewrite_rules aren't already in place.
+# ---------------------------------------------------------------------------
 configure_storefront() {
     log "Configuring storefront (permalinks, shipping, payment gateways)..."
 
-    # --hard: regenerate .htaccess (see WP_CLI_CONFIG_PATH above).
-    $WP rewrite structure '/%postname%/' --hard
-    $WP rewrite flush --hard
+    needs_rewrite_flag=/tmp/seed-needs-rewrite
+    rm -f "$needs_rewrite_flag"
 
-    # Activate before writing its settings so the plugin's own activation
-    # defaults never overwrite them.
-    if [ -n "${STRIPE_TEST_PUBLISHABLE_KEY:-}" ] && [ -n "${STRIPE_TEST_SECRET_KEY:-}" ]; then
-        $WP plugin activate woocommerce-gateway-stripe
-    fi
-
-    $WP eval-file - <<'PHP'
+    NEEDS_REWRITE_FLAG="$needs_rewrite_flag" $WP eval-file - <<'PHP'
 <?php
+// Permalinks: only flag for a (costly) `wp rewrite structure` run if
+// something is actually missing. A pool's .htaccess is re-synced from
+// production's by init_setup on every boot, so it already carries the
+// rules once production has been seeded.
+$htaccess = ABSPATH . '.htaccess';
+if ( get_option( 'permalink_structure' ) !== '/%postname%/'
+    || ! get_option( 'rewrite_rules' )
+    || ! is_readable( $htaccess )
+    || strpos( (string) file_get_contents( $htaccess ), 'RewriteRule . /index.php' ) === false ) {
+    touch( getenv( 'NEEDS_REWRITE_FLAG' ) );
+}
+
+// Activate Stripe before writing its settings so the plugin's own
+// activation defaults never overwrite them.
+require_once ABSPATH . 'wp-admin/includes/plugin.php';
+$stripe_plugin = 'woocommerce-gateway-stripe/woocommerce-gateway-stripe.php';
+if ( getenv( 'STRIPE_TEST_PUBLISHABLE_KEY' ) && getenv( 'STRIPE_TEST_SECRET_KEY' )
+    && ! is_plugin_active( $stripe_plugin ) ) {
+    $result = activate_plugin( $stripe_plugin );
+    if ( is_wp_error( $result ) ) {
+        WP_CLI::error( 'Could not activate woocommerce-gateway-stripe: ' . $result->get_error_message() );
+    }
+    WP_CLI::log( '  Activated woocommerce-gateway-stripe' );
+}
+
 // Shipping: a free-shipping method on the default zone, once.
 $zone = WC_Shipping_Zones::get_zone( 0 );
 if ( empty( $zone->get_shipping_methods() ) ) {
@@ -286,6 +314,15 @@ if ( $pk && $sk ) {
     WP_CLI::log( '  STRIPE_TEST_PUBLISHABLE_KEY/STRIPE_TEST_SECRET_KEY not set -- Stripe gateway left off' );
 }
 PHP
+
+    if [ -f "$needs_rewrite_flag" ]; then
+        # --hard: regenerate .htaccess (see WP_CLI_CONFIG_PATH above). This
+        # already runs `wp rewrite flush --hard` itself -- no separate flush.
+        $WP rewrite structure '/%postname%/' --hard
+        rm -f "$needs_rewrite_flag"
+    else
+        log "  Permalinks + .htaccess already in place -- skipping rewrite flush."
+    fi
 }
 
 if $WP core is-installed 2>/dev/null; then

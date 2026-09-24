@@ -99,18 +99,21 @@ services:
       # and reach the intentionally vulnerable endpoints (including xmlrpc.php).
       # Since sync_files() re-copies from source every run, this rm -f must
       # also run every time (a prior run's removal doesn't stick otherwise).
+      #
+      # The three pools are synced in PARALLEL (& + wait): each rsync is
+      # dominated by per-file stat() latency over a ~38k-file tree, not
+      # bandwidth, and all three read the same source (hot in page cache
+      # after the first), so running them concurrently cuts this step to
+      # roughly the time of one -- and this step gates every other service.
       # -----------------------------------------------------------------------
-      sync_files /source_files /dest_files_1 'honeypot pool-1 WordPress files'
-      rm -f /dest_files_1/wp-content/mu-plugins/production-hardening.php
-      echo '  Removed production-hardening.php from pool-1 (honeypot retains attack surface)'
-
-      sync_files /source_files /dest_files_2 'honeypot pool-2 WordPress files'
-      rm -f /dest_files_2/wp-content/mu-plugins/production-hardening.php
-      echo '  Removed production-hardening.php from pool-2 (honeypot retains attack surface)'
-
-      sync_files /source_files /dest_files_3 'honeypot pool-3 WordPress files'
-      rm -f /dest_files_3/wp-content/mu-plugins/production-hardening.php
-      echo '  Removed production-hardening.php from pool-3 (honeypot retains attack surface)'
+      for N in 1 2 3; do
+        (
+          sync_files /source_files /dest_files_\$$N \"honeypot pool-\$$N WordPress files\"
+          rm -f /dest_files_\$$N/wp-content/mu-plugins/production-hardening.php
+          echo \"  Removed production-hardening.php from pool-\$$N (honeypot retains attack surface)\"
+        ) &
+      done
+      wait
 
       # -----------------------------------------------------------------------
       # Copy database data directory for each pool instance, ONCE (see
@@ -119,11 +122,14 @@ services:
       # affect the others. Also copy to production_mysql_data (named volume)
       # so that the production MySQL container can own it – vmhgfs bind
       # mounts reject chown at runtime.
+      # Parallel for the same reason as the file sync above (only does real
+      # work on first provisioning; a no-op check otherwise).
       # -----------------------------------------------------------------------
-      copy_files /source_db /dest_prod_db 'production database data'
-      copy_files /source_db /dest_db_1 'honeypot pool-1 database data'
-      copy_files /source_db /dest_db_2 'honeypot pool-2 database data'
-      copy_files /source_db /dest_db_3 'honeypot pool-3 database data'
+      copy_files /source_db /dest_prod_db 'production database data' &
+      copy_files /source_db /dest_db_1 'honeypot pool-1 database data' &
+      copy_files /source_db /dest_db_2 'honeypot pool-2 database data' &
+      copy_files /source_db /dest_db_3 'honeypot pool-3 database data' &
+      wait
 
       # -----------------------------------------------------------------------
       # Generate self-signed SSL certificates (shared across all services)
@@ -455,6 +461,13 @@ services:
       # they just don't count as healthy yet -- so this costs nothing on
       # a warm restart (which passes on the first check regardless).
       start_period: 420s
+      # Probe every 1s (not every `interval`) until the FIRST success
+      # during start_period, then fall back to `interval`. Without this
+      # the first check only runs a full `interval` after start, so every
+      # service_healthy dependent waited up to 10s (DBs) / 30s (eshops)
+      # after the service was already up. Same on every healthcheck in
+      # this file. Needs Docker Engine 25+.
+      start_interval: 1s
 
   # Production WordPress instance (clean, secure)
   production_eshop:
@@ -577,6 +590,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+      start_interval: 2s
 
   # ---------------------------------------------------------------------------
   # One-shot WordPress + WooCommerce + Elementor bootstrap for
@@ -670,7 +684,11 @@ services:
       - SETGID
       - SETUID
     mem_limit: 512m
-    cpus: "0.5"
+    # 1.0, not 0.5: every wp-cli call here boots all of WordPress +
+    # WooCommerce + Elementor, which is CPU-bound -- measured ~1.2-2s per
+    # boot at 0.5 vs ~0.6s at 1.0 (no further gain at 2.0). One-shot
+    # container on the critical startup path, same ceiling as the eshops.
+    cpus: "1.0"
     pids_limit: 100
 
   honeypot_db_seed_1:
@@ -732,7 +750,7 @@ services:
       - SETGID
       - SETUID
     mem_limit: 512m
-    cpus: "0.5"
+    cpus: "1.0"
     pids_limit: 100
 
   honeypot_db_seed_2:
@@ -791,7 +809,7 @@ services:
       - SETGID
       - SETUID
     mem_limit: 512m
-    cpus: "0.5"
+    cpus: "1.0"
     pids_limit: 100
 
   honeypot_db_seed_3:
@@ -841,7 +859,7 @@ services:
       - SETGID
       - SETUID
     mem_limit: 512m
-    cpus: "0.5"
+    cpus: "1.0"
     pids_limit: 100
 
   # ---------------------------------------------------------------------------
@@ -917,6 +935,7 @@ services:
       retries: 5
       # See production_database's healthcheck comment above for why 420s.
       start_period: 420s
+      start_interval: 1s
 
   # Pool 2 – independent database instance
   honeypot_database_2:
@@ -961,6 +980,7 @@ services:
       retries: 5
       # See production_database's healthcheck comment above for why 420s.
       start_period: 420s
+      start_interval: 1s
 
   # Pool 3 – independent database instance
   honeypot_database_3:
@@ -1005,6 +1025,7 @@ services:
       retries: 5
       # See production_database's healthcheck comment above for why 420s.
       start_period: 420s
+      start_interval: 1s
 
   # ---------------------------------------------------------------------------
   # Honeypot WordPress instances (pool 1, 2, 3)
@@ -1133,6 +1154,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+      start_interval: 2s
 
   # Pool 2 – isolated WordPress instance
   honeypot_eshop_2:
@@ -1217,6 +1239,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+      start_interval: 2s
 
   # Pool 3 – isolated WordPress instance
   honeypot_eshop_3:
@@ -1301,6 +1324,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+      start_interval: 2s
 
   # Redis for session management and threat intelligence
   session_store:
@@ -1335,6 +1359,7 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+      start_interval: 1s
 
   # Suricata IDS for traffic analysis
   # ---------------------------------------------------------------------------
@@ -1472,6 +1497,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+      start_interval: 2s
 
   # Vector for shipping logs to ELK SIEM (on OpenStack SIEM VM 147.175.151.193)
   # ---------------------------------------------------------------------------
