@@ -300,7 +300,8 @@ end
 -- changes, and it keeps analyze_request's stage list readable.
 
 function _M.analyze_uri_patterns(uri)
-    return threat_rules.analyze_uri_patterns(uri, _G.config.threat.suspicious_patterns)
+    return threat_rules.analyze_uri_patterns(
+        uri, _G.config.threat.suspicious_patterns, _G.config.threat.max_threat_score)
 end
 
 function _M.analyze_headers(headers)
@@ -308,7 +309,9 @@ function _M.analyze_headers(headers)
 end
 
 function _M.analyze_cve_patterns(uri, headers)
-    return threat_rules.analyze_cve_patterns(uri, headers, ngx.var.args, _G.config.vulnerability.cve_patterns)
+    return threat_rules.analyze_cve_patterns(
+        uri, headers, ngx.var.args, _G.config.vulnerability.cve_patterns,
+        _G.config.threat.max_threat_score)
 end
 
 function _M.analyze_request_method()

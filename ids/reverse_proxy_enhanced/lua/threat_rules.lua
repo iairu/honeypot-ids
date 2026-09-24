@@ -83,9 +83,17 @@ end
 --
 -- @param uri                  string
 -- @param suspicious_patterns  table|nil  List of Lua patterns.
+-- @param max_score            number|nil Clamp the returned score to this
+--                             (the caller passes _G.config.threat.max_threat_score).
+--                             The overall request score is capped at that max
+--                             anyway, so a single URI signal contributing more
+--                             than the max (e.g. author_enum 80 + several
+--                             generic hits => "+110") is meaningless and just
+--                             misleads a log/report reader -- clamp it so the
+--                             "+N" never exceeds the score it can actually add.
 -- @return table  { score, patterns[] }
 -- ---------------------------------------------------------------------------
-function _M.analyze_uri_patterns(uri, suspicious_patterns)
+function _M.analyze_uri_patterns(uri, suspicious_patterns, max_score)
     local result = {
         score = 0,
         patterns = {}
@@ -200,6 +208,13 @@ function _M.analyze_uri_patterns(uri, suspicious_patterns)
         table.insert(result.patterns, "excessive_parameters")
     end
 
+    -- Clamp to the max score this signal can actually contribute (see @param
+    -- max_score). Purely corrects the reported "+N" -- the request total is
+    -- min(sum, max_threat_score) regardless, so this never changes routing.
+    if max_score and result.score > max_score then
+        result.score = max_score
+    end
+
     return result
 end
 
@@ -285,7 +300,7 @@ end
 --                                    _G.config.vulnerability.cve_patterns).
 -- @return table  { score, cves[] }
 -- ---------------------------------------------------------------------------
-function _M.analyze_cve_patterns(uri, headers, query_params, cve_patterns)
+function _M.analyze_cve_patterns(uri, headers, query_params, cve_patterns, max_score)
     local result = {
         score = 0,
         cves = {}
@@ -324,6 +339,14 @@ function _M.analyze_cve_patterns(uri, headers, query_params, cve_patterns)
             result.score = result.score + 40
             table.insert(result.cves, cve)
         end
+    end
+
+    -- Clamp to the max score this signal can actually add (the request total
+    -- is capped at max_threat_score anyway) so a multi-CVE match no longer
+    -- reports a meaningless "+120" the score can never reach. cves[] is left
+    -- intact -- the count of distinct CVEs is still reported truthfully.
+    if max_score and result.score > max_score then
+        result.score = max_score
     end
 
     return result
