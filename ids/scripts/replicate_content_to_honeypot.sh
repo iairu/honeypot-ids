@@ -65,8 +65,12 @@ MYSQL_USER="production_user"
 MYSQL_DATABASE="production_database"
 PROD_HOST="production_database"
 
-POOL_HOSTS="honeypot_database_1 honeypot_database_2 honeypot_database_3"
-POOL_NUMS="1 2 3"
+# Single-eshop / two-database topology: one honeypot database, cloned from
+# production by honeypot_db_init and kept content-synced here. (The multi-pool
+# arrays are collapsed to a single entry rather than removed so the cycle logic
+# below stays unchanged.)
+POOL_HOSTS="honeypot_database"
+POOL_NUMS="1"
 
 REDIS_HOST="${REDIS_HOST:-session_store}"
 REPLICATION_INTERVAL_SECONDS="${REPLICATION_INTERVAL_SECONDS:-300}"
@@ -84,16 +88,12 @@ log() {
 pool_password() {
     case "$1" in
         1) echo "$MYSQL_PASSWORD" ;;
-        2) echo "$MYSQL_PASSWORD_POOL_2" ;;
-        3) echo "$MYSQL_PASSWORD_POOL_3" ;;
     esac
 }
 
 pool_host() {
     case "$1" in
-        1) echo "honeypot_database_1" ;;
-        2) echo "honeypot_database_2" ;;
-        3) echo "honeypot_database_3" ;;
+        1) echo "honeypot_database" ;;
     esac
 }
 

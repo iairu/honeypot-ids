@@ -38,6 +38,24 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+// ----------------------------------------------------------------------------
+// SINGLE-ESHOP / TWO-DATABASE TOPOLOGY GUARD.
+//
+// This one WordPress instance now serves BOTH production and honeypot traffic,
+// with the database chosen per request by wp-content/db.php (the db drop-in,
+// which runs before mu-plugins and defines HONEYPOT_ACTIVE_DB_BACKEND). When
+// the reverse proxy diverted this request to the honeypot, hardening MUST NOT
+// run -- the whole point of the honeypot is to show attackers a realistic,
+// UNHARDENED, fingerprintable install with XML-RPC and the vulnerable plugin
+// surface reachable. Hardening only applies to production-routed requests.
+//
+// This replaces the old topology's approach, where init_setup simply deleted
+// this file from each honeypot pool's own filesystem -- there are no separate
+// pool filesystems any more, so the decision is made here, per request.
+if ( defined( 'HONEYPOT_ACTIVE_DB_BACKEND' ) && HONEYPOT_ACTIVE_DB_BACKEND === 'honeypot' ) {
+    return;
+}
+
 // ============================================================================
 // 1. XML-RPC – completely disabled on production.
 //    Attackers routinely probe /xmlrpc.php for:

@@ -42,3 +42,15 @@ proxy_hide_header Server;
 proxy_set_header Accept-Encoding "";
 proxy_set_header X-Forwarded-Server $host;
 proxy_set_header X-Original-Request $request_uri;
+
+# ---------------------------------------------------------------------------
+# Honeypot database routing (single-eshop / two-database topology).
+# Passes this reverse proxy's per-session threat decision ($route_decision:
+# "production" | "honeypot") to the single WordPress instance, whose db drop-in
+# (wp-content/db.php) uses it to connect $wpdb to the production OR the honeypot
+# database. Because this is a proxy_set_header, it ALWAYS overwrites any header
+# of the same name a client tried to send -- that is what makes the routing
+# trustworthy: a client cannot forge X-Honeypot-Backend to escape the honeypot
+# (or to reach production data). $route_decision defaults to "production" and is
+# only raised to "honeypot" by the Lua threat pipeline.
+proxy_set_header X-Honeypot-Backend $route_decision;

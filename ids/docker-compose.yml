@@ -16,63 +16,29 @@ services:
   init_setup:
     image: alpine:latest
     volumes:
-      - ./production_eshop_files:/source_files:ro
       - ./production_database_data:/source_db:ro
-      # Pool 1 destinations (original paths kept for backward compat)
-      - honeypot_eshop_files:/dest_files_1
-      - honeypot_database_data:/dest_db_1
-      # Pool 2 destinations
-      - honeypot_eshop_files_2:/dest_files_2
-      - honeypot_database_data_2:/dest_db_2
-      # Pool 3 destinations
-      - honeypot_eshop_files_3:/dest_files_3
-      - honeypot_database_data_3:/dest_db_3
       # Production DB destination (named volume to avoid vmhgfs chown restriction)
       - production_mysql_data:/dest_prod_db
       - ./ssl_certificates:/ssl_certs
     command: |
       sh -c "
       set -x
-      echo 'Starting initialization setup (honeynet pool mode)...'
+      echo 'Starting initialization setup (single-eshop / two-database mode)...'
 
-      apk add --no-cache rsync openssl
-
-      # -----------------------------------------------------------------------
-      # Helper: idempotently SYNC source code files into a destination
-      # directory. Runs on EVERY \`docker compose up\`, not just first
-      # provisioning -- this is what keeps honeypot pool volumes from
-      # silently drifting from production_eshop_files/ when files are
-      # added/changed after the pools were first created (previously this
-      # used a one-shot copy_files() that skipped entirely once the
-      # destination had any content at all, so post-provisioning additions
-      # -- e.g. a new theme or mu-plugin -- never propagated and had to be
-      # \`docker cp\`'d in by hand).
-      #
-      # rsync -a with no --delete: this is a one-directional add/update from
-      # source, not a mirror. Anything that exists ONLY in the destination
-      # (attacker-uploaded webshells under wp-content/uploads, other
-      # honeypot-side forensic artifacts left by a real session) is
-      # deliberately left untouched -- syncing new production files must
-      # never destroy evidence of what an attacker did to a pool.
-      # -----------------------------------------------------------------------
-      sync_files() {
-        SRC=\$$1; DST=\$$2; LABEL=\$$3
-        if [ -d \"\$$SRC\" ] && [ -n \"\$$(find \$$SRC -mindepth 1 -maxdepth 1 2>/dev/null)\" ]; then
-          echo \"Syncing \$$LABEL into \$$DST...\"
-          rsync -a \"\$$SRC/\" \"\$$DST/\" || echo \"  Warning: rsync for \$$LABEL returned non-zero\"
-          echo \"  Done: \$$LABEL\"
-        else
-          echo \"  Source \$$SRC empty or absent – skipping \$$LABEL\"
-        fi
-      }
+      apk add --no-cache openssl
 
       # -----------------------------------------------------------------------
-      # Helper: copy source data into a destination directory ONCE, skipping
-      # entirely if the destination is already populated. Used ONLY for
-      # stateful database data directories, where re-syncing on every startup
-      # would overwrite live, mutable database state (including a pool's own
-      # divergent history) -- unlike code files, an always-resync policy is
-      # actively wrong here, not just unnecessary.
+      # SINGLE-ESHOP TOPOLOGY: there is now ONE WordPress instance
+      # (production_eshop) serving both production and honeypot traffic, its
+      # code served straight from the ./production_eshop_files bind mount, so
+      # there are no per-pool WordPress file volumes to sync any more. The
+      # honeypot DATABASE is a runtime clone of production (see honeypot_db_init
+      # below), so it doesn't need a pre-seeded data directory either -- it
+      # starts empty and MySQL initialises it from its env. The one thing still
+      # needed here is copying the committed production DB data directory into
+      # production_mysql_data (a named volume), because the production MySQL
+      # container must be able to chown its datadir and the vmhgfs bind mount
+      # rejects chown at runtime.
       # -----------------------------------------------------------------------
       copy_files() {
         SRC=\$$1; DST=\$$2; LABEL=\$$3
@@ -90,46 +56,7 @@ services:
         fi
       }
 
-      # -----------------------------------------------------------------------
-      # Sync WordPress files for each pool instance.
-      # After syncing, remove production-hardening.php from every honeypot
-      # destination.  That mu-plugin disables XML-RPC, strips version strings,
-      # and closes other attack vectors on the production instance.  Honeypot
-      # instances MUST NOT have it: attackers need to see realistic fingerprints
-      # and reach the intentionally vulnerable endpoints (including xmlrpc.php).
-      # Since sync_files() re-copies from source every run, this rm -f must
-      # also run every time (a prior run's removal doesn't stick otherwise).
-      #
-      # The three pools are synced in PARALLEL (& + wait): each rsync is
-      # dominated by per-file stat() latency over a ~38k-file tree, not
-      # bandwidth, and all three read the same source (hot in page cache
-      # after the first), so running them concurrently cuts this step to
-      # roughly the time of one -- and this step gates every other service.
-      # -----------------------------------------------------------------------
-      for N in 1 2 3; do
-        (
-          sync_files /source_files /dest_files_\$$N \"honeypot pool-\$$N WordPress files\"
-          rm -f /dest_files_\$$N/wp-content/mu-plugins/production-hardening.php
-          echo \"  Removed production-hardening.php from pool-\$$N (honeypot retains attack surface)\"
-        ) &
-      done
-      wait
-
-      # -----------------------------------------------------------------------
-      # Copy database data directory for each pool instance, ONCE (see
-      # copy_files above). Each pool gets its own isolated MySQL data
-      # directory so that attacker writes to one pool's database do not
-      # affect the others. Also copy to production_mysql_data (named volume)
-      # so that the production MySQL container can own it – vmhgfs bind
-      # mounts reject chown at runtime.
-      # Parallel for the same reason as the file sync above (only does real
-      # work on first provisioning; a no-op check otherwise).
-      # -----------------------------------------------------------------------
-      copy_files /source_db /dest_prod_db 'production database data' &
-      copy_files /source_db /dest_db_1 'honeypot pool-1 database data' &
-      copy_files /source_db /dest_db_2 'honeypot pool-2 database data' &
-      copy_files /source_db /dest_db_3 'honeypot pool-3 database data' &
-      wait
+      copy_files /source_db /dest_prod_db 'production database data'
 
       # -----------------------------------------------------------------------
       # Generate self-signed SSL certificates (shared across all services)
@@ -152,196 +79,77 @@ services:
       "
 
   # ---------------------------------------------------------------------------
-  # Database migration applier for honeypot pools
+  # Honeypot database initialiser  (clone-of-production + cleaning migrations)
   # ---------------------------------------------------------------------------
-  # Applies every SQL file in honeypot_database_migrations/ (in lexicographic
-  # order) to ALL three pool databases.  Running migrations on all pools ensures
-  # they stay schema-identical so pool_router.lua can assign any IP to any pool
-  # without compatibility issues.
-  #
-  # Migration files included:
-  #   01_clean-honeypot-data.sql  – replaces real data with dummy data
-  #   02_pool_tracking.sql        – creates honeynet pooling metadata tables
+  # In the single-eshop / two-database topology there is no separate honeypot
+  # WordPress install to `wp core install`. The honeypot database is instead a
+  # CLONE of the already-seeded production database (identical schema, options,
+  # theme/plugin state and content, so the honeypot renders exactly like the
+  # real site) with sensitive data then scrubbed by the migrations in
+  # honeypot_database_migrations/:
+  #   01_clean-honeypot-data.sql  – replaces real customer/order data with dummy
+  #   02_pool_tracking.sql        – honeynet metadata tables
+  # honeypot_content_sync keeps the clone fresh afterwards. Runs once and exits.
   # ---------------------------------------------------------------------------
-  honeypot_db_migration:
+  honeypot_db_init:
     image: mysql:5.7
     depends_on:
-      init_setup:
+      honeypot_database:
+        condition: service_healthy
+      production_database:
+        condition: service_healthy
+      # Clone only AFTER production has real WordPress schema+content, or the
+      # honeypot would clone an empty database.
+      production_db_seed:
         condition: service_completed_successfully
-      honeypot_database_1:
-        condition: service_healthy
-      honeypot_database_2:
-        condition: service_healthy
-      honeypot_database_3:
-        condition: service_healthy
     volumes:
       - ./honeypot_database_migrations:/migrations:ro
     environment:
       - MYSQL_DATABASE=production_database
       - MYSQL_USER=production_user
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
-      - MYSQL_PASSWORD_POOL_2=${MYSQL_PASSWORD_POOL_2}
-      - MYSQL_PASSWORD_POOL_3=${MYSQL_PASSWORD_POOL_3}
     command: |
       bash -c "
-      # -----------------------------------------------------------------------
-      # Helper: block until a host's MySQL server actually accepts a
-      # connection over TCP, not just until Docker reports its healthcheck
-      # as healthy -- confirmed live that right after init_setup's tar copy
-      # of a large data directory, mysqld can still be mid crash-recovery/
-      # InnoDB startup for a few seconds after \`mysqladmin ping\` over the
-      # local socket (the healthcheck) starts succeeding, especially under
-      # the extra load of multiple pools starting at once. This replaces a
-      # blind 'sleep 5', which was too short under that load and produced
-      # 'ERROR 2003: Can't connect to MySQL server ... (111)' (errno 111 =
-      # ECONNREFUSED) bursts below.
-      #
-      # Probes with \`mysqladmin ping\` over TCP using real credentials, NOT
-      # a raw TCP connect (bash's /dev/tcp) as before -- confirmed live
-      # that a connect-then-close with no MySQL handshake makes mysqld log
-      # '[Note] Got an error reading communication packets' on every
-      # probe, one per pool per boot. Credentials: pool 2/3 may already
-      # have had their password rotated to their pool-specific value by a
-      # PRIOR run of set_pool_password() below (rotation is persisted in
-      # the pool's own datadir), so each candidate password is tried in
-      # turn -- pool-specific first, since that's the steady state after
-      # the very first boot (a rejected candidate is logged by mysqld as
-      # an 'Access denied' note, so the order matters for log noise, not
-      # correctness). Either password being accepted proves the server is
-      # up; ALL of them rejected also proves it's up (the server answered
-      # the handshake) and is left for set_pool_password() to report.
-      # Only a failed connect (ECONNREFUSED / server still starting) keeps
-      # waiting.
-      # -----------------------------------------------------------------------
-      db_ready() {
-        HOST=\$$1
-        shift
-        for PASS in \"\$$@\"; do
-          OUT=\$$(mysqladmin ping -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$PASS\" 2>&1)
-          case \"\$$OUT\" in
-            *'mysqld is alive'*) return 0 ;;
-            *'Access denied'*) ;;
-            *) return 1 ;;
-          esac
-        done
-        return 0
-      }
+      set -e
+      PROD=production_database
+      HP=honeypot_database
 
-      wait_for_db() {
-        HOST=\$$1
-        shift
+      wait_for() {
         TRIES=0
-        MAX_TRIES=30
-        until db_ready \"\$$HOST\" \"\$$@\"; do
-          TRIES=\$$((TRIES + 1))
-          if [ \"\$$TRIES\" -ge \"\$$MAX_TRIES\" ]; then
-            echo \"  WARNING: \$$HOST:3306 still not accepting connections after \$$((MAX_TRIES * 2))s -- proceeding anyway\"
-            return 1
-          fi
+        until mysqladmin ping -h\"\$$1\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" 2>/dev/null | grep -q 'mysqld is alive'; do
+          TRIES=\$$((TRIES+1)); [ \"\$$TRIES\" -ge 60 ] && { echo \"  WARNING: \$$1 never became reachable\"; break; }
           sleep 2
         done
-        if [ \"\$$TRIES\" -gt 0 ]; then
-          echo \"  \$$HOST:3306 is accepting connections (after \$$((TRIES * 2))s)\"
-        fi
       }
+      echo 'Waiting for production + honeypot databases to accept connections...'
+      wait_for \"\$$PROD\"; wait_for \"\$$HP\"
 
-      echo 'Waiting for all honeypot pool databases to actually accept connections...'
-      wait_for_db honeypot_database_1 \"\$$MYSQL_PASSWORD\"
-      wait_for_db honeypot_database_2 \"\$$MYSQL_PASSWORD_POOL_2\" \"\$$MYSQL_PASSWORD\"
-      wait_for_db honeypot_database_3 \"\$$MYSQL_PASSWORD_POOL_3\" \"\$$MYSQL_PASSWORD\"
-
-      # -----------------------------------------------------------------------
-      # Helper: rotate a pool's DB user password to its own pool-specific
-      # value.  honeypot_database_N's data directory is a raw copy of
-      # production_database_data made ONCE by init_setup (see that service's
-      # copy_files comment) -- MySQL only applies MYSQL_USER/MYSQL_PASSWORD
-      # env vars on a truly empty data directory, so a freshly-provisioned
-      # pool still has the SAME credentials as production and every other
-      # pool until this rotates it. Idempotent: if NEW_PASS already works,
-      # nothing to do (a previous run already rotated it); otherwise falls
-      # back to the shared/original MYSQL_PASSWORD to perform the rotation.
-      # Without this, all pools share one password despite sitting on one
-      # flat network that lets any pool reach any other pool's database over
-      # TCP -- see the note on the honeypot_database_N block above and
-      # ids/testing/test_pool_isolation.sh.
-      # -----------------------------------------------------------------------
-      set_pool_password() {
-        HOST=\$$1
-        NEW_PASS=\$$2
-        if mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$NEW_PASS\" -e 'SELECT 1' >/dev/null 2>&1; then
-          echo \"  \$$HOST already uses its pool-specific password\"
-          return 0
-        fi
-        if mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" -e \"ALTER USER '\$$MYSQL_USER'@'%' IDENTIFIED BY '\$$NEW_PASS'; FLUSH PRIVILEGES;\" 2>/dev/null; then
-          echo \"  Rotated \$$HOST to its pool-specific password\"
-        else
-          echo \"  WARNING: could not set pool-specific password for \$$HOST (neither old nor new password worked)\"
-        fi
-      }
-
-      set_pool_password honeypot_database_2 \"\$$MYSQL_PASSWORD_POOL_2\"
-      set_pool_password honeypot_database_3 \"\$$MYSQL_PASSWORD_POOL_3\"
-
-      # -----------------------------------------------------------------------
-      # Helper: apply all migrations to a single database host. Each pool has
-      # its own DB password (see set_pool_password above), so the password to
-      # use is passed in per call, not read from a single shared MYSQL_PASSWORD.
-      # Sets MIGRATION_FAILED=1 if any migration OTHER than
-      # 01_clean-honeypot-data.sql fails, so the script exits 1 at the end
-      # and Docker marks the service as failed (dependent services --
-      # honeypot_eshop_N -- then never start on an incomplete schema).
-      # 01_clean-honeypot-data.sql's own header already documents its
-      # DELETEs as expected to fail with 'table doesn't exist' on a
-      # freshly-copied pool -- that pool's wp_* tables don't exist yet at
-      # this point (honeypot_db_seed_N's \`wp core install\` runs AFTER this
-      # service, see its depends_on comment below), so this is the ONE
-      # migration file that's genuinely best-effort, not a real failure.
-      # -----------------------------------------------------------------------
-      MIGRATION_FAILED=0
-
-      apply_migrations() {
-        HOST=\$$1
-        PASS=\$$2
-        echo \"\"
-        echo \"=== Applying migrations to \$$HOST ===\"
-
-        if [ -d '/migrations' ] && [ -n \"\$$(find /migrations -name '*.sql' -type f)\" ]; then
-          for migration in \$$(ls /migrations/*.sql | sort); do
-            if [ -f \"\$$migration\" ]; then
-              echo \"  Applying: \$$migration\"
-              if [ \"\$$(basename \"\$$migration\")\" = '01_clean-honeypot-data.sql' ]; then
-                mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$PASS\" \"\$$MYSQL_DATABASE\" --force < \"\$$migration\" 2>/dev/null
-                echo \"  [OK] \$$migration applied to \$$HOST (best-effort -- table-not-found errors here are expected on a fresh pool, silenced)\"
-              elif mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$PASS\" \"\$$MYSQL_DATABASE\" --force < \"\$$migration\"; then
-                echo \"  [OK] \$$migration applied to \$$HOST\"
-              else
-                echo \"  [FAILED] \$$migration failed on \$$HOST\"
-                MIGRATION_FAILED=1
-              fi
-            fi
-          done
-          echo \"=== All migrations applied to \$$HOST ===\"
-        else
-          echo \"  No migrations found in /migrations – skipping \$$HOST\"
-        fi
-      }
-
-      # Apply to every pool database in turn, each with its own password.
-      apply_migrations honeypot_database_1 \"\$$MYSQL_PASSWORD\"
-      apply_migrations honeypot_database_2 \"\$$MYSQL_PASSWORD_POOL_2\"
-      apply_migrations honeypot_database_3 \"\$$MYSQL_PASSWORD_POOL_3\"
-
-      if [ \"\$$MIGRATION_FAILED\" = '1' ]; then
-        echo ''
-        echo 'FATAL: one or more honeypot pool database migrations failed -- see [FAILED] lines above.'
-        exit 1
+      # Clone production -> honeypot ONLY if the honeypot has no WordPress
+      # schema yet (fresh volume). This never clobbers a honeypot that already
+      # holds its own attacker-diverged state on a warm restart.
+      HAS_SCHEMA=\$$(mysql -h\"\$$HP\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" -N -e \"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='\$$MYSQL_DATABASE' AND table_name='wp_options'\" 2>/dev/null || echo 0)
+      if [ \"\$$HAS_SCHEMA\" = '0' ]; then
+        echo 'Cloning production database into the honeypot database...'
+        mysqldump -h\"\$$PROD\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" --single-transaction --no-tablespaces --skip-add-locks \"\$$MYSQL_DATABASE\" | mysql -h\"\$$HP\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" \"\$$MYSQL_DATABASE\"
+        echo '  Clone complete.'
+      else
+        echo '  Honeypot database already has a WordPress schema -- skipping clone.'
       fi
 
-      echo ''
-      echo 'All honeypot pool database migrations completed successfully.'
+      # Scrub sensitive data + add honeynet metadata tables (best-effort:
+      # 01_clean-honeypot-data.sql documents its DELETEs as tolerant of
+      # already-absent rows).
+      if [ -d /migrations ]; then
+        for m in \$$(ls /migrations/*.sql 2>/dev/null | sort); do
+          echo \"  Applying \$$m ...\"
+          mysql -h\"\$$HP\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" --force \"\$$MYSQL_DATABASE\" < \"\$$m\" || echo \"    (non-zero, continuing)\"
+        done
+      fi
+      echo 'Honeypot database initialisation complete.'
       "
     networks:
       - honeypot_network
+      - production_network
 
   # ---------------------------------------------------------------------------
   # Honeypot content replication (periodic production -> honeypot pool sync)
@@ -365,42 +173,20 @@ services:
   honeypot_content_sync:
     image: mysql:5.7
     depends_on:
-      honeypot_db_migration:
-        condition: service_completed_successfully
       session_store:
         condition: service_healthy
-      # Without this, this service's very first sync_cycle (it runs one
-      # immediately on startup, not just on the REPLICATION_INTERVAL_SECONDS
-      # timer) can race production_db_seed on a fresh `docker compose up`:
-      # production_database would still be schemaless/empty at that
-      # instant, so build_sync_sql() correctly takes its "production has
-      # no content yet -- skipping this cycle" early-return (see
-      # scripts/replicate_content_to_honeypot.sh) -- but that means the
-      # honeypot pools would then sit on stale/no content for a full
-      # REPLICATION_INTERVAL_SECONDS (default 300s) before the next cycle
-      # picks up what production_db_seed just created. Waiting on this
-      # completing first means the FIRST cycle already sees the real seeded
-      # catalog, not an empty one. Same reasoning applies to each honeypot
-      # pool's OWN schema (honeypot_database_1/2/3 never had wp_* tables
-      # either, confirmed live -- only the pool_router bookkeeping ones) --
-      # this service's replication is a scoped DELETE/INSERT into EXISTING
-      # tables, never schema creation, so without honeypot_db_seed_1/2/3
-      # having run first, every cycle would fail against all three pools
-      # regardless of production's own state.
+      # The honeypot database must already exist as a clone-of-production
+      # (schema + content) before the first scoped DELETE/INSERT sync cycle,
+      # and production must already be seeded so there is real content to
+      # mirror. honeypot_db_init guarantees both.
       production_db_seed:
         condition: service_completed_successfully
-      honeypot_db_seed_1:
-        condition: service_completed_successfully
-      honeypot_db_seed_2:
-        condition: service_completed_successfully
-      honeypot_db_seed_3:
+      honeypot_db_init:
         condition: service_completed_successfully
     volumes:
       - ./scripts/replicate_content_to_honeypot.sh:/replicate_content_to_honeypot.sh:ro
     environment:
       - MYSQL_PASSWORD=${MYSQL_PASSWORD}
-      - MYSQL_PASSWORD_POOL_2=${MYSQL_PASSWORD_POOL_2}
-      - MYSQL_PASSWORD_POOL_3=${MYSQL_PASSWORD_POOL_3}
       - REDIS_HOST=session_store
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REPLICATION_INTERVAL_SECONDS=${REPLICATION_INTERVAL_SECONDS:-300}
@@ -485,11 +271,27 @@ services:
       # doesn't exist" error).
       production_db_seed:
         condition: service_completed_successfully
+      # The honeypot database must be cloned+scrubbed before this single
+      # instance can serve honeypot-routed requests against it (see
+      # wp-content/db.php and honeypot_db_init).
+      honeypot_db_init:
+        condition: service_completed_successfully
     environment:
       - WORDPRESS_DB_HOST=production_database:3306
       - WORDPRESS_DB_NAME=production_database
       - WORDPRESS_DB_USER=production_user
       - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
+      # Honeypot database connection, consumed per-request by the db drop-in
+      # wp-content/db.php: when the reverse proxy diverts a request (trusted
+      # X-Honeypot-Backend: honeypot header), db.php connects $wpdb to THIS
+      # database (a scrubbed clone of production) instead of the production one
+      # above. Same user/password as production here -- the isolation is the
+      # separate database host, not separate credentials (credential isolation
+      # between pools is moot now that there is a single honeypot database).
+      - HONEYPOT_DB_HOST=honeypot_database
+      - HONEYPOT_DB_NAME=production_database
+      - HONEYPOT_DB_USER=production_user
+      - HONEYPOT_DB_PASSWORD=${MYSQL_PASSWORD}
       # Enable WordPress debugging for SQL routing logs
       - WORDPRESS_DEBUG=1
       - WORDPRESS_DEBUG_LOG=1
@@ -608,7 +410,7 @@ services:
   #
   # honeypot_db_seed_1/2/3 below are the exact same idea applied to each
   # honeypot pool's own database -- those had NEVER had WordPress schema
-  # either (confirmed live: honeypot_database_1/2/3 only ever had the
+  # either (confirmed live: honeypot_database/2/3 only ever had the
   # pool_router bookkeeping tables -- honeypot_ip_assignments/
   # honeypot_pool_events/honeypot_pool_registry -- never any wp_* table),
   # which meant honeypot_content_sync's own scoped DELETE/INSERT
@@ -691,196 +493,8 @@ services:
     cpus: "1.0"
     pids_limit: 100
 
-  honeypot_db_seed_1:
-    image: wordpress:cli-php8.1
-    user: root
-    depends_on:
-      honeypot_database_1:
-        condition: service_healthy
-      # honeypot_eshop_files needs init_setup's rsync to have actually put
-      # the WooCommerce/Elementor/theme files there first -- otherwise
-      # `wp plugin activate` below has nothing to activate.
-      init_setup:
-        condition: service_completed_successfully
-      # Pool 1 keeps the SAME password as production (no rotation --
-      # WORDPRESS_DB_PASSWORD below is ${MYSQL_PASSWORD}, not a POOL_2/3
-      # variant), so this dependency isn't about credentials for pool 1
-      # specifically -- it's still required so this never runs concurrently
-      # with honeypot_db_migration's own schema migrations against the
-      # same database. See honeypot_db_seed_2/3's copy of this comment for
-      # why it's load-bearing (not just a nice-to-have) for THOSE two.
-      honeypot_db_migration:
-        condition: service_completed_successfully
-    environment:
-      - WORDPRESS_DB_HOST=honeypot_database_1:3306
-      - WORDPRESS_DB_NAME=production_database
-      - WORDPRESS_DB_USER=production_user
-      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
-      - WP_ADMIN_USER=${WP_ADMIN_USER:-admin}
-      - WP_ADMIN_PASSWORD=${WP_ADMIN_PASSWORD:-change_this_wp_admin_password}
-      - WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-admin@example.com}
-      # Deliberately identical to production_db_seed's WP_SITE_URL, not a
-      # pool-specific one -- pool_router.lua's whole premise is that an
-      # attacker transparently lands on the same public fingerprint
-      # (theme/plugins/site identity) regardless of which pool they're
-      # routed to, so this must match production exactly.
-      - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
-      - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
-      - FORCE_RESEED=${FORCE_RESEED:-0}
-      # Optional Stripe sandbox keys -- see scripts/seed_wordpress_db.sh's
-      # configure_storefront(). Empty = Stripe gateway stays off, offline
-      # gateways (cash on delivery / bank transfer) still make checkout work.
-      - STRIPE_TEST_PUBLISHABLE_KEY=${STRIPE_TEST_PUBLISHABLE_KEY:-}
-      - STRIPE_TEST_SECRET_KEY=${STRIPE_TEST_SECRET_KEY:-}
-      - IMPORT_SAMPLE_CONTENT=0
-    volumes:
-      - honeypot_eshop_files:/var/www/html
-      - ./scripts/seed_wordpress_db.sh:/seed_wordpress_db.sh:ro
-    networks:
-      - honeypot_network
-    command: ["sh", "/seed_wordpress_db.sh"]
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - DAC_OVERRIDE
-      - CHOWN
-      - FOWNER
-      - SETGID
-      - SETUID
-    mem_limit: 512m
-    cpus: "1.0"
-    pids_limit: 100
-
-  honeypot_db_seed_2:
-    image: wordpress:cli-php8.1
-    user: root
-    depends_on:
-      honeypot_database_2:
-        condition: service_healthy
-      init_setup:
-        condition: service_completed_successfully
-      # Load-bearing, not just ordering hygiene: honeypot_database_2's
-      # data directory starts as a raw copy of production's, so it still
-      # has production's OWN password (MYSQL_PASSWORD) until
-      # honeypot_db_migration's set_pool_password() step ALTER USERs it to
-      # MYSQL_PASSWORD_POOL_2 (see that service's own comment). Without
-      # waiting for that to actually finish, this could start and try to
-      # authenticate with MYSQL_PASSWORD_POOL_2 while the live password is
-      # still the old one -- a real race (both this and
-      # honeypot_db_migration only require honeypot_database_2 to be
-      # merely healthy to start), producing exactly the same "Error
-      # establishing a database connection" wp-cli reports for any bad
-      # credential, transient or not.
-      honeypot_db_migration:
-        condition: service_completed_successfully
-    environment:
-      - WORDPRESS_DB_HOST=honeypot_database_2:3306
-      - WORDPRESS_DB_NAME=production_database
-      - WORDPRESS_DB_USER=production_user
-      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD_POOL_2}
-      - WP_ADMIN_USER=${WP_ADMIN_USER:-admin}
-      - WP_ADMIN_PASSWORD=${WP_ADMIN_PASSWORD:-change_this_wp_admin_password}
-      - WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-admin@example.com}
-      - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
-      - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
-      - FORCE_RESEED=${FORCE_RESEED:-0}
-      # Optional Stripe sandbox keys -- see scripts/seed_wordpress_db.sh's
-      # configure_storefront(). Empty = Stripe gateway stays off, offline
-      # gateways (cash on delivery / bank transfer) still make checkout work.
-      - STRIPE_TEST_PUBLISHABLE_KEY=${STRIPE_TEST_PUBLISHABLE_KEY:-}
-      - STRIPE_TEST_SECRET_KEY=${STRIPE_TEST_SECRET_KEY:-}
-      - IMPORT_SAMPLE_CONTENT=0
-    volumes:
-      - honeypot_eshop_files_2:/var/www/html
-      - ./scripts/seed_wordpress_db.sh:/seed_wordpress_db.sh:ro
-    networks:
-      - honeypot_network
-    command: ["sh", "/seed_wordpress_db.sh"]
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - DAC_OVERRIDE
-      - CHOWN
-      - FOWNER
-      - SETGID
-      - SETUID
-    mem_limit: 512m
-    cpus: "1.0"
-    pids_limit: 100
-
-  honeypot_db_seed_3:
-    image: wordpress:cli-php8.1
-    user: root
-    depends_on:
-      honeypot_database_3:
-        condition: service_healthy
-      init_setup:
-        condition: service_completed_successfully
-      # Same reasoning as honeypot_db_seed_2's identical dependency --
-      # honeypot_database_3 only gets rotated to MYSQL_PASSWORD_POOL_3 by
-      # honeypot_db_migration's set_pool_password() step.
-      honeypot_db_migration:
-        condition: service_completed_successfully
-    environment:
-      - WORDPRESS_DB_HOST=honeypot_database_3:3306
-      - WORDPRESS_DB_NAME=production_database
-      - WORDPRESS_DB_USER=production_user
-      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD_POOL_3}
-      - WP_ADMIN_USER=${WP_ADMIN_USER:-admin}
-      - WP_ADMIN_PASSWORD=${WP_ADMIN_PASSWORD:-change_this_wp_admin_password}
-      - WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-admin@example.com}
-      - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
-      - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
-      - FORCE_RESEED=${FORCE_RESEED:-0}
-      # Optional Stripe sandbox keys -- see scripts/seed_wordpress_db.sh's
-      # configure_storefront(). Empty = Stripe gateway stays off, offline
-      # gateways (cash on delivery / bank transfer) still make checkout work.
-      - STRIPE_TEST_PUBLISHABLE_KEY=${STRIPE_TEST_PUBLISHABLE_KEY:-}
-      - STRIPE_TEST_SECRET_KEY=${STRIPE_TEST_SECRET_KEY:-}
-      - IMPORT_SAMPLE_CONTENT=0
-    volumes:
-      - honeypot_eshop_files_3:/var/www/html
-      - ./scripts/seed_wordpress_db.sh:/seed_wordpress_db.sh:ro
-    networks:
-      - honeypot_network
-    command: ["sh", "/seed_wordpress_db.sh"]
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - DAC_OVERRIDE
-      - CHOWN
-      - FOWNER
-      - SETGID
-      - SETUID
-    mem_limit: 512m
-    cpus: "1.0"
-    pids_limit: 100
-
-  # ---------------------------------------------------------------------------
-  # Honeypot pool databases (pool 1, 2, 3)
-  # ---------------------------------------------------------------------------
-  # Each pool has its own MySQL instance backed by an independent data directory
-  # so that attacker writes (SQL injections, data exfiltration, etc.) are
-  # isolated per-pool and never affect other pools or production.
-  #
-  # All three use identical SCHEMA (enforced by migrations) so pool_router.lua
-  # can assign any new IP to any pool interchangeably. Credentials, however,
-  # are deliberately DIFFERENT per pool (MYSQL_PASSWORD / MYSQL_PASSWORD_POOL_2
-  # / MYSQL_PASSWORD_POOL_3): all honeypot_eshop_N containers share one flat
-  # honeypot_network and can reach every honeypot_database_N over TCP, so
-  # without distinct credentials a compromised pool could authenticate
-  # directly into another attacker's pool database. See
-  # ids/testing/test_pool_isolation.sh.
-  # ---------------------------------------------------------------------------
-
   # Pool 1 – uses the original honeypot_database_data directory (backward compat)
-  honeypot_database_1:
+  honeypot_database:
     image: mysql:5.7
     depends_on:
       init_setup:
@@ -936,395 +550,6 @@ services:
       # See production_database's healthcheck comment above for why 420s.
       start_period: 420s
       start_interval: 1s
-
-  # Pool 2 – independent database instance
-  honeypot_database_2:
-    image: mysql:5.7
-    depends_on:
-      init_setup:
-        condition: service_completed_successfully
-    command: |
-      bash -c "
-        rm -f /var/lib/mysql/placeholder
-        docker-entrypoint.sh mysqld
-      "
-    environment:
-      - MYSQL_DATABASE=production_database
-      - MYSQL_USER=production_user
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD_POOL_2}
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
-    volumes:
-      # Named volume avoids vmhgfs chown restriction; populated by init_setup.
-      - honeypot_database_data_2:/var/lib/mysql
-    networks:
-      - honeypot_network
-    # Hardening – same rationale as honeypot_database_1 above.
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - DAC_OVERRIDE
-      - FOWNER
-      - SETGID
-      - SETUID
-      - SYS_NICE
-    mem_limit: 512m
-    cpus: "0.5"
-    pids_limit: 200
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD_POOL_2}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      # See production_database's healthcheck comment above for why 420s.
-      start_period: 420s
-      start_interval: 1s
-
-  # Pool 3 – independent database instance
-  honeypot_database_3:
-    image: mysql:5.7
-    depends_on:
-      init_setup:
-        condition: service_completed_successfully
-    command: |
-      bash -c "
-        rm -f /var/lib/mysql/placeholder
-        docker-entrypoint.sh mysqld
-      "
-    environment:
-      - MYSQL_DATABASE=production_database
-      - MYSQL_USER=production_user
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD_POOL_3}
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
-    volumes:
-      # Named volume avoids vmhgfs chown restriction; populated by init_setup.
-      - honeypot_database_data_3:/var/lib/mysql
-    networks:
-      - honeypot_network
-    # Hardening – same rationale as honeypot_database_1 above.
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - DAC_OVERRIDE
-      - FOWNER
-      - SETGID
-      - SETUID
-      - SYS_NICE
-    mem_limit: 512m
-    cpus: "0.5"
-    pids_limit: 200
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "production_user", "-p${MYSQL_PASSWORD_POOL_3}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      # See production_database's healthcheck comment above for why 420s.
-      start_period: 420s
-      start_interval: 1s
-
-  # ---------------------------------------------------------------------------
-  # Honeypot WordPress instances (pool 1, 2, 3)
-  # ---------------------------------------------------------------------------
-  # Each pool runs a full WordPress+WooCommerce stack with the vulnerable plugins
-  # installed.  They are intentionally identical at startup; divergence happens
-  # as attackers interact with their assigned instance.
-  #
-  # IMPORTANT: honeypot_db_migration must complete before any eshop starts so
-  # that dummy data is in place and no real customer data is ever served.
-  #
-  # Networks: each pool instance joins both honeypot_network (its own DB) and
-  # production_network (for the SQL proxy routing feature) and monitoring_network.
-  # ---------------------------------------------------------------------------
-
-  # Pool 1 – uses the original honeypot_eshop_files directory (backward compat)
-  honeypot_eshop_1:
-    image: wordpress:6.8.3-php8.1
-    depends_on:
-      honeypot_database_1:
-        condition: service_healthy
-      honeypot_db_migration:
-        condition: service_completed_successfully
-      # Same reasoning as production_eshop's own production_db_seed
-      # dependency -- see honeypot_db_seed_1 above and
-      # scripts/seed_wordpress_db.sh.
-      honeypot_db_seed_1:
-        condition: service_completed_successfully
-    environment:
-      - WORDPRESS_DB_HOST=honeypot_database_1:3306
-      - WORDPRESS_DB_NAME=production_database
-      - WORDPRESS_DB_USER=production_user
-      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD}
-      # Enable WordPress debugging for SQL routing logs
-      - WORDPRESS_DEBUG=1
-      - WORDPRESS_DEBUG_LOG=1
-      # Pool identifier exposed to PHP code for logging / X-Honeypot-Pool header
-      - HONEYPOT_POOL_ID=1
-    # ports:
-    #   - "8081:80" # temporary port for direct pool-1 access
-    volumes:
-      - honeypot_eshop_files:/var/www/html
-    networks:
-      - honeypot_network
-      - production_network  # Allow access to production database for SQL routing
-      - monitoring_network
-    # -------------------------------------------------------------------------
-    # Container hardening for honeypot WordPress instances.
-    #
-    # Goal: contain any attacker who achieves code execution (e.g. via RCE
-    # through one of the intentionally vulnerable plugins) inside this single
-    # container so they cannot pivot to the host or other containers.
-    #
-    # no-new-privileges: blocks privilege escalation via SUID/SGID binaries.
-    #   An attacker who drops a SUID shell via an upload exploit cannot gain
-    #   root with it.
-    # cap_drop ALL / cap_add minimal: Apache+PHP only needs CHOWN, DAC_OVERRIDE,
-    #   FOWNER (filesystem operations), SETGID/SETUID (drop to www-data) and
-    #   NET_BIND_SERVICE (bind port 80).  KILL is added so Apache's parent
-    #   process can terminate worker children.  All other capabilities
-    #   (NET_RAW, SYS_ADMIN, SYS_PTRACE, etc.) are removed, preventing common
-    #   container-escape techniques that rely on those capabilities.
-    # mem_limit / cpus: prevents a resource-exhaustion DoS from one honeypot
-    #   instance consuming all host resources (e.g. triggered by a fork-bomb
-    #   or a CPU-intensive exploit payload).
-    # pids_limit: caps the process tree so fork-bomb payloads cannot exhaust
-    #   the host PID namespace.
-    # Note: read_only is NOT set because WordPress/Apache must write to the
-    #   filesystem (/tmp, wp-content/uploads, debug.log etc.).  The attacker's
-    #   ability to write files is intentional — it is part of the honeypot's
-    #   attack surface and is monitored via Suricata and ELK.
-    # -------------------------------------------------------------------------
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - DAC_OVERRIDE
-      - FOWNER
-      - SETGID
-      - SETUID
-      - NET_BIND_SERVICE
-      - KILL
-    # mem_limit/cpus bumped 512m/0.5 -> 1024m/1.0 this session: confirmed
-    # live via `docker stats` that all three pools were sitting at
-    # ~434-436MB *idle* against the old 512m cap (near-zero headroom) after
-    # the new plugin roster (Wordfence, Elementor, etc. -- see README §3.4)
-    # pushed the per-instance footprint up by several hundred MB. One pool
-    # was observed pegged at 300%+ CPU and its own Docker healthcheck
-    # timing out -- cgroup memory pressure thrashing, not an application
-    # bug. Matches production_eshop's own newly-added ceiling (see that
-    # service's comment) so honeypot pools aren't now the *more*
-    # resource-starved side, which would undermine realism (an attacker
-    # who fingerprints response latency shouldn't see the honeypot
-    # struggling under routine load that production handles fine).
-    mem_limit: 1024m
-    cpus: "1.0"
-    pids_limit: 300
-    # Same wp-content ownership fix as production_eshop above, same reason:
-    # apache workers run as www-data and lose DAC_OVERRIDE (and every other
-    # capability) on setuid(), so cap_add above can't help PHP's own
-    # writes -- confirmed the same "Permission denied" write failure
-    # reproduces here too (e.g. Font Library cache under wp-content/fonts)
-    # once a font combination not already cached gets requested. This is a
-    # named volume rather than production's bind mount, so a flat `chown
-    # -R www-data:www-data` doesn't corrupt any host-tracked git files the
-    # way it did there -- but it's remapped the same way regardless (see
-    # production_eshop's comment for the full reasoning), both for
-    # consistency and because this volume was itself seeded by an rsync
-    # init step running as the host user, so it starts out owned by that
-    # host uid/gid too, not www-data.
-    command:
-      - sh
-      - -c
-      - |
-        HOST_UID=$$(stat -c '%u' /var/www/html)
-        HOST_GID=$$(stat -c '%g' /var/www/html)
-        usermod -u "$$HOST_UID" www-data
-        groupmod -g "$$HOST_GID" www-data
-        chown -R www-data:www-data /var/www/html/wp-content
-        exec apache2-foreground
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-      start_interval: 2s
-
-  # Pool 2 – isolated WordPress instance
-  honeypot_eshop_2:
-    image: wordpress:6.8.3-php8.1
-    depends_on:
-      honeypot_database_2:
-        condition: service_healthy
-      honeypot_db_migration:
-        condition: service_completed_successfully
-      honeypot_db_seed_2:
-        condition: service_completed_successfully
-    environment:
-      - WORDPRESS_DB_HOST=honeypot_database_2:3306
-      - WORDPRESS_DB_NAME=production_database
-      - WORDPRESS_DB_USER=production_user
-      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD_POOL_2}
-      - WORDPRESS_DEBUG=1
-      - WORDPRESS_DEBUG_LOG=1
-      - HONEYPOT_POOL_ID=2
-    # ports:
-    #   - "8082:80" # temporary port for direct pool-2 access
-    volumes:
-      - honeypot_eshop_files_2:/var/www/html
-    networks:
-      - honeypot_network
-      - production_network
-      - monitoring_network
-    # Hardening – same rationale as honeypot_eshop_1 above.
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - DAC_OVERRIDE
-      - FOWNER
-      - SETGID
-      - SETUID
-      - NET_BIND_SERVICE
-      - KILL
-    # mem_limit/cpus bumped 512m/0.5 -> 1024m/1.0 this session: confirmed
-    # live via `docker stats` that all three pools were sitting at
-    # ~434-436MB *idle* against the old 512m cap (near-zero headroom) after
-    # the new plugin roster (Wordfence, Elementor, etc. -- see README §3.4)
-    # pushed the per-instance footprint up by several hundred MB. One pool
-    # was observed pegged at 300%+ CPU and its own Docker healthcheck
-    # timing out -- cgroup memory pressure thrashing, not an application
-    # bug. Matches production_eshop's own newly-added ceiling (see that
-    # service's comment) so honeypot pools aren't now the *more*
-    # resource-starved side, which would undermine realism (an attacker
-    # who fingerprints response latency shouldn't see the honeypot
-    # struggling under routine load that production handles fine).
-    mem_limit: 1024m
-    cpus: "1.0"
-    pids_limit: 300
-    # Same wp-content ownership fix as production_eshop above, same reason:
-    # apache workers run as www-data and lose DAC_OVERRIDE (and every other
-    # capability) on setuid(), so cap_add above can't help PHP's own
-    # writes -- confirmed the same "Permission denied" write failure
-    # reproduces here too (e.g. Font Library cache under wp-content/fonts)
-    # once a font combination not already cached gets requested. This is a
-    # named volume rather than production's bind mount, so a flat `chown
-    # -R www-data:www-data` doesn't corrupt any host-tracked git files the
-    # way it did there -- but it's remapped the same way regardless (see
-    # production_eshop's comment for the full reasoning), both for
-    # consistency and because this volume was itself seeded by an rsync
-    # init step running as the host user, so it starts out owned by that
-    # host uid/gid too, not www-data.
-    command:
-      - sh
-      - -c
-      - |
-        HOST_UID=$$(stat -c '%u' /var/www/html)
-        HOST_GID=$$(stat -c '%g' /var/www/html)
-        usermod -u "$$HOST_UID" www-data
-        groupmod -g "$$HOST_GID" www-data
-        chown -R www-data:www-data /var/www/html/wp-content
-        exec apache2-foreground
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-      start_interval: 2s
-
-  # Pool 3 – isolated WordPress instance
-  honeypot_eshop_3:
-    image: wordpress:6.8.3-php8.1
-    depends_on:
-      honeypot_database_3:
-        condition: service_healthy
-      honeypot_db_migration:
-        condition: service_completed_successfully
-      honeypot_db_seed_3:
-        condition: service_completed_successfully
-    environment:
-      - WORDPRESS_DB_HOST=honeypot_database_3:3306
-      - WORDPRESS_DB_NAME=production_database
-      - WORDPRESS_DB_USER=production_user
-      - WORDPRESS_DB_PASSWORD=${MYSQL_PASSWORD_POOL_3}
-      - WORDPRESS_DEBUG=1
-      - WORDPRESS_DEBUG_LOG=1
-      - HONEYPOT_POOL_ID=3
-    # ports:
-    #   - "8083:80" # temporary port for direct pool-3 access
-    volumes:
-      - honeypot_eshop_files_3:/var/www/html
-    networks:
-      - honeypot_network
-      - production_network
-      - monitoring_network
-    # Hardening – same rationale as honeypot_eshop_1 above.
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - DAC_OVERRIDE
-      - FOWNER
-      - SETGID
-      - SETUID
-      - NET_BIND_SERVICE
-      - KILL
-    # mem_limit/cpus bumped 512m/0.5 -> 1024m/1.0 this session: confirmed
-    # live via `docker stats` that all three pools were sitting at
-    # ~434-436MB *idle* against the old 512m cap (near-zero headroom) after
-    # the new plugin roster (Wordfence, Elementor, etc. -- see README §3.4)
-    # pushed the per-instance footprint up by several hundred MB. One pool
-    # was observed pegged at 300%+ CPU and its own Docker healthcheck
-    # timing out -- cgroup memory pressure thrashing, not an application
-    # bug. Matches production_eshop's own newly-added ceiling (see that
-    # service's comment) so honeypot pools aren't now the *more*
-    # resource-starved side, which would undermine realism (an attacker
-    # who fingerprints response latency shouldn't see the honeypot
-    # struggling under routine load that production handles fine).
-    mem_limit: 1024m
-    cpus: "1.0"
-    pids_limit: 300
-    # Same wp-content ownership fix as production_eshop above, same reason:
-    # apache workers run as www-data and lose DAC_OVERRIDE (and every other
-    # capability) on setuid(), so cap_add above can't help PHP's own
-    # writes -- confirmed the same "Permission denied" write failure
-    # reproduces here too (e.g. Font Library cache under wp-content/fonts)
-    # once a font combination not already cached gets requested. This is a
-    # named volume rather than production's bind mount, so a flat `chown
-    # -R www-data:www-data` doesn't corrupt any host-tracked git files the
-    # way it did there -- but it's remapped the same way regardless (see
-    # production_eshop's comment for the full reasoning), both for
-    # consistency and because this volume was itself seeded by an rsync
-    # init step running as the host user, so it starts out owned by that
-    # host uid/gid too, not www-data.
-    command:
-      - sh
-      - -c
-      - |
-        HOST_UID=$$(stat -c '%u' /var/www/html)
-        HOST_GID=$$(stat -c '%g' /var/www/html)
-        usermod -u "$$HOST_UID" www-data
-        groupmod -g "$$HOST_GID" www-data
-        chown -R www-data:www-data /var/www/html/wp-content
-        exec apache2-foreground
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-      start_interval: 2s
 
   # Redis for session management and threat intelligence
   session_store:
@@ -1638,13 +863,11 @@ services:
       context: ./reverse_proxy_enhanced
       dockerfile: Dockerfile
     depends_on:
+      # Single-eshop topology: there is only production_eshop now. It serves
+      # both production and honeypot traffic, switching database per request
+      # via wp-content/db.php based on the X-Honeypot-Backend header this proxy
+      # sets. There are no honeypot_eshop_N backends to wait on any more.
       production_eshop:
-        condition: service_healthy
-      honeypot_eshop_1:
-        condition: service_healthy
-      honeypot_eshop_2:
-        condition: service_healthy
-      honeypot_eshop_3:
         condition: service_healthy
       session_store:
         condition: service_healthy
@@ -1878,17 +1101,6 @@ volumes:
     driver: local
   # Pool 1 database data (named volume, populated by init_setup)
   honeypot_database_data:
-    driver: local
-  # Pool 2 and 3 database data directories (named volumes, populated by init_setup)
-  honeypot_database_data_2:
-    driver: local
-  honeypot_database_data_3:
-    driver: local
-  honeypot_eshop_files:
-    driver: local
-  honeypot_eshop_files_2:
-    driver: local
-  honeypot_eshop_files_3:
     driver: local
   redis_data:
     driver: local
