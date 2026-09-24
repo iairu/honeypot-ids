@@ -39,6 +39,21 @@ COLOR_MED = ORANGE   # elevated / medium score delta
 COLOR_HIGH = RED     # honeypot / suspicious / large score delta
 COLOR_INFO = BLUE    # informational context, not a score itself
 
+# The threat score's actual maximum (init.lua's max_threat_score). The proxy's
+# log lines print the score against the honeypot_threshold (e.g. "Score: 100/80"),
+# which reads as if 80 were the ceiling -- but scores go up to 100. Displayed
+# fractions are normalized to this max so the denominator is the real maximum,
+# not the routing threshold (which the colour bands already convey).
+SCORE_MAX = 100
+
+# Rewrites a "Score: <n>/<m>" fraction inside a free-text log segment so its
+# denominator is SCORE_MAX rather than whatever threshold the proxy logged.
+_SCORE_FRACTION_RE = re.compile(r"(Score:\s*-?\d+)\s*/\s*\d+")
+
+
+def _normalize_score_max(text: str) -> str:
+    return _SCORE_FRACTION_RE.sub(rf"\1/{SCORE_MAX}", text)
+
 
 @dataclass(frozen=True)
 class ThreatEvent:
@@ -156,8 +171,8 @@ def _parse_line_body(line: str) -> ThreatEvent | None:
         except ValueError:
             score = 0
         color = COLOR_HIGH if target == "HONEYPOT" else COLOR_LOW
-        detail = f"Score: {score}/{threshold}"
-        rest_clean = _strip_seps(rest)
+        detail = f"Score: {score}/{SCORE_MAX}"
+        rest_clean = _normalize_score_max(_strip_seps(rest))
         if rest_clean:
             detail += f" | {rest_clean}"
         return ThreatEvent("outcome", f"Final decision: {target}", detail, color, score)
@@ -176,13 +191,14 @@ def _parse_line_body(line: str) -> ThreatEvent | None:
             color = COLOR_MED
         else:
             color = COLOR_LOW
-        return ThreatEvent("final_score", f"Final score: {score}/{threshold}", verdict, color, score)
+        return ThreatEvent("final_score", f"Final score: {score}/{SCORE_MAX}", verdict, color, score)
 
     m = _ROUTING_RE.search(line)
     if m:
         label, target, rest = m.group(1), m.group(2), m.group(3)
         color = COLOR_HIGH if target == "HONEYPOT" else COLOR_LOW
-        return ThreatEvent("routing", _strip_seps(_strip_emoji(label)), _strip_seps(rest), color)
+        return ThreatEvent("routing", _strip_seps(_strip_emoji(label)),
+                           _normalize_score_max(_strip_seps(rest)), color)
 
     m = _KNOWN_THREAT_RE.search(line)
     if m:
