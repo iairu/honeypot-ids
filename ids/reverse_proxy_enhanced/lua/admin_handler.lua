@@ -228,6 +228,7 @@ function _M.increment_threat_score(ip, additional_score)
         old_score = threats[ip].raw_score
         threats[ip].raw_score = math.min(threats[ip].raw_score + additional_score, 100)
         threats[ip].admin_activity = (threats[ip].admin_activity or 0) + 1
+        threats[ip].offenses = (threats[ip].offenses or 0) + 1  -- decay escalation (decay_policy.lua)
         threats[ip].updated = ngx.time()
         threats[ip].reason = "suspicious_admin_activity"
 
@@ -258,6 +259,7 @@ function _M.increment_threat_score(ip, additional_score)
         old_score = shared_threats[ip].raw_score
         shared_threats[ip].raw_score = math.min(shared_threats[ip].raw_score + additional_score, 100)
         shared_threats[ip].admin_activity = (shared_threats[ip].admin_activity or 0) + 1
+        shared_threats[ip].offenses = (shared_threats[ip].offenses or 0) + 1  -- decay escalation (decay_policy.lua)
         shared_threats[ip].updated = ngx.time()
         shared_threats[ip].reason = "suspicious_admin_activity"
 

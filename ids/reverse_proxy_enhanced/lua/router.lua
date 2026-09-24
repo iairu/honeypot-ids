@@ -108,6 +108,12 @@ local function assign_honeypot_pool(routing_decision, extra_session_data, remote
     -- i.e. this session would never be able to earn its way back to
     -- production at all.
     sd.last_threat_time  = ngx.time()
+    -- Record this diversion as an offense against the session. offenses drives
+    -- decay_policy's escalation (each one slows the score's decay; enough of
+    -- them, or a maxed score, permaflags the session) -- see router_rules.
+    -- decayed_score() and lua/decay_policy.lua. This is the session's FIRST
+    -- flag, so it starts the counter at 1.
+    sd.offenses          = (sd.offenses or 0) + 1
     routing_decision.session_data = sd
 
     -- Keep the assignment alive in Redis while the attacker is still active.
@@ -237,7 +243,7 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
     local new_signal_fired
     do
         local decayed_base = router_rules.decayed_score(
-            session_data, ngx.time(), _G.config.threat.score_decay_half_life_seconds)
+            session_data, ngx.time(), _G.config.threat.score_decay_half_life_seconds, _G.config.threat)
         local fresh_score = threat_result.score
         new_signal_fired = fresh_score > 10
         if new_signal_fired then
@@ -305,6 +311,10 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
             local sd = routing_decision.session_data or {}
             sd.threat_score = threat_result.score
             sd.last_threat_time = ngx.time()
+            -- Another genuinely new attack signal on an already-bound session:
+            -- count it so repeat exploitation keeps slowing this session's
+            -- decay (and eventually permaflags it) -- see decay_policy.lua.
+            sd.offenses = (session_data.offenses or 0) + 1
             routing_decision.session_data = sd
         end
 
@@ -571,7 +581,12 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         routing_decision.update_session = true
         routing_decision.session_data = {
             threat_score = math.max(session_data.threat_score or 0, threat_result.score),
-            last_threat_time = ngx.time()
+            last_threat_time = ngx.time(),
+            -- Only a genuinely NEW signal counts as an offense; a request
+            -- that's merely "suspicious" off residual decayed score must not
+            -- inflate the count (that would let idle time raise the escalation
+            -- level). See decay_policy.lua.
+            offenses = (session_data.offenses or 0) + (new_signal_fired and 1 or 0),
         }
         
         -- Add suspicious activity to log

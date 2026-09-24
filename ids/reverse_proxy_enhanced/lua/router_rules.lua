@@ -31,6 +31,8 @@
 
 local pattern_utils = require "lua_pattern_utils"
 
+local decay_policy = require "decay_policy"
+
 local _M = {}
 
 -- escape_pattern: see lua_pattern_utils.lua for the implementation and the
@@ -229,7 +231,7 @@ end
 -- @param half_life_seconds number  e.g. _G.config.threat.score_decay_half_life_seconds
 -- @return number  the decayed score (never negative, never above the stored peak)
 -- ---------------------------------------------------------------------------
-function _M.decayed_score(session_data, current_time, half_life_seconds)
+function _M.decayed_score(session_data, current_time, half_life_seconds, cfg)
     if not session_data then
         return 0
     end
@@ -249,8 +251,15 @@ function _M.decayed_score(session_data, current_time, half_life_seconds)
         return peak
     end
 
-    local half_lives_elapsed = elapsed / half_life_seconds
-    return peak * (0.5 ^ half_lives_elapsed)
+    -- Escalation-aware decay: a session that has fired more attack signals
+    -- (session_data.offenses, bumped by router.lua each time a genuinely new
+    -- signal ratchets the peak up) fades more slowly, and past the permaflag
+    -- thresholds not at all -- so an attacker can no longer alternate
+    -- "run exploit" / "wait" to keep re-earning production access. `cfg` is
+    -- _G.config.threat, passed in by router.lua to keep this module pure
+    -- (nil cfg = plain base-rate decay, as the unit tests use). See
+    -- lua/decay_policy.lua.
+    return decay_policy.decay(peak, elapsed, half_life_seconds, session_data.offenses, cfg)
 end
 
 -- ---------------------------------------------------------------------------

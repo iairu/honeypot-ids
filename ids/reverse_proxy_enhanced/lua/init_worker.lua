@@ -410,6 +410,11 @@ local function init_worker()
                                     reason = suricata_rules.build_reason(alert),
                                     updated = ngx.time(),
                                     alert_count = (previous and previous.alert_count or 0) + 1,
+                                    -- Uncapped offense count driving decay_policy's
+                                    -- escalation (slower decay / permaflag for repeat
+                                    -- offenders). Preserved across this rebuild via
+                                    -- `previous`. See lua/decay_policy.lua.
+                                    offenses = (previous and previous.offenses or 0) + 1,
                                 }
 
                                 threat_intel.persist(red, threat_ips)

@@ -139,6 +139,23 @@ _G.config = {
         max_threat_score = 100,
         honeypot_threshold = 80,  -- Raised from 50 to prevent false positives
         score_decay_half_life_seconds = tonumber(os.getenv("SCORE_DECAY_HALF_LIFE_SECONDS")) or 300,
+        -- Escalation of the decay above (see lua/decay_policy.lua): decay is
+        -- slowed based on how much abuse a source has actually committed,
+        -- tracked as an uncapped `offenses` count (bumped once per recorded
+        -- attack -- CVE/exploit/admin/upload signals on the session, and each
+        -- threat_ips write on the IP -- so it keeps climbing after the 0-100
+        -- score has already pinned at 100).
+        --   decay_offense_slowdown: each offense multiplies the half-life by
+        --     (1 + this), e.g. 0.75 -> 1 offense = 1.75x slower, 4 = 4x.
+        --   permaflag_offenses: at/above this many offenses the score stops
+        --     decaying entirely -- a repeat attacker stays flagged forever.
+        --   permaflag_score: a single request whose score reaches this (i.e. a
+        --     high-threat exploit that maxes it out) also permaflags on its
+        --     own, without waiting for the offense count. Default == the max
+        --     score, so "landed a real exploit" == "permanently flagged".
+        decay_offense_slowdown = tonumber(os.getenv("DECAY_OFFENSE_SLOWDOWN")) or 0.75,
+        permaflag_offenses = tonumber(os.getenv("PERMAFLAG_OFFENSES")) or 5,
+        permaflag_score = tonumber(os.getenv("PERMAFLAG_SCORE")) or 100,
         static_asset_patterns = {
             "robots%.txt",
             "sitemap%.xml",

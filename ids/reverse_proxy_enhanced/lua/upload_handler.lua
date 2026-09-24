@@ -176,6 +176,7 @@ function _M.update_ip_threat_for_upload(ip, upload_threat_score)
     entry.reason = "suspicious_upload_activity"
     entry.updated = ngx.time()
     entry.upload_attempts = (entry.upload_attempts or 0) + 1
+    entry.offenses = (entry.offenses or 0) + 1  -- decay escalation (decay_policy.lua)
 
     threat_intel.persist(red, threats)
     _G.redis_pool.close_connection(red)

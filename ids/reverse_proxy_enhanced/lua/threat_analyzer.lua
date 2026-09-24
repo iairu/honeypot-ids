@@ -372,7 +372,7 @@ function _M.check_ip_reputation(ip)
             -- router.lua) -- one shared "how long does suspicion linger"
             -- setting for both.
             result.score = suricata_rules.decayed_score(
-                threat_ips[ip], ngx.time(), _G.config.threat.score_decay_half_life_seconds)
+                threat_ips[ip], ngx.time(), _G.config.threat.score_decay_half_life_seconds, _G.config.threat)
             result.reason = threat_ips[ip].reason or "known_threat"
             ngx.log(ngx.WARN, "[THREAT ANALYZER] 🚨 Known threat IP detected: ", ip, " | Reason: ", result.reason,
                     " | Stored raw_score: ", threat_ips[ip].raw_score or 0, " | Decayed score: ",

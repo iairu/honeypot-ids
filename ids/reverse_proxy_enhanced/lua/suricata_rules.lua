@@ -91,6 +91,8 @@
 -- this module stays plain-`lua`-interpreter testable without needing a
 -- cjson shim in the test environment.
 
+local decay_policy = require "decay_policy"
+
 local _M = {}
 
 -- Score added to an IP's running total per alert, keyed by Suricata's
@@ -242,7 +244,7 @@ end
 --- @param  half_life_seconds   number     e.g.
 ---                              _G.config.threat.score_decay_half_life_seconds
 --- @return number  the decayed score (0 if entry is nil or has no raw_score)
-function _M.decayed_score(entry, current_time, half_life_seconds)
+function _M.decayed_score(entry, current_time, half_life_seconds, cfg)
     if not entry then
         return 0
     end
@@ -262,8 +264,15 @@ function _M.decayed_score(entry, current_time, half_life_seconds)
         return stored
     end
 
-    local half_lives_elapsed = elapsed / half_life_seconds
-    return stored * (0.5 ^ half_lives_elapsed)
+    -- Escalation-aware decay: a repeat/serious offender's reputation fades
+    -- slower (or, past the permaflag thresholds, never). entry.offenses is
+    -- bumped once per recorded attack by the handlers that write threat_ips
+    -- (admin/upload/vulnerability, and Suricata alert ingestion in
+    -- init_worker); a maxed raw_score alone also permaflags. `cfg` is
+    -- _G.config.threat, passed in by the runtime caller to keep this module
+    -- pure/_G-free (nil cfg = plain base-rate decay, as the unit tests use).
+    -- See lua/decay_policy.lua and _G.config.threat's permaflag_* knobs.
+    return decay_policy.decay(stored, elapsed, half_life_seconds, entry.offenses, cfg)
 end
 
 --- Human-readable reason string for threat_ips[ip].reason, surfaced all the
