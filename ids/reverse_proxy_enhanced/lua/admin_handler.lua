@@ -82,7 +82,7 @@ function _M.process_admin_request(remote_ip, uri)
     if is_login then
         local brute_force_score = _M.check_brute_force_attempts(remote_ip)
         if brute_force_score > 50 then
-            ngx.log(ngx.ERR, "[ADMIN] 🚨 BRUTE FORCE DETECTED | IP: ", remote_ip, " | Score: ", brute_force_score, " | URI: ", uri)
+            ngx.log(ngx.WARN, "[ADMIN] 🚨 BRUTE FORCE DETECTED | IP: ", remote_ip, " | Score: ", brute_force_score, " | URI: ", uri)
             _M.log_admin_access(admin_info, "blocked", "brute_force_detected")
             _M.increment_threat_score(remote_ip, 30)
             return
@@ -137,7 +137,7 @@ function _M.check_brute_force_attempts(ip)
     local score, filtered = admin_rules.score_brute_force_attempts(attempts, first_attempt, current_time, window_size)
 
     if #filtered >= 10 then
-        ngx.log(ngx.ERR, "[ADMIN] 🚨 High brute force score | IP: ", ip, " | Attempts: ", #filtered, " | Score: ", score)
+        ngx.log(ngx.WARN, "[ADMIN] 🚨 High brute force score | IP: ", ip, " | Attempts: ", #filtered, " | Score: ", score)
     elseif #filtered >= 5 then
         ngx.log(ngx.WARN, "[ADMIN] ⚠️  Moderate brute force score | IP: ", ip, " | Attempts: ", #filtered, " | Score: ", score)
     elseif #filtered >= 3 then
@@ -292,7 +292,7 @@ function _M.log_admin_access(admin_info, status, reason)
         monitored = "👀"
     }
     local emoji = status_emoji[status] or "📝"
-    local log_level = (status == "blocked" or status == "suspicious") and ngx.ERR or ngx.INFO
+    local log_level = (status == "blocked" or status == "suspicious") and ngx.WARN or ngx.INFO
     ngx.log(log_level, "[ADMIN ACCESS] ", emoji, " Status: ", status, " | Reason: ", reason, 
             " | IP: ", admin_info.ip, " | URI: ", admin_info.uri)
     

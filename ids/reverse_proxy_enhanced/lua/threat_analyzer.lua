@@ -172,7 +172,7 @@ function _M.analyze_request(uri, headers, remote_ip)
             })
         end
         if #cve_score.cves > 0 then
-            ngx.log(ngx.ERR, "[THREAT ANALYZER] 🎯 CVE PATTERNS DETECTED (+", cve_score.score, ") | CVEs: ",
+            ngx.log(ngx.WARN, "[THREAT ANALYZER] 🎯 CVE PATTERNS DETECTED (+", cve_score.score, ") | CVEs: ",
                     table.concat(cve_score.cves, ", "))
         end
     end
@@ -269,7 +269,7 @@ function _M.analyze_request(uri, headers, remote_ip)
     threat_result.suspicious = threat_result.score >= _G.config.threat.honeypot_threshold
 
     if threat_result.score >= _G.config.threat.honeypot_threshold then
-        ngx.log(ngx.ERR, "[THREAT ANALYZER] 🚨 FINAL SCORE: ", threat_result.score,
+        ngx.log(ngx.WARN, "[THREAT ANALYZER] 🚨 FINAL SCORE: ", threat_result.score,
                 "/", _G.config.threat.honeypot_threshold, " (SUSPICIOUS) | IP: ", remote_ip,
                 " | Patterns: ", #threat_result.patterns_matched, " | CVEs: ", #threat_result.cve_matched)
     elseif threat_result.score > 20 then
@@ -374,7 +374,7 @@ function _M.check_ip_reputation(ip)
             result.score = suricata_rules.decayed_score(
                 threat_ips[ip], ngx.time(), _G.config.threat.score_decay_half_life_seconds)
             result.reason = threat_ips[ip].reason or "known_threat"
-            ngx.log(ngx.ERR, "[THREAT ANALYZER] 🚨 Known threat IP detected: ", ip, " | Reason: ", result.reason,
+            ngx.log(ngx.WARN, "[THREAT ANALYZER] 🚨 Known threat IP detected: ", ip, " | Reason: ", result.reason,
                     " | Stored raw_score: ", threat_ips[ip].raw_score or 0, " | Decayed score: ",
                     string.format("%.1f", result.score))
         end
