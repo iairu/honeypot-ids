@@ -27,6 +27,7 @@ from ui.page_health import HealthPage
 from ui.page_kibana import KibanaPage
 from ui.page_log_search import LogSearchPage
 from ui.page_redis import RedisPage
+from ui.page_resources import ResourcesPage
 from ui.page_services import ServicesPage
 from ui.page_settings import SettingsPage
 from ui.security_feed import SecurityEventFeed
@@ -49,12 +50,13 @@ _APP_ICON_PATH = DASHBOARD_DIR / "resources" / "app_icon.svg"
 _NOTIFY_ON_STATUSES = {"unhealthy", "exited_bad"}
 
 PAGES = [
-    "services", "health", "certificates", "redis", "backups", "kibana",
-    "exploits", "log_search", "settings",
+    "services", "health", "resources", "certificates", "redis", "backups",
+    "kibana", "exploits", "log_search", "settings",
 ]
 PAGE_LABELS = {
     "services": "Services",
     "health": "Health",
+    "resources": "Resources",
     "certificates": "Certificates",
     "redis": "Redis",
     "backups": "Backups",
@@ -122,6 +124,7 @@ class MainWindow(QMainWindow):
 
         self.services_page = ServicesPage(self._get_targets, self.error_monitor)
         self.health_page = HealthPage(self._get_targets, self.error_monitor)
+        self.resources_page = ResourcesPage(self._get_targets)
         self.certs_page = CertsPage()
         self.redis_page = RedisPage(state)
         self.backups_page = BackupsPage(state)
@@ -133,6 +136,7 @@ class MainWindow(QMainWindow):
         for page_id, widget in [
             ("services", self.services_page),
             ("health", self.health_page),
+            ("resources", self.resources_page),
             ("certificates", self.certs_page),
             ("redis", self.redis_page),
             ("backups", self.backups_page),
@@ -190,6 +194,7 @@ class MainWindow(QMainWindow):
         self.backups_page.rebuild_targets()
         self.exploits_page.rebuild_targets()
         self.log_search_page.rebuild_targets()
+        self.resources_page.rebuild_targets()
         self.security_feed.start(self._edge_target())
 
     def set_poll_interval(self, interval_ms: int) -> None:
@@ -343,6 +348,7 @@ class MainWindow(QMainWindow):
         self.backups_page.rebuild_targets()
         self.exploits_page.rebuild_targets()
         self.log_search_page.rebuild_targets()
+        self.resources_page.rebuild_targets()
         self.security_feed.start(self._edge_target())
 
     def _reload_settings_page(self) -> None:
