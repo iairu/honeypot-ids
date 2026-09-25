@@ -19,9 +19,17 @@ local _M = {}
 -- contention, and the 2s health-check timeout tripped on exactly that
 -- contention, marking a perfectly healthy backend UNHEALTHY. See
 -- check-me.log in the repo root for the original incident.
-local HEALTH_CHECK_INTERVAL = 10 -- seconds. See init_worker.lua's use of this.
-local HEALTH_CHECK_TIMEOUT = 5000 -- milliseconds
-local UNHEALTHY_THRESHOLD = 3
+-- 15/8000/5 (was 10/5000/3): the probe hits WordPress (see check_backend's
+-- endpoint) so it competes for the same PHP/DB the site itself uses. Under a
+-- post-startup load burst all three honeypot pools were flipped UNHEALTHY on
+-- 3 consecutive >5 s renders that were slow, not down (Docker's own
+-- healthcheck kept them "healthy" throughout). Probing less often (15 s), with
+-- a looser 8 s timeout and requiring 5 sustained failures, plus the lighter
+-- /robots.txt endpoint below, stops transient contention from false-tripping
+-- the failover gate while still catching a genuinely dead backend within ~75 s.
+local HEALTH_CHECK_INTERVAL = 15 -- seconds. See init_worker.lua's use of this.
+local HEALTH_CHECK_TIMEOUT = 8000 -- milliseconds
+local UNHEALTHY_THRESHOLD = 5
 local HEALTHY_THRESHOLD = 2
 
 _M.HEALTH_CHECK_INTERVAL = HEALTH_CHECK_INTERVAL
@@ -34,8 +42,13 @@ function _M.check_backend(backend_name, backend_url)
     local httpc = http.new()
     httpc:set_timeouts(HEALTH_CHECK_TIMEOUT, HEALTH_CHECK_TIMEOUT, HEALTH_CHECK_TIMEOUT)
     
-    -- Use root path instead of /nginx-health since WordPress doesn't have that endpoint
-    local health_endpoint = backend_url .. "/"
+    -- Probe /robots.txt, not "/": WordPress has no /nginx-health endpoint, but
+    -- /robots.txt still exercises the full PHP + DB path (WordPress generates it
+    -- via do_robots) while being far cheaper than rendering the Elementor/
+    -- WooCommerce homepage -- measured ~2x faster and, crucially, it doesn't
+    -- add a heavy homepage render to every pool every interval, which was part
+    -- of the load that made this very check time out under contention.
+    local health_endpoint = backend_url .. "/robots.txt"
     
     -- Try to connect to backend
     local res, err = httpc:request_uri(health_endpoint, {

@@ -181,11 +181,23 @@ build_sync_sql() {
 
     # Parents before children: wp_posts rows must exist before wp_postmeta /
     # wp_term_relationships rows that reference them are inserted.
-    prod_mysqldump --where="ID IN ($ids)" "$MYSQL_DATABASE" wp_posts >> "$sql_file"
-    prod_mysqldump --where="post_id IN ($ids)" "$MYSQL_DATABASE" wp_postmeta >> "$sql_file"
-    prod_mysqldump --where="object_id IN ($ids)" "$MYSQL_DATABASE" wp_term_relationships >> "$sql_file"
+    #
+    # --replace (REPLACE INTO, not plain INSERT): the honeypot pool is seeded
+    # with fixed-ID dummy rows by 01_clean-honeypot-data.sql (e.g. wp_postmeta
+    # meta_id 100-104, the dummy product's meta). Those meta_ids overlap
+    # production's real meta_id space, but the scoped DELETEs above only remove
+    # rows by post_id/object_id/ID -- a dummy row whose OWN primary key
+    # collides with a production row's primary key (while sitting on a
+    # different post) is not deleted, so a plain INSERT of production's row
+    # failed with "Duplicate entry '100' for key 'PRIMARY'" (confirmed live).
+    # REPLACE deletes any row with the same primary key first, so the sync is
+    # idempotent regardless of the pool's pre-existing dummy data, and the
+    # honeypot content still ends up an exact mirror of production.
+    prod_mysqldump --replace --where="ID IN ($ids)" "$MYSQL_DATABASE" wp_posts >> "$sql_file"
+    prod_mysqldump --replace --where="post_id IN ($ids)" "$MYSQL_DATABASE" wp_postmeta >> "$sql_file"
+    prod_mysqldump --replace --where="object_id IN ($ids)" "$MYSQL_DATABASE" wp_term_relationships >> "$sql_file"
     if [ "$table_exists" = "1" ]; then
-        prod_mysqldump --where="product_id IN ($ids)" "$MYSQL_DATABASE" wp_wc_product_meta_lookup >> "$sql_file"
+        prod_mysqldump --replace --where="product_id IN ($ids)" "$MYSQL_DATABASE" wp_wc_product_meta_lookup >> "$sql_file"
     fi
 
     # Small reference tables: full add/update-only refresh, no prior DELETE

@@ -73,8 +73,18 @@ _G.config = {
         host = "session_store",
         port = 6379,
         password = os.getenv("REDIS_PASSWORD") or "session_redis_password",  -- Fallback for backwards compatibility
-        timeout = 1000,
-        read_timeout = 3000,
+        -- 2000/5000 (was 1000/3000): confirmed live that under a post-startup
+        -- load burst (all 4 DBs bootstrapping + 4 PHP + ES/Kibana on shared
+        -- CPUs) even the AUTH reply occasionally missed the old 3 s read
+        -- window, logging "Failed to authenticate with Redis: timeout" from a
+        -- background timer. Redis itself isn't slow (empty slowlog) -- it's a
+        -- host scheduling stall -- so widening the window a bit, plus the
+        -- single reconnect retry get_connection() now does, absorbs the
+        -- hiccup instead of failing a whole background cycle. Off the hot path
+        -- (see init_worker.lua's mirror_replication_flags note), so no
+        -- per-request latency cost.
+        timeout = 2000,
+        read_timeout = 5000,
         pool_size = 100,
         backlog = nil
     },
@@ -597,29 +607,48 @@ _G.redis_pool = {}
 --- Borrow a Redis connection from the worker-local keepalive pool.
 --- @return redis|nil, string|nil  Connection object or nil + error message.
 function _G.redis_pool.get_connection()
-    local red = redis:new()
-    -- set_timeouts(connect, send, read) -- see the config block's
-    -- read_timeout note for why the reply timeout is the looser one.
-    red:set_timeouts(_G.config.redis.timeout, _G.config.redis.timeout, _G.config.redis.read_timeout)
-    
-    local ok, err = red:connect(_G.config.redis.host, _G.config.redis.port)
-    if not ok then
-        ngx.log(ngx.ERR, "Failed to connect to Redis: ", err)
-        return nil, err
-    end
-    
-    -- Authenticate if password is set.
-    -- AUTH is sent even on keepalive-reused connections because resty-redis
-    -- does not track auth state across the keepalive pool boundary.
-    if _G.config.redis.password then
-        local res, err = red:auth(_G.config.redis.password)
-        if not res then
-            ngx.log(ngx.ERR, "Failed to authenticate with Redis: ", err)
-            return nil, err
+    -- One connect+auth attempt. Returns (red, nil) or (nil, err). A pooled
+    -- socket that has silently gone bad surfaces here as a connect or AUTH
+    -- error/timeout, which is exactly the transient case the retry below
+    -- absorbs.
+    local function attempt()
+        local red = redis:new()
+        -- set_timeouts(connect, send, read) -- see the config block's
+        -- read_timeout note for why the reply timeout is the looser one.
+        red:set_timeouts(_G.config.redis.timeout, _G.config.redis.timeout, _G.config.redis.read_timeout)
+
+        local ok, err = red:connect(_G.config.redis.host, _G.config.redis.port)
+        if not ok then
+            return nil, "connect: " .. tostring(err)
         end
+
+        -- Authenticate if password is set. AUTH is sent even on
+        -- keepalive-reused connections because resty-redis does not track
+        -- auth state across the keepalive pool boundary.
+        if _G.config.redis.password then
+            local res, aerr = red:auth(_G.config.redis.password)
+            if not res then
+                return nil, "auth: " .. tostring(aerr)
+            end
+        end
+        return red, nil
     end
-    
-    return red, nil
+
+    -- Retry once on a transient connect/auth failure (typically a "timeout"
+    -- from a momentary host scheduling stall, or a stale pooled socket). A
+    -- second, genuinely-failing attempt is logged and returned so callers
+    -- still degrade gracefully; the retry just stops a single hiccup from
+    -- failing a whole background cycle.
+    local red, err = attempt()
+    if red then
+        return red, nil
+    end
+    red, err = attempt()
+    if red then
+        return red, nil
+    end
+    ngx.log(ngx.ERR, "Redis get_connection failed after retry: ", err)
+    return nil, err
 end
 
 --- Return a Redis connection to the worker-local keepalive pool.
