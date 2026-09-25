@@ -124,7 +124,8 @@ class MainWindow(QMainWindow):
         # -- see ui/error_monitor.py.
         self.error_monitor = ErrorLogMonitor(self)
 
-        self.services_page = ServicesPage(self._get_targets, self.error_monitor)
+        self.services_page = ServicesPage(
+            self._get_targets, self.error_monitor, self._grab_health_screenshot)
         self.health_page = HealthPage(self._get_targets, self.error_monitor)
         self.resources_page = ResourcesPage(self._get_targets)
         self.certs_page = CertsPage()
