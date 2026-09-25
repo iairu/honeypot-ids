@@ -230,12 +230,25 @@ def _condense(code: str, lang: str) -> str:
     """Drop comments, docstrings, single-line debug logging and blank runs, then
     dedent -- so the excerpt shows the algorithm, not the housekeeping."""
     code = code.replace("\t", "    ")
-    comment = {"lua": "--", "sh": "#", "py": "#"}.get(lang)
+    line_comments = {"lua": ("--",), "sh": ("#",), "py": ("#",),
+                     "php": ("//", "#")}.get(lang, ())
     out: list[str] = []
     in_doc = False
     doc_delim = ""
+    in_block = False  # PHP / C-style /* ... */ block comment
     for line in code.splitlines():
         stripped = line.strip()
+        if lang == "php":
+            if in_block:
+                if "*/" in line:
+                    in_block = False
+                continue
+            if stripped.startswith("/*"):
+                if "*/" not in line:
+                    in_block = True
+                continue
+            if stripped.startswith("*"):  # docblock continuation line
+                continue
         if lang == "py":
             if in_doc:
                 if doc_delim in line:
@@ -248,7 +261,7 @@ def _condense(code: str, lang: str) -> str:
                 if line.count(doc_delim) < 2:
                     in_doc = True
                 continue
-        if comment and stripped.startswith(comment):
+        if any(stripped.startswith(c) for c in line_comments):
             continue
         noise = _NOISE.get(lang)
         if noise and noise.match(line) and line.rstrip().endswith(")"):
