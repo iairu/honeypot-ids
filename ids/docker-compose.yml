@@ -292,6 +292,12 @@ services:
       - HONEYPOT_DB_NAME=production_database
       - HONEYPOT_DB_USER=production_user
       - HONEYPOT_DB_PASSWORD=${MYSQL_PASSWORD}
+      # Shared secret gating the honeypot-db-backend-header mu-plugin's
+      # X-DB-Backend/X-DB-Host/X-DB-Probe response headers (which prove, via a
+      # real SELECT, which database container served the request). Same secret
+      # the reverse proxy uses for its own debug headers; never emitted without
+      # it, so a real attacker never learns which database they hit.
+      - INTERNAL_TEST_SECRET=${INTERNAL_TEST_SECRET:-}
       # Enable WordPress debugging for SQL routing logs
       - WORDPRESS_DEBUG=1
       - WORDPRESS_DEBUG_LOG=1
