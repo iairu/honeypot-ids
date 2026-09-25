@@ -78,7 +78,7 @@ global $wp_customize;
                         <?php echo do_shortcode('[woocs]');?>
                     </span>
                 <?php }?>
-                <?php if( $omega_storefront_header_layout_enable_translator ){ ?>
+                <?php if( $omega_storefront_header_layout_enable_translator && shortcode_exists('google-translator') ){ ?>
                     <?php echo do_shortcode('[google-translator]'); ?>
                 <?php } ?>
             </div>
