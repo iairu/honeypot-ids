@@ -11,41 +11,58 @@ SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 SET time_zone = "+00:00";
 
 -- ============================================
--- Clean tables (ignore errors if tables don't exist)
+-- Clean tables
 -- ============================================
--- Clean Users
+-- Helper: delete rows from a table ONLY if it exists. In the single-eshop
+-- topology the honeypot database is a CLONE of production, whose WooCommerce
+-- version/config determines which optional tables are present -- e.g. the HPOS
+-- tables wp_wc_orders / wp_wc_orders_meta only exist when High-Performance
+-- Order Storage is enabled. The previous plain DELETEs relied on mysql --force
+-- to swallow the resulting "ERROR 1146 ... doesn't exist" for every absent
+-- table, which showed up as real error lines in honeypot_db_init's log. This
+-- procedure checks information_schema first so absent tables are simply
+-- skipped, silently. (production_user has ALL PRIVILEGES on this database,
+-- which includes CREATE ROUTINE / EXECUTE.)
+DROP PROCEDURE IF EXISTS _hp_delete_if_exists;
+DELIMITER $$
+CREATE PROCEDURE _hp_delete_if_exists(IN p_table VARCHAR(128), IN p_where VARCHAR(512))
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = p_table
+  ) THEN
+    SET @hp_sql = CONCAT('DELETE FROM `', p_table, '` WHERE ', p_where);
+    PREPARE hp_stmt FROM @hp_sql;
+    EXECUTE hp_stmt;
+    DEALLOCATE PREPARE hp_stmt;
+  END IF;
+END$$
+DELIMITER ;
+
+-- Core tables (always present on any WordPress install) -- plain deletes.
 DELETE FROM `wp_users` WHERE 1=1;
 DELETE FROM `wp_usermeta` WHERE 1=1;
-
--- Clean Comments
 DELETE FROM `wp_comments` WHERE 1=1;
 DELETE FROM `wp_commentmeta` WHERE 1=1;
 
--- Clean WooCommerce Orders
-DELETE FROM `wp_wc_orders` WHERE 1=1;
-DELETE FROM `wp_wc_orders_meta` WHERE 1=1;
-DELETE FROM `wp_woocommerce_order_items` WHERE 1=1;
-DELETE FROM `wp_woocommerce_order_itemmeta` WHERE 1=1;
+-- WooCommerce / Action Scheduler tables (optional per store & WC version) --
+-- guarded so a store without a given table produces no error.
+CALL _hp_delete_if_exists('wp_wc_orders', '1=1');
+CALL _hp_delete_if_exists('wp_wc_orders_meta', '1=1');
+CALL _hp_delete_if_exists('wp_woocommerce_order_items', '1=1');
+CALL _hp_delete_if_exists('wp_woocommerce_order_itemmeta', '1=1');
+CALL _hp_delete_if_exists('wp_wc_customer_lookup', '1=1');
+CALL _hp_delete_if_exists('wp_woocommerce_payment_tokens', '1=1');
+CALL _hp_delete_if_exists('wp_woocommerce_payment_tokenmeta', '1=1');
+CALL _hp_delete_if_exists('wp_woocommerce_api_keys', '1=1');
+CALL _hp_delete_if_exists('wp_woocommerce_sessions', '1=1');
+CALL _hp_delete_if_exists('wp_woocommerce_log', '1=1');
+CALL _hp_delete_if_exists('wp_actionscheduler_actions', 'status = ''complete''');
+CALL _hp_delete_if_exists('wp_actionscheduler_logs', '1=1');
 
--- Clean Customer Data
-DELETE FROM `wp_wc_customer_lookup` WHERE 1=1;
+DROP PROCEDURE IF EXISTS _hp_delete_if_exists;
 
--- Clean Payment Tokens and API Keys
-DELETE FROM `wp_woocommerce_payment_tokens` WHERE 1=1;
-DELETE FROM `wp_woocommerce_payment_tokenmeta` WHERE 1=1;
-DELETE FROM `wp_woocommerce_api_keys` WHERE 1=1;
-
--- Clean Sessions
-DELETE FROM `wp_woocommerce_sessions` WHERE 1=1;
-
--- Clean Logs
-DELETE FROM `wp_woocommerce_log` WHERE 1=1;
-
--- Clean Action Scheduler
-DELETE FROM `wp_actionscheduler_actions` WHERE `status` = 'complete';
-DELETE FROM `wp_actionscheduler_logs` WHERE 1=1;
-
--- Clean post meta
+-- Clean sensitive post meta (core table, always present).
 DELETE FROM `wp_postmeta` WHERE `meta_key` LIKE '%_customer_%';
 DELETE FROM `wp_postmeta` WHERE `meta_key` LIKE '%_billing_%';
 DELETE FROM `wp_postmeta` WHERE `meta_key` LIKE '%_shipping_%';
