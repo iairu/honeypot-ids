@@ -23,6 +23,7 @@ from core.container_status import classify
 from ui.page_backups import BackupsPage
 from ui.page_certs import CertsPage
 from ui.page_exploits import ExploitsPage
+from ui.page_extras import ExtrasPage
 from ui.page_health import HealthPage
 from ui.page_kibana import KibanaPage
 from ui.page_log_search import LogSearchPage
@@ -50,7 +51,7 @@ _NOTIFY_ON_STATUSES = {"unhealthy", "exited_bad"}
 
 PAGES = [
     "services", "health", "certificates", "redis", "backups", "kibana",
-    "exploits", "log_search", "settings",
+    "exploits", "log_search", "extras", "settings",
 ]
 PAGE_LABELS = {
     "services": "Services",
@@ -61,6 +62,7 @@ PAGE_LABELS = {
     "kibana": "Kibana",
     "exploits": "Exploits",
     "log_search": "Log Search",
+    "extras": "Extras",
     "settings": "Settings",
 }
 
@@ -128,6 +130,7 @@ class MainWindow(QMainWindow):
         self.kibana_page = KibanaPage(state)
         self.exploits_page = ExploitsPage(state)
         self.log_search_page = LogSearchPage(state)
+        self.extras_page = ExtrasPage()
         self.settings_page = SettingsPage(state, self._on_remote_settings_changed, self.set_poll_interval)
 
         for page_id, widget in [
@@ -139,6 +142,7 @@ class MainWindow(QMainWindow):
             ("kibana", self.kibana_page),
             ("exploits", self.exploits_page),
             ("log_search", self.log_search_page),
+            ("extras", self.extras_page),
             ("settings", self.settings_page),
         ]:
             self.stack.addWidget(widget)
