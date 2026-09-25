@@ -28,6 +28,19 @@ add_action( 'wp_head', function () {
 .main-header #middle-header { padding-top: 12px; padding-bottom: 12px; }
 .main-header #center-header  { padding-top: 4px; padding-bottom: 4px; }
 
+/* ---- strip the header down so products sit high on the page ----
+   Hides the nav / "All Category" menu, the search box and the contact
+   (support phone/e-mail) block, and the "Welcome to the Store" hero slider,
+   so the shop grid shows up near the top -- visible even in a short
+   screenshot. Logo, account and cart stay. */
+.main-header #center-header,            /* primary nav + "All Category" */
+.main-header .search-box,
+.main-header .header-search,            /* header product search */
+.main-header .suport-box,
+.main-header .call-header,               /* support phone / e-mail */
+.theme-banner-block,                     /* "Welcome to the Store" hero slider */
+.theme-custom-block.theme-banner-block { display: none !important; }
+
 /* ---- homepage product grid injected below the page content ---- */
 .honeypot-home-products { margin-top: 2.5rem; }
 .honeypot-home-products > h2 {

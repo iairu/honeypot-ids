@@ -3,14 +3,18 @@
 live command output below."""
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+import os
+
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QGroupBox, QHBoxLayout, QLabel, QPushButton, QScrollArea, QTabWidget,
-    QVBoxLayout, QWidget,
+    QFileDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+    QScrollArea, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core.container_status import summarize
 from core.docker_ctl import Target
+from core import services_report
 from ui.common import confirm, danger_button, muted_label, set_status
 from ui.error_monitor import ErrorLogMonitor
 from ui.log_export import LogExporter
@@ -18,10 +22,18 @@ from ui.process_runner import LogPanel
 
 
 class TargetPanel(QGroupBox):
-    def __init__(self, target: Target, error_monitor: ErrorLogMonitor | None = None, parent=None):
+    def __init__(self, target: Target, error_monitor: ErrorLogMonitor | None = None,
+                 health_screenshot_provider=None, parent=None):
         super().__init__(target.label, parent)
         self.target = target
         self._error_monitor = error_monitor
+        # Callable returning a PNG path of the Health page (or "" on failure),
+        # supplied by MainWindow -- used by the "…with PDF graph export" buttons
+        # to embed Health-page screenshots in the report.
+        self._health_screenshot_provider = health_screenshot_provider
+        self._svc_worker: services_report.ServicesReportWorker | None = None
+        self._svc_out_path = ""
+        self._svc_render_error = ""
         # Whether the LogPanel's current process is a mutating compose
         # command (up/down/restart) vs. the harmless auto-tail (logs -f) --
         # used to warn before quitting mid-operation without nagging the
@@ -55,6 +67,24 @@ class TargetPanel(QGroupBox):
         self.stop_btn.clicked.connect(self._stop)
         self.purge_btn.clicked.connect(self._purge)
         self.download_btn.clicked.connect(self._download_logs)
+
+        # Second row: start/stop that ALSO record a PDF of resource graphs
+        # (host CPU/RAM + per-container) with event markers and Health-page
+        # screenshots, the same style as the Exploits page's report export.
+        export_row = QHBoxLayout()
+        self.start_export_btn = QPushButton("Start with PDF graph export")
+        self.stop_export_btn = QPushButton("Stop with PDF graph export")
+        self.start_export_btn.setToolTip(
+            "Start this stack and export a PDF of host + per-container resource "
+            "graphs (event markers, peak explanations, Health-page screenshots).")
+        self.stop_export_btn.setToolTip(
+            "Stop this stack and export the same resource-graph PDF for the shutdown.")
+        self.start_export_btn.clicked.connect(lambda: self._run_with_export("start"))
+        self.stop_export_btn.clicked.connect(lambda: self._run_with_export("stop"))
+        export_row.addWidget(self.start_export_btn)
+        export_row.addWidget(self.stop_export_btn)
+        export_row.addStretch()
+        layout.addLayout(export_row)
 
         layout.addWidget(muted_label(
             "Logs (auto-tailing -- Start/Restart/Stop/Purge takes over this "
@@ -154,12 +184,84 @@ class TargetPanel(QGroupBox):
         ):
             self._run("down", "-v")
 
+    # ---- start/stop with PDF graph export ----
+
+    def _run_with_export(self, operation: str) -> None:
+        if self._svc_worker is not None:
+            return  # an export is already running for this target
+        default_name = f"services_{operation}_{self.target.key}.pdf"
+        path, _ = QFileDialog.getSaveFileName(
+            self, f"Save {operation} graph report", default_name, "PDF files (*.pdf)")
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+        self._svc_out_path = path
+        self._svc_render_error = ""
+
+        worker = services_report.ServicesReportWorker(self.target, operation)
+        worker.health_shot_request.connect(self._on_svc_health_shot)
+        worker.finished_ok.connect(self._on_svc_finished)
+        worker.failed.connect(self._on_svc_failed)
+        worker.finished.connect(self._on_svc_thread_done)
+        self._svc_worker = worker
+
+        self.start_export_btn.setEnabled(False)
+        self.stop_export_btn.setEnabled(False)
+        set_status(self.status_label, f"recording {operation} graphs…", "#e08a00", bold=True)
+
+        # Start sampling, then fire the real compose command alongside it so the
+        # graphs cover the whole transition.
+        worker.start()
+        self._run("up", "-d") if operation == "start" else self._run("down")
+
+    def _on_svc_health_shot(self, key: str) -> None:
+        """GUI-thread: grab the Health page and hand the path back to the worker
+        (which is blocked waiting for it)."""
+        path = ""
+        if self._health_screenshot_provider is not None:
+            try:
+                path = self._health_screenshot_provider() or ""
+            except Exception:  # noqa: BLE001
+                path = ""
+        if self._svc_worker is not None:
+            self._svc_worker.provide_health_shot(key, path)
+
+    def _on_svc_finished(self, data) -> None:
+        # Render on the GUI thread (QPrinter/QtGui); teardown reads the error.
+        try:
+            services_report.render_services_pdf(data, self._svc_out_path)
+        except Exception as e:  # noqa: BLE001
+            self._svc_render_error = str(e)
+
+    def _on_svc_failed(self, message: str) -> None:
+        self._svc_render_error = message
+
+    def _on_svc_thread_done(self) -> None:
+        out_path = self._svc_out_path
+        error = self._svc_render_error
+        if self._svc_worker is not None:
+            self._svc_worker.deleteLater()
+            self._svc_worker = None
+        self.start_export_btn.setEnabled(True)
+        self.stop_export_btn.setEnabled(True)
+        if error:
+            QMessageBox.warning(self, "Graph export failed", error)
+            return
+        if out_path and os.path.exists(out_path) and QMessageBox.question(
+            self, "Report saved",
+            f"Saved the resource-graph report to:\n{out_path}\n\nOpen it now?",
+        ) == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(out_path)))
+
 
 class ServicesPage(QWidget):
-    def __init__(self, get_targets, error_monitor: ErrorLogMonitor | None = None, parent=None):
+    def __init__(self, get_targets, error_monitor: ErrorLogMonitor | None = None,
+                 health_screenshot_provider=None, parent=None):
         super().__init__(parent)
         self._get_targets = get_targets
         self._error_monitor = error_monitor
+        self._health_screenshot_provider = health_screenshot_provider
         self.panels: dict[str, TargetPanel] = {}
         self._tab_view = True
 
@@ -206,7 +308,8 @@ class ServicesPage(QWidget):
         self.panels.clear()
 
         for target in self._get_targets():
-            self.panels[target.key] = TargetPanel(target, self._error_monitor)
+            self.panels[target.key] = TargetPanel(
+                target, self._error_monitor, self._health_screenshot_provider)
 
         self._populate_current_view()
 
