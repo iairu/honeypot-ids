@@ -96,6 +96,8 @@ class _MetricChart(QWidget):
         self._series: dict[str, QLineSeries] = {}
         self._unit = y_title                       # "%", "MiB" or "KiB"
         self._labels: dict[str, str] = {}          # service -> full container name
+        self._marker_series: dict[int, QLineSeries] = {}   # marker id -> vertical line
+        self._marker_labels: dict = {}             # series -> exploit name (for hover)
         self._chart = QChart()
         self._chart.legend().setVisible(True)
         self._chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
@@ -146,9 +148,16 @@ class _MetricChart(QWidget):
 
     def _on_hovered(self, point, state: bool) -> None:
         """Tooltip with the full container name + value when the cursor is on a
-        line; also thicken that line so it's obvious which one you're reading."""
+        line; also thicken that line so it's obvious which one you're reading.
+        Exploit-marker lines show the exploit name instead."""
         series = self.sender()
         if series is None:
+            return
+        if series in self._marker_labels:
+            if state:
+                QToolTip.showText(QCursor.pos(), "Exploit: " + self._marker_labels[series])
+            else:
+                QToolTip.hideText()
             return
         pen = series.pen()
         is_avg = series is self._avg
@@ -166,8 +175,42 @@ class _MetricChart(QWidget):
             series.setPen(pen)
             QToolTip.hideText()
 
+    def _draw_markers(self, markers: list, now: float, y_top: float) -> None:
+        """Draw a vertical dashed line for each exploit run (markers = list of
+        (id, t, name)) at its time position; hovering shows the exploit name."""
+        seen = set()
+        for mid, t, name in markers:
+            x = -(now - t)
+            if x < -_WINDOW_SECONDS:
+                continue  # scrolled off the visible window
+            seen.add(mid)
+            s = self._marker_series.get(mid)
+            if s is None:
+                s = QLineSeries()
+                s.setName("exploit")
+                pen = QPen(QColor("#c0392b"))
+                pen.setWidth(2)
+                pen.setStyle(Qt.PenStyle.DashLine)
+                s.setPen(pen)
+                s.hovered.connect(self._on_hovered)
+                self._chart.addSeries(s)
+                s.attachAxis(self._axis_x)
+                s.attachAxis(self._axis_y)
+                # Keep exploit markers out of the (already busy) legend.
+                for m in self._chart.legend().markers(s):
+                    m.setVisible(False)
+                self._marker_series[mid] = s
+                self._marker_labels[s] = name
+            s.replace([QPointF(x, 0), QPointF(x, y_top)])
+        # Remove markers that have scrolled out of the window.
+        for mid in list(self._marker_series):
+            if mid not in seen:
+                s = self._marker_series.pop(mid)
+                self._marker_labels.pop(s, None)
+                self._chart.removeSeries(s)
+
     def refresh(self, hist: dict, avg: deque, now: float, color_map: dict,
-                label_map: dict | None = None) -> None:
+                label_map: dict | None = None, markers: list | None = None) -> None:
         if label_map:
             self._labels = label_map
         y_max = 1.0
@@ -184,7 +227,9 @@ class _MetricChart(QWidget):
         for _, v in avg:
             if v > y_max:
                 y_max = v
-        self._axis_y.setRange(0, y_max * 1.1)
+        y_top = y_max * 1.1
+        self._axis_y.setRange(0, y_top)
+        self._draw_markers(markers or [], now, y_top)
 
 
 class ResourcesPage(QWidget):
@@ -198,6 +243,10 @@ class ResourcesPage(QWidget):
         self._avg: dict[str, deque] = {m[0]: deque(maxlen=HISTORY_POINTS) for m in _METRICS}
         self._color_map: dict[str, QColor] = {}
         self._name_map: dict[str, str] = {}      # service -> full container name
+        # Exploit-run markers drawn as vertical lines on every graph:
+        # each entry is [id, monotonic_time, exploit_name].
+        self._markers: list = []
+        self._marker_counter = 0
         self._row_for_service: dict[str, int] = {}
         self._selected_service: str | None = None
 
@@ -280,6 +329,7 @@ class ResourcesPage(QWidget):
         for dq in self._avg.values():
             dq.clear()
         self._color_map.clear()
+        self._markers.clear()
         self._row_for_service.clear()
         self._selected_service = None
         self.table.setRowCount(0)
@@ -421,7 +471,21 @@ class ResourcesPage(QWidget):
     def _refresh_visible_chart(self, now: float) -> None:
         key = _METRICS[self.tabs.currentIndex()][0]
         self._charts[key].refresh(
-            self._hist[key], self._avg[key], now, self._color_map, self._name_map)
+            self._hist[key], self._avg[key], now, self._color_map,
+            self._name_map, self._markers)
+
+    def add_exploit_marker(self, name: str) -> None:
+        """Called (via MainWindow) when an exploit is run from the Exploits
+        page: drop a vertical marker at the current time onto every graph,
+        labelled with the exploit name. Markers persist until they scroll out
+        of the ~5-minute window."""
+        now = time.monotonic()
+        self._marker_counter += 1
+        self._markers.append([self._marker_counter, now, name])
+        # Prune markers older than the visible window so the list stays bounded.
+        self._markers = [m for m in self._markers if now - m[1] <= _WINDOW_SECONDS]
+        if self.isVisible():
+            self._refresh_visible_chart(now)
 
     # ---- table selection (highlights the row's own colour; charts show all) ----
 

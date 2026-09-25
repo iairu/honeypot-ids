@@ -130,6 +130,9 @@ class MainWindow(QMainWindow):
         self.backups_page = BackupsPage(state)
         self.kibana_page = KibanaPage(state)
         self.exploits_page = ExploitsPage(state)
+        # Every exploit run drops a time-aligned marker onto the Resources
+        # graphs so its resource impact is visible.
+        self.exploits_page.exploit_ran.connect(self.resources_page.add_exploit_marker)
         self.log_search_page = LogSearchPage(state)
         self.settings_page = SettingsPage(state, self._on_remote_settings_changed, self.set_poll_interval)
 
