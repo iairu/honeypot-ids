@@ -192,17 +192,19 @@ function _M.prewarm_backend_connections(backend_name, backend_url, num_connectio
 end
 
 -- Get all backend statuses.
--- Includes production and all honeypot pool instances (honeypot_backend_1..N).
--- The POOL_COUNT constant here must match pool_router.lua and docker-compose.yml.
+-- Single-eshop / two-database topology: there is only production_backend now
+-- (the honeypot is the same HTTP backend with a per-request database switch),
+-- so there are no honeypot_backend_N pools to report. POOL_COUNT stays 0; the
+-- `honeypot` field mirrors production for backward compatibility with any
+-- tooling that still reads it.
 function _M.get_all_statuses()
-    -- Number of honeypot pool instances – keep in sync with pool_router.lua POOL_COUNT.
-    local POOL_COUNT = 3
+    local POOL_COUNT = 0
 
     local statuses = {
         production = _M.get_backend_status("production_backend"),
-        -- Legacy single-instance entry kept for backward compatibility with any
-        -- tooling that reads this field; it mirrors pool 1.
-        honeypot   = _M.get_backend_status("honeypot_backend_1"),
+        -- No separate honeypot backend any more -- mirror production so callers
+        -- that read this legacy field don't see a phantom-backend status.
+        honeypot   = _M.get_backend_status("production_backend"),
         pools      = {},
     }
 

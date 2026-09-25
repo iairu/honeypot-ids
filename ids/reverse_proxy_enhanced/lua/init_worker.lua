@@ -32,9 +32,11 @@ local function init_worker()
         
         ngx.log(ngx.INFO, "[PREWARM] Starting connection pool pre-warming for worker ", ngx.worker.id())
         
-        -- Number of honeypot pool instances – must match POOL_COUNT in pool_router.lua
-        -- and the number of honeypot_eshop_N services in docker-compose.yml.
-        local POOL_COUNT = 3
+        -- Single-eshop / two-database topology: there are no honeypot_eshop_N
+        -- backends to pre-warm any more (the one production_eshop serves both
+        -- sides, switching DB per request via wp-content/db.php). 0 = skip the
+        -- honeypot pre-warm loops entirely; only production_backend is warmed.
+        local POOL_COUNT = 0
 
         -- Wait for production backend first (critical path).
         local production_ready = health_check.wait_for_backend(
@@ -130,16 +132,20 @@ local function init_worker()
         -- tasks below, which were already correctly scoped this way) fixes
         -- both the redundant load and the false-positive race.
         if health_check then
-            -- Number of honeypot pool instances (keep in sync with pool_router.lua).
-            local POOL_COUNT_HC = 3
+            -- Single-eshop / two-database topology: there is only
+            -- production_eshop now. The honeypot is the SAME backend with a
+            -- different database chosen per request, so there are no
+            -- honeypot_eshop_N HTTP backends to health-check. 0 = production
+            -- only. (This is what stopped the recurring "[HEALTH] Backend
+            -- honeypot_backend_N marked as UNHEALTHY" errors -- the probes were
+            -- forever failing against services that no longer exist.)
+            local POOL_COUNT_HC = 0
             local interval = health_check.HEALTH_CHECK_INTERVAL or 10
             local ok, err = ngx.timer.every(interval, function()
                 pcall(function()
                     -- Production instance – uses root path (WordPress returns 200-399).
                     health_check.perform_health_check("production_backend", "http://production_eshop")
 
-                    -- Each honeypot pool instance checked independently so that a
-                    -- single unhealthy pool does not affect the health status of others.
                     for i = 1, POOL_COUNT_HC do
                         health_check.perform_health_check(
                             "honeypot_backend_" .. i,
@@ -508,9 +514,13 @@ local function init_worker()
                 return
             end
 
-            -- Number of honeypot pool instances -- keep in sync with
-            -- pool_router.lua's POOL_COUNT and docker-compose.yml.
-            local POOL_COUNT_REPL = 3
+            -- Single-eshop / two-database topology: backend selection no longer
+            -- depends on per-pool health/replication state (every request goes
+            -- to production_eshop; the database is switched per request by
+            -- wp-content/db.php, independent of any replication window). There
+            -- are no honeypot_backend_N pools to mirror a replication flag for,
+            -- so this loop is a no-op now. 0 = mirror nothing.
+            local POOL_COUNT_REPL = 0
             local threat_intel_shared = ngx.shared.threat_intel
 
             for i = 1, POOL_COUNT_REPL do
