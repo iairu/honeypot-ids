@@ -145,6 +145,19 @@ services:
           mysql -h\"\$$HP\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" --force \"\$$MYSQL_DATABASE\" < \"\$$m\" || echo \"    (non-zero, continuing)\"
         done
       fi
+
+      # Give the honeypot database a DISTINCT site name so the shared WordPress
+      # frontend visibly renders 'Demo Honeypot eShop' whenever the DB proxy
+      # (wp-content/db.php) routes a request to the honeypot database, vs
+      # 'Demo eShop' from production -- a simple, at-a-glance demo on the
+      # Exploits dashboard page that the same frontend is switching databases
+      # correctly. Applied on every run (idempotent) and NOT overwritten by
+      # honeypot_content_sync (which only mirrors content tables, never
+      # wp_options). Only the blogname differs; everything else stays a faithful
+      # clone so the two sides remain otherwise indistinguishable.
+      echo 'Setting honeypot site name to \"Demo Honeypot eShop\"...'
+      mysql -h\"\$$HP\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" \"\$$MYSQL_DATABASE\" -e \"UPDATE wp_options SET option_value='Demo Honeypot eShop' WHERE option_name='blogname';\" || echo '  (could not set honeypot blogname, continuing)'
+
       echo 'Honeypot database initialisation complete.'
       "
     networks:
