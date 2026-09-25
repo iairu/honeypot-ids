@@ -16,10 +16,10 @@ from collections import defaultdict, deque
 
 from PyQt6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis
 from PyQt6.QtCore import QPointF, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtGui import QColor, QCursor, QPainter, QPen
 from PyQt6.QtWidgets import (
     QComboBox, QHBoxLayout, QHeaderView, QLabel, QTableWidget,
-    QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
+    QTableWidgetItem, QTabWidget, QToolTip, QVBoxLayout, QWidget,
 )
 
 from core import resource_stats as rs
@@ -94,6 +94,8 @@ class _MetricChart(QWidget):
     def __init__(self, y_title: str, parent=None):
         super().__init__(parent)
         self._series: dict[str, QLineSeries] = {}
+        self._unit = y_title                       # "%", "MiB" or "KiB"
+        self._labels: dict[str, str] = {}          # service -> full container name
         self._chart = QChart()
         self._chart.legend().setVisible(True)
         self._chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
@@ -110,6 +112,7 @@ class _MetricChart(QWidget):
 
         self._avg = QLineSeries()
         self._avg.setName("average")
+        self._avg.hovered.connect(self._on_hovered)
         self._chart.addSeries(self._avg)
         self._avg.attachAxis(self._axis_x)
         self._avg.attachAxis(self._axis_y)
@@ -129,6 +132,7 @@ class _MetricChart(QWidget):
             s = QLineSeries()
             s.setName(service)
             s.setPen(QPen(color, 1))
+            s.hovered.connect(self._on_hovered)
             self._chart.addSeries(s)
             s.attachAxis(self._axis_x)
             s.attachAxis(self._axis_y)
@@ -140,7 +144,32 @@ class _MetricChart(QWidget):
             self._series[service] = s
         return s
 
-    def refresh(self, hist: dict, avg: deque, now: float, color_map: dict) -> None:
+    def _on_hovered(self, point, state: bool) -> None:
+        """Tooltip with the full container name + value when the cursor is on a
+        line; also thicken that line so it's obvious which one you're reading."""
+        series = self.sender()
+        if series is None:
+            return
+        pen = series.pen()
+        is_avg = series is self._avg
+        if state:
+            pen.setWidth(4 if not is_avg else 5)
+            series.setPen(pen)
+            if is_avg:
+                name = "average (all containers)"
+            else:
+                svc = series.name()
+                name = self._labels.get(svc, svc)
+            QToolTip.showText(QCursor.pos(), f"{name}\n{point.y():.1f} {self._unit}")
+        else:
+            pen.setWidth(3 if is_avg else 1)
+            series.setPen(pen)
+            QToolTip.hideText()
+
+    def refresh(self, hist: dict, avg: deque, now: float, color_map: dict,
+                label_map: dict | None = None) -> None:
+        if label_map:
+            self._labels = label_map
         y_max = 1.0
         for service, buf in hist.items():
             color = color_map.get(service, QColor("#888888"))
@@ -168,6 +197,7 @@ class ResourcesPage(QWidget):
         self._hist: dict[str, dict[str, deque]] = {m[0]: defaultdict(lambda: deque(maxlen=HISTORY_POINTS)) for m in _METRICS}
         self._avg: dict[str, deque] = {m[0]: deque(maxlen=HISTORY_POINTS) for m in _METRICS}
         self._color_map: dict[str, QColor] = {}
+        self._name_map: dict[str, str] = {}      # service -> full container name
         self._row_for_service: dict[str, int] = {}
         self._selected_service: str | None = None
 
@@ -305,9 +335,10 @@ class ResourcesPage(QWidget):
         resources = sorted(resources, key=lambda r: r.service)
 
         # Stable colour per service (by sorted position, stable while the set
-        # of services is stable).
+        # of services is stable) + the full container name for hover tooltips.
         for i, r in enumerate(resources):
             self._color_map.setdefault(r.service, _series_color(i))
+            self._name_map[r.service] = r.name
 
         # Update per-metric history + averages.
         for key, _title, _y, extract in _METRICS:
@@ -389,7 +420,8 @@ class ResourcesPage(QWidget):
 
     def _refresh_visible_chart(self, now: float) -> None:
         key = _METRICS[self.tabs.currentIndex()][0]
-        self._charts[key].refresh(self._hist[key], self._avg[key], now, self._color_map)
+        self._charts[key].refresh(
+            self._hist[key], self._avg[key], now, self._color_map, self._name_map)
 
     # ---- table selection (highlights the row's own colour; charts show all) ----
 
