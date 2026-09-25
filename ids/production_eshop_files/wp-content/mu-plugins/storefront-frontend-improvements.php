@@ -38,8 +38,22 @@ add_action( 'wp_head', function () {
 .main-header .header-search,            /* header product search */
 .main-header .suport-box,
 .main-header .call-header,               /* support phone / e-mail */
-.theme-banner-block,                     /* "Welcome to the Store" hero slider */
+.theme-banner-block,                     /* theme's built-in hero slider */
 .theme-custom-block.theme-banner-block { display: none !important; }
+
+/* ---- drop the seeded homepage hero ("Home" title / "Welcome to the Store" /
+   "Curated goods..." / "Shop Now") so the product grid is the homepage ----
+   The hero is the Elementor section seeded with id "hero0001"
+   (ids/scripts/seed_elementor_pages.sh), which Elementor renders with the
+   class .elementor-element-hero0001. The "Home" line above it is the page
+   title / breadcrumb, hidden only on the front page. */
+.elementor-element-hero0001 { display: none !important; }
+body.home .entry-header,
+body.home .entry-header-1,
+body.home .entry-title,
+body.home .entry-breadcrumb,
+body.home .breadcrumbs,
+body.home nav.woocommerce-breadcrumb { display: none !important; }
 
 /* ---- homepage product grid injected below the page content ---- */
 .honeypot-home-products { margin-top: 2.5rem; }
