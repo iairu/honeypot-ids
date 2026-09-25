@@ -20,11 +20,11 @@ import textwrap
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from PyQt6.QtCore import QMarginsF, QSizeF
-from PyQt6.QtGui import QFont, QTextDocument
+from PyQt6.QtCore import QMarginsF, QSizeF, QUrl
+from PyQt6.QtGui import QFont, QImage, QTextDocument
 from PyQt6.QtPrintSupport import QPrinter
 
-from core.paths import REPO_ROOT
+from core.paths import REPO_ROOT, EDGE_COMPOSE_FILE, SIEM_COMPOSE_FILE
 # Reuse the exact Baskerville registration/selection the exploit report uses.
 from core.exploit_report_pdf import _report_font_family, _FONT_CSS_STACK, _esc
 
@@ -166,6 +166,137 @@ HIGHLIGHTS: list[Highlight] = [
         lang="php",
     ),
 ]
+
+
+# ---- service inventory ----
+
+# What each Compose service does. Keyed by the service's base name (any trailing
+# _<number> replica suffix stripped), so the numbered honeypot pools share one
+# entry. Services absent on a branch simply never come up.
+SERVICE_DESCRIPTIONS: dict[str, str] = {
+    # edge / honeypot stack (ids/docker-compose.yml)
+    "init_setup": "One-shot bootstrap: prepares shared volumes, permissions and "
+                  "generated config the other containers expect before they start.",
+    "reverse_proxy": "OpenResty/nginx front door. Its Lua modules classify every request "
+                     "(threat scoring, CVE/pattern matching, session and IP reputation) and "
+                     "route it to production or a honeypot, and it emits the score/route "
+                     "headers the dashboard reads.",
+    "production_eshop": "The real WooCommerce/WordPress storefront that legitimate traffic "
+                        "is served from.",
+    "production_database": "MySQL database backing the production eshop.",
+    "production_db_seed": "One-shot WP-CLI job that seeds the production database with the "
+                          "demo shop's content on first run.",
+    "honeypot_eshop": "Honeypot copy of the WordPress storefront that suspicious traffic is "
+                      "diverted to, isolating attackers from the real shop (one per pool).",
+    "honeypot_database": "MySQL database backing a honeypot eshop, kept separate from "
+                         "production so an intruder only ever touches decoy data.",
+    "honeypot_db_seed": "One-shot WP-CLI job that seeds a honeypot database with demo "
+                        "content so the decoy shop looks real.",
+    "honeypot_db_migration": "One-shot schema/data migration that brings a honeypot database "
+                             "up to the expected structure before seeding.",
+    "honeypot_db_init": "One-shot initialiser for the honeypot database on the single-eshop "
+                        "topology (schema + the 'Demo Honeypot eShop' identity).",
+    "honeypot_content_sync": "Periodically replicates chosen production content into the "
+                             "honeypot database(s) so the decoy stays believable without "
+                             "leaking live customer data.",
+    "session_store": "Redis instance holding per-session and per-IP threat state (scores, "
+                     "last-signal timestamps, pool bindings) shared across reverse_proxy "
+                     "workers.",
+    "suricata_ids": "Suricata network IDS sniffing traffic and raising alerts that feed the "
+                    "reverse proxy's IP-reputation (threat_ips) scoring.",
+    "backup_service": "Scheduled backups of the databases and other persistent state.",
+    "vector_outbound": "Vector agent shipping this host's logs/events to the SIEM over TLS.",
+    # SIEM stack (siem/docker/docker-compose.yml)
+    "es01": "Elasticsearch node storing the SIEM's indexed logs and alerts.",
+    "init-password": "One-shot job that provisions Elasticsearch/Kibana credentials on first "
+                     "start.",
+    "kibana": "Kibana UI for exploring the collected logs, alerts and dashboards.",
+    "kibana_dashboards_setup": "One-shot job that imports the project's saved Kibana "
+                               "dashboards and index patterns.",
+    "vector_inbound": "Vector receiver on the SIEM side that ingests what the edge's "
+                      "vector_outbound ships and writes it into Elasticsearch.",
+}
+
+
+def _base_service_name(name: str) -> str:
+    return re.sub(r"_\d+$", "", name)
+
+
+def _compose_services(path) -> list[tuple[str, str]]:
+    """(service_name, image) for each service in a Compose file, in file order.
+
+    A small hand parser (PyYAML isn't a dependency here): walk the block under
+    the top-level `services:` key, taking the 2-space-indented keys as service
+    names and the first `image:` under each. Stops at the next top-level key."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    services: list[tuple[str, str]] = []
+    in_services = False
+    cur: str | None = None
+    image = ""
+    for raw in text.splitlines():
+        if re.match(r"^\S", raw):  # a top-level key
+            if raw.startswith("services:"):
+                in_services = True
+                continue
+            if in_services:  # left the services block
+                break
+            continue
+        if not in_services:
+            continue
+        m = re.match(r"^  ([A-Za-z0-9_.-]+):\s*$", raw)
+        if m:
+            if cur is not None:
+                services.append((cur, image))
+            cur, image = m.group(1), ""
+            continue
+        if cur is not None and not image:
+            mi = re.match(r"^\s+image:\s*(\S+)", raw)
+            if mi:
+                image = mi.group(1).strip().strip('"\'')
+    if cur is not None:
+        services.append((cur, image))
+    return services
+
+
+def _describe_service(name: str) -> str:
+    return (SERVICE_DESCRIPTIONS.get(name)
+            or SERVICE_DESCRIPTIONS.get(_base_service_name(name))
+            or "")
+
+
+def service_overview() -> list[tuple[str, list[dict]]]:
+    """Per-stack service groups for this checkout: [(stack_label, rows)], where
+    each row is {names, label, image, description}. Numbered replicas of the
+    same base service (honeypot_database_1..3) collapse into one row."""
+    out: list[tuple[str, list[dict]]] = []
+    for label, compose in (("Edge / honeypot stack", EDGE_COMPOSE_FILE),
+                            ("SIEM stack", SIEM_COMPOSE_FILE)):
+        services = _compose_services(compose)
+        if not services:
+            continue
+        groups: list[dict] = []
+        index: dict[str, int] = {}
+        for name, image in services:
+            base = _base_service_name(name)
+            if base in index:
+                groups[index[base]]["names"].append(name)
+            else:
+                index[base] = len(groups)
+                groups.append({"base": base, "names": [name], "image": image})
+        rows: list[dict] = []
+        for g in groups:
+            n = len(g["names"])
+            row_label = g["names"][0] if n == 1 else f"{g['base']}_1..{n}  (×{n})"
+            rows.append({
+                "label": row_label,
+                "image": g["image"],
+                "description": _describe_service(g["names"][0]) or "&mdash;",
+            })
+        out.append((label, rows))
+    return out
 
 
 # ---- extraction ----
@@ -327,9 +458,48 @@ def _code_block(code: str) -> str:
         '</td></tr></table>')
 
 
-def render_thesis_pdf(out_path: str) -> int:
-    """Render the Implementation chapter PDF. Returns the number of excerpts
-    included (0 => nothing resolved, caller should warn rather than write junk)."""
+def _services_section_html(doc: QTextDocument, health_screenshot: str) -> str:
+    """The 'Services and health' section: a per-service explanation table for
+    every service on this branch, plus the Health-page screenshot if supplied."""
+    stacks = service_overview()
+    parts: list[str] = []
+    parts.append('<p style="color:#555;">The system is a set of Docker Compose services. '
+                 'Each service on this branch is listed below with what it does; the numbered '
+                 'honeypot pools are collapsed into one row with their replica count.</p>')
+    for label, rows in stacks:
+        parts.append(f'<h3 style="color:#333;">{_esc(label)}</h3>')
+        parts.append('<table width="100%" cellspacing="0" cellpadding="4" border="1" '
+                     'style="border-collapse:collapse; color:#444;">'
+                     '<tr style="background-color:#eeeeea;">'
+                     '<th align="left">Service</th><th align="left">Image</th>'
+                     '<th align="left">Role</th></tr>')
+        for r in rows:
+            image_cell = _esc(r["image"]) if r["image"] else "&mdash;"
+            parts.append(
+                '<tr>'
+                f'<td style="font-family:monospace;">{_esc(r["label"])}</td>'
+                f'<td style="font-family:monospace; color:#666;">{image_cell}</td>'
+                f'<td>{r["description"]}</td>'
+                '</tr>')
+        parts.append('</table>')
+
+    if health_screenshot:
+        img = QImage(health_screenshot)
+        if not img.isNull():
+            doc.addResource(QTextDocument.ResourceType.ImageResource,
+                            QUrl("thesis://health"), img)
+            parts.append('<p style="color:#555;">Live health view of the running services '
+                         '(dashboard Health page):</p>')
+            parts.append('<img src="thesis://health" width="660"/>')
+    return "".join(parts)
+
+
+def render_thesis_pdf(out_path: str, health_screenshot: str = "") -> int:
+    """Render the Implementation chapter PDF. Returns the number of code excerpts
+    included (0 => nothing resolved, caller should warn rather than write junk).
+
+    If ``health_screenshot`` points at a readable image, it is embedded in the
+    'Services and health' section."""
     items = available_highlights()
     family = _report_font_family()
     doc = QTextDocument()
@@ -339,21 +509,30 @@ def render_thesis_pdf(out_path: str) -> int:
     parts.append('<h1 style="color:#222;">Implementation</h1>')
     parts.append('<p style="color:#555;">Generated '
                  f'{_esc(datetime.now().strftime("%Y-%m-%d %H:%M"))} from the project source '
-                 'tree. This chapter collects the more interesting algorithms in the honeypot '
-                 'IDS and reverse proxy. Each excerpt is taken verbatim from the source and '
-                 'then condensed &ndash; comments, docstrings, debug logging and blank runs '
-                 'removed &ndash; so only the algorithmic essence is shown; the full listing '
-                 'is at the cited path.</p><hr/>')
+                 'tree. This chapter first summarises the services that make up the system, '
+                 'then collects the more interesting algorithms in the honeypot IDS and '
+                 'reverse proxy. Each code excerpt is taken verbatim from the source and then '
+                 'condensed &ndash; comments, docstrings, debug logging and blank runs removed '
+                 '&ndash; so only the algorithmic essence is shown; the full listing is at the '
+                 'cited path.</p><hr/>')
 
-    # Group by section in first-appearance order.
+    section = 0
+
+    # Section: services & health overview.
+    section += 1
+    parts.append(f'<h2 style="color:#222;">{section}. Services and health</h2>')
+    parts.append(_services_section_html(doc, health_screenshot))
+
+    # Sections: featured algorithms, grouped by section in first-appearance order.
     order: list[str] = []
     for hl, _ in items:
         if hl.section not in order:
             order.append(hl.section)
 
-    for si, section in enumerate(order, start=1):
-        parts.append(f'<h2 style="color:#222;">{si}. {_esc(section)}</h2>')
-        for hl, code in [it for it in items if it[0].section == section]:
+    for name in order:
+        section += 1
+        parts.append(f'<h2 style="color:#222;">{section}. {_esc(name)}</h2>')
+        for hl, code in [it for it in items if it[0].section == name]:
             parts.append(f'<h3 style="color:#333;">{_esc(hl.title)}</h3>')
             parts.append(f'<p style="color:#555;">{_esc(hl.description)}</p>')
             parts.append(_code_block(code))
