@@ -22,44 +22,11 @@ $home_id = wp_insert_post([
     "post_content" => "",
 ]);
 
-$home_elements = [[
-    "id" => "hero0001",
-    "elType" => "section",
-    "settings" => [
-        "layout" => "full_width",
-        "padding" => ["unit" => "px", "top" => "80", "bottom" => "80"],
-    ],
-    "elements" => [[
-        "id" => "herocol01",
-        "elType" => "column",
-        "settings" => ["_column_size" => 100],
-        "elements" => [
-            [
-                "id" => "herohead1",
-                "elType" => "widget",
-                "widgetType" => "heading",
-                "settings" => ["title" => "Welcome to the Store", "size" => "xl", "align" => "center"],
-                "elements" => [],
-            ],
-            [
-                "id" => "herotext1",
-                "elType" => "widget",
-                "widgetType" => "text-editor",
-                "settings" => ["editor" => "<p style=\"text-align:center;\">Curated goods, delivered fast. Browse the shop below.</p>"],
-                "elements" => [],
-            ],
-            [
-                "id" => "herobtn01",
-                "elType" => "widget",
-                "widgetType" => "button",
-                "settings" => ["text" => "Shop Now", "align" => "center", "link" => ["url" => home_url("/shop/")]],
-                "elements" => [],
-            ],
-        ],
-        "isInner" => false,
-    ]],
-    "isInner" => false,
-]];
+# Homepage is intentionally left with no Elementor hero: the demo storefront
+# shows the product grid directly on the homepage (injected by the
+# storefront-frontend-improvements must-use plugin), rather than a
+# "Welcome to the Store" hero banner.
+$home_elements = [];
 
 update_post_meta($home_id, "_elementor_data", wp_slash(json_encode($home_elements)));
 update_post_meta($home_id, "_elementor_edit_mode", "builder");
