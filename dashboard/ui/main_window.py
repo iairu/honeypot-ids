@@ -130,7 +130,7 @@ class MainWindow(QMainWindow):
         self.kibana_page = KibanaPage(state)
         self.exploits_page = ExploitsPage(state)
         self.log_search_page = LogSearchPage(state)
-        self.extras_page = ExtrasPage()
+        self.extras_page = ExtrasPage(self._grab_health_screenshot)
         self.settings_page = SettingsPage(state, self._on_remote_settings_changed, self.set_poll_interval)
 
         for page_id, widget in [
@@ -170,6 +170,38 @@ class MainWindow(QMainWindow):
         self._build_shortcuts()
 
     # ---- navigation / target plumbing ----
+
+    def _grab_health_screenshot(self) -> str:
+        """Bring the Health page on-screen briefly, grab it, and return a PNG
+        path for the Extras thesis export. Restores the previous page. Returns
+        "" if the grab fails -- the export tolerates a missing screenshot."""
+        import os
+        import tempfile
+        from PyQt6.QtCore import QEventLoop, QTimer
+
+        prev = self.stack.currentWidget()
+        try:
+            self.stack.setCurrentWidget(self.health_page)
+            # Let it lay out and paint before grabbing.
+            loop = QEventLoop()
+            QTimer.singleShot(700, loop.quit)
+            loop.exec()
+            pixmap = self.health_page.grab()
+        except Exception:  # noqa: BLE001 -- best-effort screenshot
+            return ""
+        finally:
+            if prev is not None:
+                self.stack.setCurrentWidget(prev)
+        if pixmap.isNull():
+            return ""
+        try:
+            path = os.path.join(tempfile.mkdtemp(prefix="thesis_health_"), "health.png")
+            image = pixmap.toImage()
+            image.setDevicePixelRatio(1.0)
+            image.save(path)
+            return path
+        except Exception:  # noqa: BLE001
+            return ""
 
     def _get_targets(self):
         return all_targets(self.state)

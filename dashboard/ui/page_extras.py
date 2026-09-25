@@ -22,8 +22,12 @@ from core import thesis_export
 
 
 class ExtrasPage(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, health_screenshot_provider=None, parent=None):
         super().__init__(parent)
+        # Callable returning a PNG path of the Health page (or "" on failure);
+        # supplied by MainWindow, which alone can bring that page on-screen to
+        # grab it. None => the chapter is exported without the screenshot.
+        self._health_screenshot_provider = health_screenshot_provider
         layout = QVBoxLayout(self)
 
         title = QLabel("Extras")
@@ -101,8 +105,16 @@ class ExtrasPage(QWidget):
 
         self.export_btn.setEnabled(False)
         QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        # Grab the Health page for the "Services and health" section (best
+        # effort -- the chapter still exports if this fails).
+        health_shot = ""
+        if self._health_screenshot_provider is not None:
+            try:
+                health_shot = self._health_screenshot_provider() or ""
+            except Exception:  # noqa: BLE001 -- never let a grab failure block export
+                health_shot = ""
         try:
-            n = thesis_export.render_thesis_pdf(path)
+            n = thesis_export.render_thesis_pdf(path, health_screenshot=health_shot)
         except Exception as e:  # noqa: BLE001 -- surface any render failure to the user
             QGuiApplication.restoreOverrideCursor()
             self.export_btn.setEnabled(True)
