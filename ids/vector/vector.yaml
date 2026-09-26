@@ -142,6 +142,20 @@ sinks:
       crt_file: /etc/vector/certs/vector-agent.crt
       key_file: /etc/vector/certs/vector-agent.key
       verify_certificate: true
+    # Buffer locally with backpressure and retry the aggregator generously, so
+    # a slow or briefly-unavailable SIEM makes this shipper hold + retry the
+    # batch rather than the aggregator cancelling the send and dropping it. The
+    # aggregator's own acknowledgements + buffer (siem/vector/vector.yaml) are
+    # what actually stop the drop; these keep this side resilient meanwhile.
+    # (No acknowledgements here on purpose: the docker_logs source can't honour
+    # them, and enabling them would only log a "silent data loss" warning.)
+    buffer:
+      type: memory
+      max_events: 10000
+      when_full: block
+    request:
+      timeout_secs: 60
+      retry_attempts: 20
 
   # Optional: direct Elasticsearch output (for fallback or testing)
   # Uncomment if you want to send directly to Elasticsearch instead of via
