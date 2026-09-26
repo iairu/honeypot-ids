@@ -36,3 +36,7 @@ ids/production_eshop_files/wp-content/wflogs/
 # `git add -A`/`git add .` in production_eshop_files/, but that's exactly
 # the kind of mistake this file is meant to prevent.
 ids/production_eshop_files/wp-config.php
+
+# Dashboard PDF exports (exploit / services / implementation reports) --
+# generated artifacts, not source content.
+dashboard/*.pdf
