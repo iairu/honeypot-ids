@@ -494,6 +494,128 @@ def _services_section_html(doc: QTextDocument, health_screenshot: str) -> str:
     return "".join(parts)
 
 
+# ---- WordPress plugins (installed + must-use customisations) ----
+
+_WP_CONTENT = REPO_ROOT / "ids" / "production_eshop_files" / "wp-content"
+
+
+def _parse_php_plugin_header(path) -> dict:
+    """{name, description, version} from a WordPress plugin's header block."""
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")[:4000]
+    except OSError:
+        return {}
+    out = {}
+    for key, field_name in (("Plugin Name", "name"), ("Description", "description"),
+                            ("Version", "version")):
+        m = re.search(rf"(?im)^\s*\*?\s*{key}\s*:\s*(.+?)\s*$", head)
+        if m:
+            out[field_name] = m.group(1).strip()
+    return out
+
+
+def _muplugins() -> list[dict]:
+    d = _WP_CONTENT / "mu-plugins"
+    out = []
+    if d.is_dir():
+        for f in sorted(d.glob("*.php")):
+            h = _parse_php_plugin_header(f)
+            out.append({"file": f.name, "name": h.get("name", f.name),
+                        "description": h.get("description", "")})
+    return out
+
+
+def _installed_plugins() -> list[dict]:
+    d = _WP_CONTENT / "plugins"
+    out = []
+    if not d.is_dir():
+        return out
+    for entry in sorted(d.iterdir(), key=lambda p: p.name.lower()):
+        if entry.name == "index.php":
+            continue
+        h = {}
+        if entry.is_dir():
+            for f in sorted(entry.glob("*.php")):
+                h = _parse_php_plugin_header(f)
+                if h.get("name"):
+                    break
+        elif entry.suffix == ".php":
+            h = _parse_php_plugin_header(entry)
+            if not h.get("name"):
+                continue
+        out.append({"slug": entry.name, "name": h.get("name", entry.name),
+                    "version": h.get("version", "")})
+    return out
+
+
+def _muplugins_section_html() -> str:
+    plugins = _muplugins()
+    parts = ['<p style="color:#555;">Custom behaviour is layered on with must-use plugins '
+             '(wp-content/mu-plugins/), which load automatically and cannot be deactivated '
+             'from the admin -- so every WordPress instance (production and honeypot) gets '
+             'them without touching the vendored theme or plugins:</p>']
+    if not plugins:
+        return "".join(parts) + '<p style="color:#666;">None found.</p>'
+    parts.append('<table width="100%" cellspacing="0" cellpadding="4" border="1" '
+                 'style="border-collapse:collapse; color:#444;">'
+                 '<tr style="background-color:#eeeeea;"><th align="left">File</th>'
+                 '<th align="left">Name</th><th align="left">What it does</th></tr>')
+    for p in plugins:
+        parts.append('<tr>'
+                     f'<td style="font-family:monospace; font-size:9pt;">{_esc(p["file"])}</td>'
+                     f'<td>{_esc(p["name"])}</td>'
+                     f'<td>{_esc(p["description"]) or "&mdash;"}</td></tr>')
+    parts.append('</table>')
+    return "".join(parts)
+
+
+def _installed_plugins_section_html() -> str:
+    plugins = _installed_plugins()
+    parts = [f'<p style="color:#555;">The storefront ships with {len(plugins)} plugins in '
+             'wp-content/plugins/ (WooCommerce and its payment/marketing ecosystem, plus the '
+             'vulnerable plugins the exploit presets target):</p>']
+    if not plugins:
+        return "".join(parts) + '<p style="color:#666;">None found.</p>'
+    parts.append('<table width="100%" cellspacing="0" cellpadding="4" border="1" '
+                 'style="border-collapse:collapse; color:#444;">'
+                 '<tr style="background-color:#eeeeea;"><th align="left">Slug</th>'
+                 '<th align="left">Name</th><th align="left">Version</th></tr>')
+    for p in plugins:
+        parts.append('<tr>'
+                     f'<td style="font-family:monospace; font-size:9pt;">{_esc(p["slug"])}</td>'
+                     f'<td>{_esc(p["name"])}</td>'
+                     f'<td>{_esc(p["version"]) or "&mdash;"}</td></tr>')
+    parts.append('</table>')
+    return "".join(parts)
+
+
+def _cve_curl_section_html() -> str:
+    """Every exploit preset as a copy-pasteable curl command (the exact request
+    the dashboard fires), to attempt each CVE against a production URL."""
+    import shlex
+    from core.exploits import EXPLOIT_PRESETS, build_curl_argv
+
+    base = "https://PRODUCTION_HOST"
+    parts = ['<p style="color:#555;">Each exploit preset below is shown as the exact curl '
+             'command the dashboard fires &ndash; run it against a production URL (replace '
+             f'<span style="font-family:monospace;">{_esc(base)}</span>) to attempt that '
+             'CVE. Add <span style="font-family:monospace;">-H "X-Internal-Test-Auth: '
+             '&lt;secret&gt;"</span> to also read the X-Threat-Score / X-Route-Target debug '
+             'headers.</p>']
+    for p in EXPLOIT_PRESETS:
+        try:
+            cmd = " ".join(shlex.quote(a) for a in build_curl_argv(p, base))
+        except Exception:  # noqa: BLE001
+            continue
+        iso = ""
+        if hasattr(p, "db_isolated") and not getattr(p, "db_isolated", True):
+            iso = ' <span style="color:#b8860b;">(not DB-isolatable)</span>'
+        parts.append(f'<p style="color:#333; margin-bottom:2px;"><b>{_esc(p.cve)}</b> '
+                     f'&middot; {_esc(p.severity)} &middot; {_esc(p.name)}{iso}</p>')
+        parts.append(_code_block(cmd))
+    return "".join(parts)
+
+
 def render_thesis_pdf(out_path: str, health_screenshot: str = "") -> int:
     """Render the Implementation chapter PDF. Returns the number of code excerpts
     included (0 => nothing resolved, caller should warn rather than write junk).
@@ -509,12 +631,14 @@ def render_thesis_pdf(out_path: str, health_screenshot: str = "") -> int:
     parts.append('<h1 style="color:#222;">Implementation</h1>')
     parts.append('<p style="color:#555;">Generated '
                  f'{_esc(datetime.now().strftime("%Y-%m-%d %H:%M"))} from the project source '
-                 'tree. This chapter first summarises the services that make up the system, '
-                 'then collects the more interesting algorithms in the honeypot IDS and '
-                 'reverse proxy. Each code excerpt is taken verbatim from the source and then '
-                 'condensed &ndash; comments, docstrings, debug logging and blank runs removed '
-                 '&ndash; so only the algorithmic essence is shown; the full listing is at the '
-                 'cited path.</p><hr/>')
+                 'tree. This chapter summarises the services and the WordPress customisations '
+                 '(must-use plugins) that make up the system, lists the installed plugins, '
+                 'collects the more interesting algorithms in the honeypot IDS and reverse '
+                 'proxy, and ends with a runnable curl reference for every exploit. Code '
+                 'excerpts are taken verbatim from the source and then condensed &ndash; '
+                 'comments, docstrings, debug logging and blank runs removed &ndash; so only '
+                 'the algorithmic essence is shown; the full listing is at the cited path.'
+                 '</p><hr/>')
 
     section = 0
 
@@ -522,6 +646,16 @@ def render_thesis_pdf(out_path: str, health_screenshot: str = "") -> int:
     section += 1
     parts.append(f'<h2 style="color:#222;">{section}. Services and health</h2>')
     parts.append(_services_section_html(doc, health_screenshot))
+
+    # Section: must-use plugin customisations.
+    section += 1
+    parts.append(f'<h2 style="color:#222;">{section}. WordPress customisations (must-use plugins)</h2>')
+    parts.append(_muplugins_section_html())
+
+    # Section: installed plugins.
+    section += 1
+    parts.append(f'<h2 style="color:#222;">{section}. Installed plugins</h2>')
+    parts.append(_installed_plugins_section_html())
 
     # Sections: featured algorithms, grouped by section in first-appearance order.
     order: list[str] = []
@@ -539,6 +673,11 @@ def render_thesis_pdf(out_path: str, health_screenshot: str = "") -> int:
             lang = _LANG_LABEL.get(hl.lang, hl.lang)
             src = f'{_esc(hl.path)}' + (f' &middot; {lang}' if lang else '')
             parts.append(f'<p style="color:#888; font-size:9pt;">Source: {src}</p>')
+
+    # Section: exploit / CVE curl reference.
+    section += 1
+    parts.append(f'<h2 style="color:#222;">{section}. Exploit / CVE curl reference</h2>')
+    parts.append(_cve_curl_section_html())
 
     parts.append('</div>')
     doc.setHtml("<body>" + "".join(parts) + "</body>")
