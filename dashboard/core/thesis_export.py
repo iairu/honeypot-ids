@@ -27,6 +27,7 @@ from PyQt6.QtPrintSupport import QPrinter
 from core.paths import REPO_ROOT, EDGE_COMPOSE_FILE, SIEM_COMPOSE_FILE
 # Reuse the exact Baskerville registration/selection the exploit report uses.
 from core.exploit_report_pdf import _report_font_family, _FONT_CSS_STACK, _esc
+from core import diagrams
 
 
 @dataclass
@@ -645,7 +646,22 @@ def render_thesis_pdf(out_path: str, health_screenshot: str = "") -> int:
     # Section: services & health overview.
     section += 1
     parts.append(f'<h2 style="color:#222;">{section}. Services and health</h2>')
+    parts.append('<p style="color:#555;">The architecture is shown in <b>Figure 1</b>: '
+                 'clients reach a reverse proxy that scores every request through the pipeline '
+                 'in <b>Figure 3</b> and routes it &ndash; to the real shop or a decoy honeypot '
+                 '&ndash; as in <b>Figure 2</b>.</p>')
+    parts.append(diagrams.figure_html(
+        doc, diagrams.architecture_diagram(family), "impl-arch", 1,
+        "System architecture. The reverse proxy is the hub; see Figure 2 for how it routes and "
+        "Figure 3 for how it scores. Services are listed below."))
     parts.append(_services_section_html(doc, health_screenshot))
+    parts.append(diagrams.figure_html(
+        doc, diagrams.request_flow_diagram(family), "impl-flow", 2,
+        "Request routing inside the reverse proxy of Figure 1, driven by the score from "
+        "Figure 3."))
+    parts.append(diagrams.figure_html(
+        doc, diagrams.scoring_pipeline_diagram(family), "impl-score", 3,
+        "The threat-scoring pipeline that produces the score the routing in Figure 2 acts on."))
 
     # Section: must-use plugin customisations.
     section += 1
@@ -716,7 +732,17 @@ def render_cve_matrix_pdf(out_path: str) -> int:
                  f'{_esc(datetime.now().strftime("%Y-%m-%d %H:%M"))}. Every exploit the '
                  'Exploits page and its PDF report can fire, each kept in step with a '
                  "detection pattern in the reverse proxy's cve_patterns table so “run this "
-                 'exploit” and “the honeypot detects it” are the same list.</p><hr/>')
+                 'exploit” and “the honeypot detects it” are the same list. Firing any of them '
+                 'is scored through the pipeline in <b>Figure 2</b> and routed as in '
+                 '<b>Figure 1</b> &ndash; a CVE match diverts to the honeypot on its own.</p>')
+    parts.append(diagrams.figure_html(
+        doc, diagrams.request_flow_diagram(family), "cve-flow", 1,
+        "Where these exploits land: a CVE match (Figure 2) diverts the request to the honeypot."))
+    parts.append(diagrams.figure_html(
+        doc, diagrams.scoring_pipeline_diagram(family), "cve-score", 2,
+        "How each exploit below is scored; a CVE pattern match adds +40 and, on its own, routes "
+        "to the honeypot per Figure 1."))
+    parts.append('<hr/>')
 
     # Detect whether presets carry the branch-only db_isolated flag.
     has_iso = any(hasattr(p, "db_isolated") for p in EXPLOIT_PRESETS)
@@ -761,7 +787,16 @@ def render_architecture_pdf(out_path: str, health_screenshot: str = "") -> int:
                  f'{_esc(datetime.now().strftime("%Y-%m-%d %H:%M"))}. The honeypot IDS is a set '
                  'of Docker Compose services fronted by an OpenResty/nginx reverse proxy that '
                  'classifies every request and routes it to the real shop or a honeypot, with a '
-                 'separate SIEM stack collecting the logs and alerts.</p><hr/>')
+                 'separate SIEM stack collecting the logs and alerts. <b>Figure 1</b> maps the '
+                 'topology; <b>Figure 2</b> shows how a request is routed through it.</p><hr/>')
+    parts.append(diagrams.figure_html(
+        doc, diagrams.architecture_diagram(family), "arch-arch", 1,
+        "System architecture. The services below fill in each box; Figure 2 shows the routing "
+        "decision the reverse proxy makes."))
+    parts.append(diagrams.figure_html(
+        doc, diagrams.request_flow_diagram(family), "arch-flow", 2,
+        "How one request flows through the reverse proxy of Figure 1 to production or the "
+        "honeypot."))
     parts.append(_services_section_html(doc, health_screenshot))
     parts.append('</div>')
     doc.setHtml("<body>" + "".join(parts) + "</body>")
