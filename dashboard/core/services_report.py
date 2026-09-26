@@ -35,6 +35,7 @@ from core import resource_stats as rs
 from core.container_status import classify, is_ready
 from core.docker_ctl import Target
 from core.exploit_report_pdf import _report_font_family, _FONT_CSS_STACK, _esc, _resource_series_color
+from core import diagrams
 
 SAMPLE_INTERVAL_S = 2.0
 START_MAX_SECONDS = 150.0
@@ -405,7 +406,12 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
                  f'{"brought up" if data.operation == "start" else "taken down"}. Each dashed '
                  'red vertical line marks a major event (a container starting, going healthy or '
                  'unhealthy, or stopping); the largest CPU peak is called out with the event it '
-                 'lines up with.</p>')
+                 'lines up with. <b>Figure 1</b> shows how these services fit together &ndash; '
+                 'the per-container graphs below track each box in it.</p>')
+    parts.append(diagrams.figure_html(
+        doc, diagrams.architecture_diagram(family), "svc-arch", 1,
+        "System architecture: the services whose CPU / memory the per-container charts below "
+        "track as the stack is " + ("started." if data.operation == "start" else "stopped.")))
 
     # 1. overall system chart
     parts.append('<h2 style="color:#222;">1. Overall system (host)</h2>')
