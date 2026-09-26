@@ -53,6 +53,7 @@ class ServicesReport:
     target_label: str = ""
     operation: str = "start"          # "start" | "stop"
     duration_s: float = 0.0
+    exit_code: int | None = None      # the compose command's exit code (stop)
     # (elapsed_s, cpu_pct, ram_pct) for the whole host:
     sys_samples: list = field(default_factory=list)
     # (elapsed_s, {service: (cpu_pct, mem_bytes)}):
@@ -128,9 +129,19 @@ class ServicesReportWorker(QThread):
         self._cancel = False
         self._shot_event = threading.Event()
         self._shot_result: dict[str, str] = {}
+        # Set by the Services panel when the underlying `docker compose up/down`
+        # process exits, so a stop is recorded until the command actually
+        # finishes rather than guessing from `ps` going empty.
+        self._op_done = threading.Event()
+        self._op_exit_code: int | None = None
 
     def cancel(self) -> None:
         self._cancel = True
+
+    def notify_operation_finished(self, exit_code: int) -> None:
+        """Called (GUI thread) when the compose command for this export exits."""
+        self._op_exit_code = exit_code
+        self._op_done.set()
 
     def provide_health_shot(self, key: str, path: str) -> None:
         """Called on the GUI thread with the grabbed Health-page PNG path."""
@@ -228,11 +239,16 @@ class ServicesReportWorker(QThread):
                         data.stage_shots.append((
                             "Stopping: containers going down", self._grab_health("mid")))
                         captured_mid = True
-                    if not status:
+                    # Keep recording until the `docker compose down` process
+                    # actually exits (signalled via notify_operation_finished),
+                    # not merely until `ps` looks empty -- down still has to tear
+                    # down networks/volumes after the last container is gone.
+                    if self._op_done.is_set():
                         if not captured_end:
                             data.stage_shots.append((
-                                "Stopped: no containers", self._grab_health("end")))
+                                "Stopped: down command finished", self._grab_health("end")))
                             captured_end = True
+                        data.exit_code = self._op_exit_code
                         break
 
                 deadline = time.time() + SAMPLE_INTERVAL_S
@@ -298,19 +314,42 @@ def _ts_chart(series: dict, colors: dict, events: list, y_label: str,
     p.setPen(QColor("#111111"))
     p.drawText(ml, mt - 12, y_label)
 
-    # Event vertical lines (dashed, red), staggered labels to reduce overlap.
-    for i, (t, label) in enumerate(events):
-        if not (t_min <= t <= t_max):
-            continue
+    # Event markers: draw every dashed vertical line first, then place the
+    # labels into stacked "lanes" so they never overlap horizontally -- each
+    # label goes in the topmost lane whose previous label has already ended
+    # (by estimated pixel width) before this one starts.
+    vis_events = sorted((e for e in events if t_min <= e[0] <= t_max), key=lambda e: e[0])
+    for t, _label in vis_events:
         x = int(X(t))
         pen = QPen(QColor("#c62828"), 1)
         pen.setStyle(Qt.PenStyle.DashLine)
         p.setPen(pen)
         p.drawLine(x, mt, x, mt + plot_h)
+
+    p.setFont(QFont(family, 7))
+    label_h = 11
+    char_w = 4.1
+    max_lanes = max(1, int((plot_h - 16) // label_h))
+    lane_right: list[float] = []  # current right edge x per lane
+    for t, label in vis_events:
+        x = int(X(t))
+        text = label if len(label) <= 22 else label[:21] + "…"
+        tw = len(text) * char_w + 6
+        tx = max(ml + 1, min(x + 2, W - mr - tw))
+        lane = next((li for li, edge in enumerate(lane_right) if tx > edge + 4), None)
+        if lane is None:
+            if len(lane_right) < max_lanes:
+                lane_right.append(0.0)
+                lane = len(lane_right) - 1
+            else:  # all lanes busy -- reuse the one that frees up earliest
+                lane = min(range(len(lane_right)), key=lambda li: lane_right[li])
+        lane_right[lane] = tx + tw
+        ly = mt + 9 + lane * label_h
+        p.setPen(QColor("#999999"))
+        p.drawLine(x, mt, int(tx), ly - 3)  # thin leader to its line
         p.setPen(QColor("#c62828"))
-        p.setFont(QFont(family, 7))
-        p.drawText(x + 2, mt + 10 + (i % 4) * 10, label[:22])
-        p.setFont(QFont(family, 9))
+        p.drawText(int(tx), ly, text)
+    p.setFont(QFont(family, 9))
 
     for name, pts in series.items():
         if not pts:
@@ -359,7 +398,9 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
                  f'Target: {_esc(data.target_label)}<br/>'
                  f'Operation: <b>{_esc(data.operation)}</b> &nbsp;&middot;&nbsp; '
                  f'Recorded window: {data.duration_s:.0f}s'
-                 '</td></tr></table><hr/>')
+                 + (f' &nbsp;&middot;&nbsp; compose exit code: <b>{data.exit_code}</b>'
+                    if data.exit_code is not None else '')
+                 + '</td></tr></table><hr/>')
     parts.append('<p style="color:#555;">Resource usage recorded while the stack was '
                  f'{"brought up" if data.operation == "start" else "taken down"}. Each dashed '
                  'red vertical line marks a major event (a container starting, going healthy or '
