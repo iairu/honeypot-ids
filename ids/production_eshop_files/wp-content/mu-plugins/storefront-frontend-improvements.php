@@ -122,8 +122,13 @@ add_filter( 'the_content', function ( $content ) {
     }
     $done = true;
 
+    // Order by title (ASC), NOT popularity: the production and honeypot
+    // databases hold the same synced products, but "popularity" (total_sales)
+    // diverges between them (only production sees real orders), which would
+    // shuffle the grid. Title is identical across both, so the homepage shows
+    // the same products in the same order on every instance.
     $grid = do_shortcode(
-        '[products limit="8" columns="4" orderby="popularity" visibility="visible"]'
+        '[products limit="8" columns="4" orderby="title" order="ASC" visibility="visible"]'
     );
     if ( trim( wp_strip_all_tags( $grid ) ) === '' ) {
         // No products matched (e.g. before the shop is seeded) -- leave the
@@ -136,3 +141,30 @@ add_filter( 'the_content', function ( $content ) {
         . '<section class="honeypot-home-products"><h2>' . $heading . '</h2>'
         . $grid . '</section>';
 }, 20 );
+
+/**
+ * Keep the shop/catalog product order identical across the production and
+ * honeypot databases. Both hold the same synced products, but any ordering
+ * that depends on per-database dynamic data -- popularity (total_sales),
+ * rating, stock -- diverges because only production accrues real orders. Force
+ * a deterministic, title-based order everywhere the catalog is listed, and drop
+ * the "sort by" dropdown's dynamic options so a viewer can't reshuffle into a
+ * database-dependent order either.
+ */
+add_filter( 'woocommerce_default_catalog_orderby', function () {
+    return 'title';
+} );
+
+add_filter( 'woocommerce_get_catalog_ordering_args', function ( $args ) {
+    $args['orderby']  = 'title';
+    $args['order']    = 'ASC';
+    $args['meta_key'] = '';
+    return $args;
+}, 20 );
+
+add_filter( 'woocommerce_catalog_orderby', function () {
+    // Only the stable, database-independent option, matching the forced order
+    // above (so the dropdown never offers a sort that would diverge between the
+    // production and honeypot databases).
+    return array( 'title' => __( 'Sort by name: A to Z', 'omega-storefront' ) );
+} );
