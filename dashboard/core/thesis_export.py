@@ -542,7 +542,12 @@ def render_thesis_pdf(out_path: str, health_screenshot: str = "") -> int:
 
     parts.append('</div>')
     doc.setHtml("<body>" + "".join(parts) + "</body>")
+    _finish_pdf(doc, out_path)
+    return len(items)
 
+
+def _finish_pdf(doc: QTextDocument, out_path: str) -> None:
+    """Shared A4 PDF print setup (see exploit_report_pdf for the DPI rationale)."""
     from PyQt6.QtGui import QPageSize, QPageLayout
     printer = QPrinter(QPrinter.PrinterMode.ScreenResolution)
     printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
@@ -551,4 +556,75 @@ def render_thesis_pdf(out_path: str, health_screenshot: str = "") -> int:
     printer.setPageMargins(QMarginsF(15, 15, 15, 15), QPageLayout.Unit.Millimeter)
     doc.setPageSize(QSizeF(printer.pageRect(QPrinter.Unit.DevicePixel).size()))
     doc.print(printer)
-    return len(items)
+
+
+def _new_doc() -> tuple[QTextDocument, str, list[str]]:
+    family = _report_font_family()
+    doc = QTextDocument()
+    doc.setDefaultFont(QFont(family, 11))
+    return doc, family, [f'<div style="font-family: {_FONT_CSS_STACK};">']
+
+
+def render_cve_matrix_pdf(out_path: str) -> int:
+    """A reference table of every exploit preset the dashboard can fire: CVE,
+    severity, HTTP method/path, and (on the db-proxy branch) whether the
+    single-eshop topology can isolate it. Returns the number of rows."""
+    from core.exploits import EXPLOIT_PRESETS
+
+    doc, family, parts = _new_doc()
+    parts.append('<h1 style="color:#222;">Exploit / CVE coverage</h1>')
+    parts.append('<p style="color:#555;">Generated '
+                 f'{_esc(datetime.now().strftime("%Y-%m-%d %H:%M"))}. Every exploit the '
+                 'Exploits page and its PDF report can fire, each kept in step with a '
+                 "detection pattern in the reverse proxy's cve_patterns table so “run this "
+                 'exploit” and “the honeypot detects it” are the same list.</p><hr/>')
+
+    # Detect whether presets carry the branch-only db_isolated flag.
+    has_iso = any(hasattr(p, "db_isolated") for p in EXPLOIT_PRESETS)
+    header_iso = '<th align="left">DB-isolatable</th>' if has_iso else ''
+    parts.append('<table width="100%" cellspacing="0" cellpadding="4" border="1" '
+                 'style="border-collapse:collapse; color:#333;">'
+                 '<tr style="background-color:#eeeeea;">'
+                 '<th align="left">CVE</th><th align="left">Name</th>'
+                 '<th align="left">Severity</th><th align="left">Request</th>'
+                 f'{header_iso}</tr>')
+    sev_color = {"CRITICAL": "#c62828", "HIGH": "#e08a00", "MEDIUM": "#2e7d32", "LOW": "#666666"}
+    for p in EXPLOIT_PRESETS:
+        sev = (p.severity or "").upper()
+        col = sev_color.get(sev, "#333333")
+        iso_cell = ''
+        if has_iso:
+            ok = getattr(p, "db_isolated", True)
+            iso_cell = (f'<td>{"yes" if ok else "<b>no</b> (shared runtime/FS)"}</td>')
+        parts.append(
+            '<tr>'
+            f'<td style="font-family:monospace;">{_esc(p.cve)}</td>'
+            f'<td>{_esc(p.name)}</td>'
+            f'<td style="color:{col}; font-weight:bold;">{_esc(sev)}</td>'
+            f'<td style="font-family:monospace; font-size:8pt;">{_esc(p.method)} {_esc(p.path)}</td>'
+            f'{iso_cell}</tr>')
+    parts.append('</table>')
+    parts.append(f'<p style="color:#888; font-size:9pt;">{len(EXPLOIT_PRESETS)} presets. '
+                 'Source: dashboard/core/exploits.py &middot; '
+                 'ids/reverse_proxy_enhanced/lua/init.lua (cve_patterns).</p>')
+    parts.append('</div>')
+    doc.setHtml("<body>" + "".join(parts) + "</body>")
+    _finish_pdf(doc, out_path)
+    return len(EXPLOIT_PRESETS)
+
+
+def render_architecture_pdf(out_path: str, health_screenshot: str = "") -> int:
+    """A standalone architecture overview: every Compose service on this branch
+    with its role, plus the live Health page. Returns the service count."""
+    doc, family, parts = _new_doc()
+    parts.append('<h1 style="color:#222;">System architecture &amp; services</h1>')
+    parts.append('<p style="color:#555;">Generated '
+                 f'{_esc(datetime.now().strftime("%Y-%m-%d %H:%M"))}. The honeypot IDS is a set '
+                 'of Docker Compose services fronted by an OpenResty/nginx reverse proxy that '
+                 'classifies every request and routes it to the real shop or a honeypot, with a '
+                 'separate SIEM stack collecting the logs and alerts.</p><hr/>')
+    parts.append(_services_section_html(doc, health_screenshot))
+    parts.append('</div>')
+    doc.setHtml("<body>" + "".join(parts) + "</body>")
+    _finish_pdf(doc, out_path)
+    return sum(len(rows) for _label, rows in service_overview())

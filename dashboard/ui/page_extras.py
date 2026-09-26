@@ -35,24 +35,49 @@ class ExtrasPage(QWidget):
         layout.addWidget(title)
 
         intro = QLabel(
-            "Export an auto-generated <b>Implementation</b> chapter (PDF): a curated set of "
-            "the project's more interesting algorithms, pulled straight from the source and "
-            "condensed (comments, docstrings, debug logging and blank runs removed) so only "
-            "the algorithmic essence is shown. Rendered in the same Baskerville face as the "
-            "exploit report.")
+            "Auto-generated PDF exports, all rendered in the same Baskerville face as the "
+            "exploit report:<br/>"
+            "&bull; <b>Implementation chapter</b> &ndash; the project's more interesting "
+            "algorithms, pulled from the source and condensed (comments, docstrings, debug "
+            "logging and blank runs removed), plus a services overview and a Health-page shot.<br/>"
+            "&bull; <b>Architecture &amp; services</b> &ndash; every service on this branch with "
+            "its role, plus the live Health page.<br/>"
+            "&bull; <b>Exploit / CVE matrix</b> &ndash; a reference table of every exploit "
+            "preset the dashboard can fire.")
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #aaaaaa;")
         layout.addWidget(intro)
 
         toolbar = QHBoxLayout()
-        self.export_btn = QPushButton("Export implementation chapter (PDF)")
-        self.export_btn.clicked.connect(self._export)
+        self.export_btn = QPushButton("Implementation chapter (PDF)")
+        self.export_btn.clicked.connect(lambda: self._run_export(
+            "implementation chapter", "implementation_chapter.pdf",
+            lambda path, hs: thesis_export.render_thesis_pdf(path, health_screenshot=hs),
+            needs_health=True))
         toolbar.addWidget(self.export_btn)
+
+        self.arch_btn = QPushButton("Architecture & services (PDF)")
+        self.arch_btn.setToolTip("Every service on this branch with its role, plus the live Health page.")
+        self.arch_btn.clicked.connect(lambda: self._run_export(
+            "architecture overview", "architecture_overview.pdf",
+            lambda path, hs: thesis_export.render_architecture_pdf(path, health_screenshot=hs),
+            needs_health=True))
+        toolbar.addWidget(self.arch_btn)
+
+        self.cve_btn = QPushButton("Exploit / CVE matrix (PDF)")
+        self.cve_btn.setToolTip("Reference table of every exploit preset the dashboard can fire.")
+        self.cve_btn.clicked.connect(lambda: self._run_export(
+            "exploit / CVE matrix", "cve_coverage.pdf",
+            lambda path, hs: thesis_export.render_cve_matrix_pdf(path),
+            needs_health=False))
+        toolbar.addWidget(self.cve_btn)
+
         self.refresh_btn = QPushButton("Refresh preview")
         self.refresh_btn.clicked.connect(self._reload_preview)
         toolbar.addWidget(self.refresh_btn)
         toolbar.addStretch()
         layout.addLayout(toolbar)
+        self._export_buttons = [self.export_btn, self.arch_btn, self.cve_btn]
 
         self.count_label = QLabel("")
         self.count_label.setStyleSheet("color: #888888;")
@@ -87,47 +112,43 @@ class ExtrasPage(QWidget):
                 QListWidgetItem(f"    {hl.title}   ({hl.lang}, {lines} lines) — {hl.path}"))
         self.count_label.setText(f"{len(items)} excerpt(s) resolved from the source tree.")
 
-    def _export(self) -> None:
-        items = thesis_export.available_highlights()
-        if not items:
-            QMessageBox.warning(
-                self, "Nothing to export",
-                "No featured excerpts could be resolved from the source tree on this "
-                "branch. Nothing was written.")
-            return
+    def _run_export(self, label: str, default_name: str, render_fn, needs_health: bool) -> None:
+        """Generic PDF export: ask for a path, grab the Health page if the export
+        needs it, run render_fn(path, health_shot) on the GUI thread (the renders
+        are quick), and offer to open the result."""
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save implementation chapter", "implementation_chapter.pdf",
-            "PDF files (*.pdf)")
+            self, f"Save {label}", default_name, "PDF files (*.pdf)")
         if not path:
             return
         if not path.lower().endswith(".pdf"):
             path += ".pdf"
 
-        self.export_btn.setEnabled(False)
+        for b in self._export_buttons:
+            b.setEnabled(False)
         QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        # Grab the Health page for the "Services and health" section (best
-        # effort -- the chapter still exports if this fails).
         health_shot = ""
-        if self._health_screenshot_provider is not None:
+        if needs_health and self._health_screenshot_provider is not None:
             try:
                 health_shot = self._health_screenshot_provider() or ""
             except Exception:  # noqa: BLE001 -- never let a grab failure block export
                 health_shot = ""
         try:
-            n = thesis_export.render_thesis_pdf(path, health_screenshot=health_shot)
+            render_fn(path, health_shot)
         except Exception as e:  # noqa: BLE001 -- surface any render failure to the user
             QGuiApplication.restoreOverrideCursor()
-            self.export_btn.setEnabled(True)
+            for b in self._export_buttons:
+                b.setEnabled(True)
             self.status_label.setText(f"✗ Export failed: {e}")
             self.status_label.setStyleSheet("color: #d9534f;")
             QMessageBox.warning(self, "Export failed", str(e))
             return
         QGuiApplication.restoreOverrideCursor()
-        self.export_btn.setEnabled(True)
-        self.status_label.setText(f"✓ Saved {n} excerpt(s) to: {path}")
+        for b in self._export_buttons:
+            b.setEnabled(True)
+        self.status_label.setText(f"✓ Saved {label} to: {path}")
         self.status_label.setStyleSheet("color: #5cb85c;")
         if QMessageBox.question(
-            self, "Chapter saved",
-            f"Saved the implementation chapter to:\n{path}\n\nOpen it now?",
+            self, "Saved",
+            f"Saved the {label} to:\n{path}\n\nOpen it now?",
         ) == QMessageBox.StandardButton.Yes:
             QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(path)))
