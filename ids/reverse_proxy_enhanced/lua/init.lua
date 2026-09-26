@@ -382,7 +382,12 @@ _G.config = {
             "gift-voucher",                   -- CVE-2025-47577, CVE-2024-8425
             "advanced-form-integration",      -- CVE-2024-2387
             "pagseguro-connect-woocommerce",  -- CVE-2025-10142
-            "wp-file-upload"                  -- CVE-2024-50508
+            "wp-file-upload",                 -- CVE-2024-50508
+            "bricks",                         -- CVE-2024-25600
+            "wp-automatic",                   -- CVE-2024-27956
+            "ultimate-member",                -- CVE-2024-1071
+            "bookingpress-appointment-booking", -- CVE-2022-0739
+            "layerslider"                     -- CVE-2024-2879
         },
         cve_patterns = {
             -- CVE-2023-28121: WooCommerce Payments header-based auth bypass.
@@ -418,7 +423,26 @@ _G.config = {
 
             -- CVE-2024-50508: WP File Upload directory traversal.
             -- The file[path] parameter is passed directly to a filesystem call.
-            ["CVE-2024-50508"] = "file%[path%]"
+            ["CVE-2024-50508"] = "file%[path%]",
+
+            -- CVE-2024-25600: Bricks Builder unauthenticated RCE via the
+            -- render_element REST endpoint (eval of attacker PHP).
+            ["CVE-2024-25600"] = "bricks/v1/render_element",
+
+            -- CVE-2024-27956: WP Automatic SQL injection through csv.php.
+            ["CVE-2024-27956"] = "wp%-automatic/inc/csv%.php",
+
+            -- CVE-2024-1071: Ultimate Member SQLi via the um_get_members AJAX
+            -- action's directory_id parameter.
+            ["CVE-2024-1071"] = "um_get_members",
+
+            -- CVE-2022-0739: BookingPress SQLi via the front-category-services
+            -- AJAX action's total_service parameter.
+            ["CVE-2022-0739"] = "bookingpress_front_get_category_services",
+
+            -- CVE-2024-2879: LayerSlider SQLi via the ls_get_popup_markup AJAX
+            -- action's id parameter.
+            ["CVE-2024-2879"] = "ls_get_popup_markup"
         }
     }
 }
