@@ -150,6 +150,12 @@ class TargetPanel(QGroupBox):
         # here.
         if self._mutating_action:
             self._mutating_action = False
+            # If a "…with PDF graph export" is recording, let it know the
+            # compose command has now exited (with this code) so a stop is
+            # recorded right up to the down command finishing, not just until
+            # the containers vanish from `ps`.
+            if self._svc_worker is not None:
+                self._svc_worker.notify_operation_finished(_exit_code)
             self._run("logs", "--tail=50", "-f", mutating=False)
 
     def _reload_logs(self) -> None:
