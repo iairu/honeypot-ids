@@ -34,9 +34,16 @@ def _new(w: int, h: int) -> tuple[QImage, QPainter]:
 
 
 def _box(p: QPainter, x, y, w, h, title, subtitle="", *, fill="#ffffff",
-         border=_INK, family="Serif", text=_INK) -> tuple[float, float]:
+         border=_INK, family="Serif", text=_INK, draw=True) -> tuple[float, float]:
     """Rounded box with a centred (bold) title and optional subtitle. Returns
-    the box centre so callers can route arrows to/from it."""
+    the box centre so callers can route arrows to/from it. With ``draw=False``
+    it only computes the centre (a layout pass) and paints nothing -- callers
+    use that to draw all the arrows FIRST, then the boxes on top, so arrows
+    never overlap a box. Title and subtitle both word-wrap to stay inside."""
+    cx, cy = x + w / 2, y + h / 2
+    if not draw:
+        return cx, cy
+    _WRAP = Qt.TextFlag.TextWordWrap
     rect = QRectF(x, y, w, h)
     p.setPen(QPen(QColor(border), 2))
     p.setBrush(QColor(fill))
@@ -44,17 +51,19 @@ def _box(p: QPainter, x, y, w, h, title, subtitle="", *, fill="#ffffff",
     p.setPen(QColor(text))
     if subtitle:
         p.setFont(QFont(family, 10, QFont.Weight.Bold))
-        p.drawText(QRectF(x, y + 5, w, h * 0.52),
-                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom,
+        # Title: top half, bottom-aligned so it sits just above the subtitle.
+        p.drawText(QRectF(x + 3, y + 3, w - 6, h * 0.48),
+                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom | _WRAP,
                    title)
         p.setFont(QFont(family, 8))
-        p.drawText(QRectF(x + 4, y + h * 0.5, w - 8, h * 0.5 - 4),
-                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+        # Subtitle: below the title with a little extra top padding.
+        p.drawText(QRectF(x + 4, y + h * 0.52 + 4, w - 8, h * 0.48 - 6),
+                   Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop | _WRAP,
                    subtitle)
     else:
         p.setFont(QFont(family, 10, QFont.Weight.Bold))
-        p.drawText(rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, title)
-    return x + w / 2, y + h / 2
+        p.drawText(rect, Qt.AlignmentFlag.AlignCenter | _WRAP, title)
+    return cx, cy
 
 
 def _arrow(p: QPainter, x1, y1, x2, y2, *, color=_INK, label="", family="Serif",
@@ -92,34 +101,39 @@ def architecture_diagram(family: str = "Serif") -> QImage:
     p.drawText(20, 24, "System architecture")
 
     cx = 460
-    c = _box(p, cx - 90, 40, 180, 44, "Internet / clients", family=family, fill="#eef2f7")
-    proxy = _box(p, cx - 150, 130, 300, 62, "Reverse proxy",
-                 "OpenResty + Lua: threat scoring & routing",
-                 fill="#e7effa", border=_BLUE, text=_BLUE, family=family)
-    redis = _box(p, 40, 138, 170, 50, "session_store (Redis)",
-                 "sessions, IP reputation", fill="#eef0f2", border=_GREY, text=_GREY, family=family)
-    suri = _box(p, 710, 138, 170, 50, "Suricata IDS",
-                "network alerts -> reputation", fill="#fdf1e3", border=_ORANGE, text=_ORANGE, family=family)
-    prod = _box(p, 150, 270, 230, 58, "Production eshop",
-                "WordPress / WooCommerce", fill="#e8f3ea", border=_GREEN, text=_GREEN, family=family)
-    hpot = _box(p, 540, 270, 230, 58, "Honeypot eshop(s)",
-                "decoy WordPress", fill="#f8e7e7", border=_RED, text=_RED, family=family)
-    pdb = _box(p, 185, 372, 160, 46, "Production DB", "MySQL",
-               fill="#eef0f2", border=_GREY, text=_GREY, family=family)
-    hdb = _box(p, 575, 372, 160, 46, "Honeypot DB", "MySQL (decoy)",
-               fill="#eef0f2", border=_GREY, text=_GREY, family=family)
-    siem = _box(p, 250, 470, 420, 48, "SIEM",
-                "Vector -> Elasticsearch -> Kibana", fill="#efe8f7", border=_PURPLE, text=_PURPLE, family=family)
+    # (key, x, y, w, h, title, subtitle, fill, border)
+    specs = [
+        ("client", cx - 90, 40, 180, 44, "Internet / clients", "", "#eef2f7", _INK),
+        ("proxy", cx - 150, 130, 300, 62, "Reverse proxy",
+         "OpenResty + Lua: threat scoring & routing", "#e7effa", _BLUE),
+        ("redis", 40, 138, 170, 50, "session_store (Redis)",
+         "sessions, IP reputation", "#eef0f2", _GREY),
+        ("suri", 710, 138, 170, 50, "Suricata IDS",
+         "network alerts -> reputation", "#fdf1e3", _ORANGE),
+        ("prod", 150, 270, 230, 58, "Production eshop",
+         "WordPress / WooCommerce", "#e8f3ea", _GREEN),
+        ("hpot", 540, 270, 230, 58, "Honeypot eshop(s)",
+         "decoy WordPress", "#f8e7e7", _RED),
+        ("pdb", 185, 372, 160, 46, "Production DB", "MySQL", "#eef0f2", _GREY),
+        ("hdb", 575, 372, 160, 46, "Honeypot DB", "MySQL (decoy)", "#eef0f2", _GREY),
+        ("siem", 250, 470, 420, 48, "SIEM",
+         "Vector -> Elasticsearch -> Kibana", "#efe8f7", _PURPLE),
+    ]
+    C = {s[0]: (s[1] + s[3] / 2, s[2] + s[4] / 2) for s in specs}
 
-    _arrow(p, c[0], 84, proxy[0], 130, family=family)
-    _arrow(p, redis[0] + 85, redis[1], proxy[0] - 150, proxy[1], color=_GREY, family=family, dashed=True)
-    _arrow(p, suri[0] - 85, suri[1], proxy[0] + 150, proxy[1], color=_ORANGE, family=family, dashed=True)
-    _arrow(p, proxy[0] - 60, 192, prod[0], 270, color=_GREEN, family=family, label="clean")
-    _arrow(p, proxy[0] + 60, 192, hpot[0], 270, color=_RED, family=family, label="suspicious")
-    _arrow(p, prod[0], 328, pdb[0], 372, color=_GREY, family=family)
-    _arrow(p, hpot[0], 328, hdb[0], 372, color=_GREY, family=family)
-    _arrow(p, proxy[0], 192, siem[0], 470, color=_PURPLE, family=family, dashed=True, label="logs")
-    _arrow(p, suri[0], 188, siem[0] + 180, 470, color=_PURPLE, family=family, dashed=True)
+    # Arrows first, so the boxes drawn afterwards sit ON TOP of the arrow ends.
+    _arrow(p, C["client"][0], 84, C["proxy"][0], 130, family=family)
+    _arrow(p, C["redis"][0] + 85, C["redis"][1], C["proxy"][0] - 150, C["proxy"][1], color=_GREY, family=family, dashed=True)
+    _arrow(p, C["suri"][0] - 85, C["suri"][1], C["proxy"][0] + 150, C["proxy"][1], color=_ORANGE, family=family, dashed=True)
+    _arrow(p, C["proxy"][0] - 60, 192, C["prod"][0], 270, color=_GREEN, family=family, label="clean")
+    _arrow(p, C["proxy"][0] + 60, 192, C["hpot"][0], 270, color=_RED, family=family, label="suspicious")
+    _arrow(p, C["prod"][0], 328, C["pdb"][0], 372, color=_GREY, family=family)
+    _arrow(p, C["hpot"][0], 328, C["hdb"][0], 372, color=_GREY, family=family)
+    _arrow(p, C["proxy"][0], 192, C["siem"][0], 470, color=_PURPLE, family=family, dashed=True, label="logs")
+    _arrow(p, C["suri"][0], 188, C["siem"][0] + 180, 470, color=_PURPLE, family=family, dashed=True)
+
+    for _k, bx, by, bw, bh, t, s, fill, bd in specs:
+        _box(p, bx, by, bw, bh, t, s, fill=fill, border=bd, text=bd, family=family)
     p.end()
     return img
 
@@ -131,20 +145,24 @@ def request_flow_diagram(family: str = "Serif") -> QImage:
     p.setPen(QColor(_INK))
     p.drawText(20, 24, "Request routing")
 
-    req = _box(p, 30, 110, 150, 60, "Client request", family=family, fill="#eef2f7")
-    ana = _box(p, 250, 105, 200, 70, "Reverse proxy",
-               "score the request, then decide", fill="#e7effa", border=_BLUE, text=_BLUE, family=family)
-    dec = _box(p, 520, 105, 170, 70, "Route?",
-               "CVE match / high score / bad IP / sticky", fill="#fff7e6", border=_ORANGE, text=_ORANGE, family=family)
-    hp = _box(p, 750, 40, 150, 56, "Honeypot", "decoy shop",
-              fill="#f8e7e7", border=_RED, text=_RED, family=family)
-    pr = _box(p, 750, 180, 150, 56, "Production", "real shop",
-              fill="#e8f3ea", border=_GREEN, text=_GREEN, family=family)
+    specs = [
+        ("req", 30, 110, 150, 60, "Client request", "", "#eef2f7", _INK),
+        ("ana", 250, 105, 200, 70, "Reverse proxy",
+         "score the request, then decide", "#e7effa", _BLUE),
+        ("dec", 520, 105, 170, 70, "Route?",
+         "CVE match / high score / bad IP / sticky", "#fff7e6", _ORANGE),
+        ("hp", 750, 40, 150, 56, "Honeypot", "decoy shop", "#f8e7e7", _RED),
+        ("pr", 750, 180, 150, 56, "Production", "real shop", "#e8f3ea", _GREEN),
+    ]
+    C = {s[0]: (s[1] + s[3] / 2, s[2] + s[4] / 2) for s in specs}
 
-    _arrow(p, req[0] + 75, req[1], 250, ana[1], family=family)
-    _arrow(p, ana[0] + 100, ana[1], 520, dec[1], family=family)
-    _arrow(p, dec[0] + 85, dec[1] - 15, hp[0] - 75, hp[1] + 5, color=_RED, family=family, label="any trigger")
-    _arrow(p, dec[0] + 85, dec[1] + 15, pr[0] - 75, pr[1] - 5, color=_GREEN, family=family, label="otherwise")
+    _arrow(p, C["req"][0] + 75, C["req"][1], 250, C["ana"][1], family=family)
+    _arrow(p, C["ana"][0] + 100, C["ana"][1], 520, C["dec"][1], family=family)
+    _arrow(p, C["dec"][0] + 85, C["dec"][1] - 15, C["hp"][0] - 75, C["hp"][1] + 5, color=_RED, family=family, label="any trigger")
+    _arrow(p, C["dec"][0] + 85, C["dec"][1] + 15, C["pr"][0] - 75, C["pr"][1] - 5, color=_GREEN, family=family, label="otherwise")
+
+    for _k, bx, by, bw, bh, t, s, fill, bd in specs:
+        _box(p, bx, by, bw, bh, t, s, fill=fill, border=bd, text=bd, family=family)
     p.end()
     return img
 
@@ -163,22 +181,27 @@ def scoring_pipeline_diagram(family: str = "Serif") -> QImage:
         ("IP reputation", "Suricata, decayed", "#fdf1e3", _ORANGE),
         ("Accumulate + decay", "session peak", "#eef0f2", _GREY),
     ]
-    x = 24
     w = 158
     gap = 14
     y = 90
     h = 74
-    prev = None
+    # Lay out the pipeline stages + the final "Route" box left to right.
+    boxes = []  # (x, w2, title, subtitle, fill, border)
+    x = 24
     for title, sub, fill, border in stages:
-        c = _box(p, x, y, w, h, title, sub, fill=fill, border=border, text=border, family=family)
-        if prev is not None:
-            _arrow(p, prev[0] + w / 2, y + h / 2, x, y + h / 2, family=family)
-        prev = (x, c[1])
+        boxes.append((x, w, title, sub, fill, border))
         x += w + gap
-    # final -> route
-    route = _box(p, x, y, 120, h, "Route", "prod / honeypot",
-                 fill="#e8f3ea", border=_GREEN, text=_GREEN, family=family)
-    _arrow(p, prev[0] + w / 2, y + h / 2, x, y + h / 2, family=family)
+    boxes.append((x, 120, "Route", "prod / honeypot", "#e8f3ea", _GREEN))
+
+    # Arrows first (behind), connecting consecutive box centres.
+    for i in range(len(boxes) - 1):
+        bx, bw, *_ = boxes[i]
+        nx, *_ = boxes[i + 1]
+        _arrow(p, bx + bw, y + h / 2, nx, y + h / 2, family=family)
+    # Boxes on top.
+    for bx, bw, title, sub, fill, border in boxes:
+        _box(p, bx, y, bw, h, title, sub, fill=fill, border=border, text=border, family=family)
+
     p.setFont(QFont(family, 8))
     p.setPen(QColor(_GREY))
     p.drawText(24, y + h + 34,
