@@ -38,6 +38,11 @@ from core.exploit_report_pdf import _report_font_family, _FONT_CSS_STACK, _esc, 
 from core import diagrams
 
 SAMPLE_INTERVAL_S = 2.0
+# When the fast cgroup sampler is available (local host), sample resources this
+# often (sub-second) for a dense usage curve, and only do the heavier
+# `docker compose ps` status/event check this often (it's ~0.5s per call).
+FAST_SAMPLE_INTERVAL_S = 0.25
+STATUS_CHECK_INTERVAL_S = 1.5
 START_MAX_SECONDS = 150.0
 STOP_MAX_SECONDS = 90.0
 # Keep sampling this long after the stack first looks settled, to catch the
@@ -185,6 +190,25 @@ class ServicesReportWorker(QThread):
                 self._grab_health("before")))
             captured_before = True
 
+            # Fast (sub-second) per-container sampling from cgroups on a local
+            # host; falls back to ~2s docker-stats sampling for a remote target.
+            sampler = rs.FastSampler(self._target)
+            fast = sampler.available
+            sample_interval = FAST_SAMPLE_INTERVAL_S if fast else SAMPLE_INTERVAL_S
+            if fast:
+                svc_to_cid = sampler.cids
+                sampler.sample()  # prime CPU% delta baseline
+            last_status_check = -1e9
+
+            def _container_snap() -> dict:
+                if fast:
+                    return {svc: (cpu, mem) for svc, cpu, mem in sampler.sample()}
+                try:
+                    live = rs.collect_live(self._target)
+                except Exception:  # noqa: BLE001 -- best-effort
+                    return {}
+                return {r.service: (r.cpu_percent, r.mem_used_bytes) for r in live}
+
             while not self._cancel:
                 elapsed = time.time() - start
                 if elapsed > self._max_seconds:
@@ -193,6 +217,7 @@ class ServicesReportWorker(QThread):
                     f"Recording {op} ({int(elapsed)}s)",
                     int(min(0.95, elapsed / self._max_seconds) * 1000), 1000)
 
+                # --- host CPU/RAM + per-container: every (sub-second) tick ---
                 sysread = _read_system(self._target)
                 if sysread:
                     ct, ci, mt, ma = sysread
@@ -205,56 +230,65 @@ class ServicesReportWorker(QThread):
                     prev_cpu = (ct, ci)
                     ram_pct = 100.0 * (1.0 - ma / mt) if mt else 0.0
                     if cpu_pct is not None:
-                        data.sys_samples.append((round(elapsed, 1), round(cpu_pct, 1), round(ram_pct, 1)))
+                        data.sys_samples.append((round(elapsed, 2), round(cpu_pct, 1), round(ram_pct, 1)))
 
-                try:
-                    live = rs.collect_live(self._target)
-                except Exception:  # noqa: BLE001 -- best-effort
-                    live = []
-                if live:
-                    snap = {r.service: (r.cpu_percent, r.mem_used_bytes) for r in live}
-                    data.container_samples.append((round(elapsed, 1), snap))
+                snap = _container_snap()
+                if snap:
+                    data.container_samples.append((round(elapsed, 2), snap))
 
-                status = self._status_map()
-                _detect_events(prev_status, status, elapsed, data.events)
-                prev_status = status
+                # --- status / events / stage transitions: throttled (ps is
+                # ~0.5s, so it must not run every sub-second tick) ---
+                if time.time() - last_status_check >= STATUS_CHECK_INTERVAL_S:
+                    last_status_check = time.time()
+                    status = self._status_map()
+                    _detect_events(prev_status, status, elapsed, data.events)
+                    was_status = prev_status
+                    prev_status = status
+                    ps = self._target.ps()
+                    all_ready = bool(ps) and all(is_ready(c) for c in ps)
 
-                ps = self._target.ps()
-                all_ready = bool(ps) and all(is_ready(c) for c in ps)
-
-                if op == "start":
-                    if not captured_mid and status:
-                        data.stage_shots.append((
-                            "Starting: containers coming up", self._grab_health("mid")))
-                        captured_mid = True
-                    if all_ready and settled_at is None:
-                        settled_at = time.time()
-                        if not captured_end:
+                    if op == "start":
+                        if not captured_mid and status:
                             data.stage_shots.append((
-                                "All containers healthy", self._grab_health("end")))
-                            captured_end = True
-                    if settled_at is not None and time.time() - settled_at > SETTLE_TAIL_S:
-                        break
-                else:  # stop
-                    if not captured_mid and (len(status) < len(prev_status) or not status):
-                        data.stage_shots.append((
-                            "Stopping: containers going down", self._grab_health("mid")))
-                        captured_mid = True
-                    # Keep recording until the `docker compose down` process
-                    # actually exits (signalled via notify_operation_finished),
-                    # not merely until `ps` looks empty -- down still has to tear
-                    # down networks/volumes after the last container is gone.
-                    if self._op_done.is_set():
-                        if not captured_end:
+                                "Starting: containers coming up", self._grab_health("mid")))
+                            captured_mid = True
+                        if all_ready and settled_at is None:
+                            settled_at = time.time()
+                            if not captured_end:
+                                data.stage_shots.append((
+                                    "All containers healthy", self._grab_health("end")))
+                                captured_end = True
+                        if settled_at is not None and time.time() - settled_at > SETTLE_TAIL_S:
+                            break
+                    else:  # stop
+                        if not captured_mid and (len(status) < len(was_status) or not status):
                             data.stage_shots.append((
-                                "Stopped: down command finished", self._grab_health("end")))
-                            captured_end = True
-                        data.exit_code = self._op_exit_code
-                        break
+                                "Stopping: containers going down", self._grab_health("mid")))
+                            captured_mid = True
+                        # Keep recording until the `docker compose down` process
+                        # actually exits (notify_operation_finished), not merely
+                        # until `ps` looks empty -- down still tears down networks
+                        # after the last container is gone.
+                        if self._op_done.is_set():
+                            if not captured_end:
+                                data.stage_shots.append((
+                                    "Stopped: down command finished", self._grab_health("end")))
+                                captured_end = True
+                            data.exit_code = self._op_exit_code
+                            break
 
-                deadline = time.time() + SAMPLE_INTERVAL_S
+                # Also honour a stop's completion promptly between status checks.
+                if op == "stop" and self._op_done.is_set():
+                    if not captured_end:
+                        data.stage_shots.append((
+                            "Stopped: down command finished", self._grab_health("end")))
+                        captured_end = True
+                    data.exit_code = self._op_exit_code
+                    break
+
+                deadline = time.time() + sample_interval
                 while time.time() < deadline and not self._cancel:
-                    time.sleep(min(0.4, max(0.0, deadline - time.time())))
+                    time.sleep(min(0.1, max(0.0, deadline - time.time())))
 
             # Best-effort final "settled" shot if we never captured an end state.
             if not captured_end:
