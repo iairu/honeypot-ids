@@ -20,3 +20,24 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y lua5.1
       - name: Run suites
         run: ids/reverse_proxy_enhanced/lua/tests/run_all.sh lua5.1
+
+  dashboard:
+    name: Dashboard core tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          sparse-checkout: |
+            dashboard
+            ids/.env.example
+            ids/docker-compose.yml
+            siem/docker/.env.example
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Qt-free core modules only; stdlib unittest, no PyQt6 install needed.
+      - name: Run tests
+        working-directory: dashboard
+        run: python -m unittest discover -s tests -v
