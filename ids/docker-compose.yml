@@ -1725,6 +1725,10 @@ services:
       - ABUSEIPDB_BLACKLIST_ENABLED=${ABUSEIPDB_BLACKLIST_ENABLED:-false}
       - ABUSEIPDB_BLACKLIST_REFRESH_HOURS=${ABUSEIPDB_BLACKLIST_REFRESH_HOURS:-24}
       - INTERNAL_TEST_SECRET=${INTERNAL_TEST_SECRET:-}
+      # Threat decay: set THREAT_DECAY_ENABLED=false to make session/IP threat
+      # scores persist indefinitely (no decay); half-life tunes the fade rate.
+      - THREAT_DECAY_ENABLED=${THREAT_DECAY_ENABLED:-true}
+      - SCORE_DECAY_HALF_LIFE_SECONDS=${SCORE_DECAY_HALF_LIFE_SECONDS:-300}
       # - SESSION_MANAGER_URL=http://session_manager:3001
     # healthcheck:
     #   test: ["CMD", "curl", "-f", "http://localhost/nginx-health"]

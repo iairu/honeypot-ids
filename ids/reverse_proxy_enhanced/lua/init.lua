@@ -148,7 +148,18 @@ _G.config = {
         },
         max_threat_score = 100,
         honeypot_threshold = 80,  -- Raised from 50 to prevent false positives
-        score_decay_half_life_seconds = tonumber(os.getenv("SCORE_DECAY_HALF_LIFE_SECONDS")) or 300,
+        -- THREAT_DECAY_ENABLED=false turns threat decay OFF entirely: a
+        -- half-life of 0 makes every decay path (router_rules/suricata_rules
+        -- decayed_score, decay_policy.decay) return the stored peak unchanged,
+        -- so a session's / IP's threat score persists indefinitely once earned.
+        -- Default true, using SCORE_DECAY_HALF_LIFE_SECONDS (or 300).
+        score_decay_half_life_seconds = (function()
+            local enabled = (os.getenv("THREAT_DECAY_ENABLED") or "true"):lower()
+            if enabled == "false" or enabled == "0" or enabled == "no" then
+                return 0
+            end
+            return tonumber(os.getenv("SCORE_DECAY_HALF_LIFE_SECONDS")) or 300
+        end)(),
         -- Escalation of the decay above (see lua/decay_policy.lua): decay is
         -- slowed based on how much abuse a source has actually committed,
         -- tracked as an uncapped `offenses` count (bumped once per recorded
