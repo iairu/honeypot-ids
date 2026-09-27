@@ -3,6 +3,14 @@ sources:
     type: vector
     version: "2"
     address: 0.0.0.0:6000
+    # End-to-end acknowledgements: don't ack a batch back to the edge shipper
+    # until it has been durably handled downstream (Elasticsearch accepted it).
+    # Without this, when the enrich->ES pipeline applies backpressure the gRPC
+    # PushEvents send into the topology is cancelled and the whole 1000-event
+    # batch is DROPPED ("Source send cancelled."); with it, the batch is NACKed
+    # instead and the shipper simply retries it, so nothing is lost.
+    acknowledgements:
+      enabled: true
     tls:
       enabled: true
       crt_file: /usr/share/vector/certs/vector/vector.crt
@@ -206,6 +214,16 @@ sinks:
       password: "${ELASTIC_PASSWORD}"
     tls:
       ca_file: /usr/share/vector/certs/ca/ca.crt
+    # Absorb Elasticsearch slowdowns/bursts in a larger in-memory buffer that
+    # applies backpressure (block) rather than dropping, so a transient ES
+    # slowdown doesn't cascade into cancelled source sends upstream.
+    buffer:
+      type: memory
+      max_events: 10000
+      when_full: block
+    # Keep retrying rejected bulk requests instead of giving up on the batch.
+    request:
+      retry_attempts: 20
 
 api:
   enabled: true
