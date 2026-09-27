@@ -551,7 +551,7 @@
 			"width": 960,
 			"height": 220,
 			"color": "1",
-			"text": "## \u26a0\ufe0f Self-incriminating deception artifacts -- NOT fixed\nTLS cert `O=HoneypotOrg`, cookie literally named `HONEYPOT_SESSION` -- real, tracked values a blind pentest agent used to confirm the deception (\u00a75.2/\u00a79). A genuine open hardening gap, not a deliberate honeypot design choice."
+			"text": "## Self-incriminating deception artifacts -- fixed\nThe blind pentest (\u00a75.2/\u00a79) confirmed the deception from the TLS cert's `O=HoneypotOrg`, a cookie named `HONEYPOT_SESSION`, and a web-reachable `wp-content/sql-routing.log`. The cert subject is now `CN=localhost`, the cookie is `SERVERID`, and the log is deleted (and scrubbed from pool volumes by `init_setup`)."
 		},
 		{
 			"id": "d-hard-ipv6",
