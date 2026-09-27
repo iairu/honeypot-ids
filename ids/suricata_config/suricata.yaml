@@ -91,6 +91,13 @@ outputs:
       filename: eve.json
       community-id: true
       community-id-seed: 0
+      # Log ONLY alerts (+ small protocol anomalies). The reverse proxy's
+      # init_worker.parse_suricata_logs() consumes ONLY event_type=="alert"
+      # from this file; flow/netflow/http/dns/tls/stats records are pure noise
+      # here and "vastly outnumber alerts" -- logging them all is exactly what
+      # let eve.json balloon to ~20 GB and fill the disk. Keeping this to
+      # alerts (rate-limited by real attack traffic) keeps eve.json small; the
+      # log_capper sidecar (docker-compose.yml) is the hard backstop.
       types:
         - alert:
             tagged-packets: yes
@@ -100,23 +107,6 @@ outputs:
               decode: yes
               stream: yes
               applayer: yes
-        - http:
-            extended: yes
-        - dns:
-            query: yes
-            answer: yes
-        - tls:
-            extended: yes
-        - files:
-            force-magic: no
-        - smtp:
-        - ssh:
-        - stats:
-            totals: yes
-            threads: no
-            deltas: no
-        - flow
-        - netflow
 
   # NOTE: unified2-alert output was removed – it is not supported in Suricata 7.x
   # and causes a fatal startup error. The eve-log output above replaces it.

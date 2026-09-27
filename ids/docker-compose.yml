@@ -1,4 +1,12 @@
 name: honeypot-ids-system-v1
+# Cap every container's json-file log so a runaway stdout log can't fill
+# the disk (see also suricata.yaml + the log_capper sidecar for FILE logs).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # ---------------------------------------------------------------------------
   # Initialization service
@@ -14,6 +22,7 @@ services:
   #   diverge as individual attackers interact with their assigned instance.
   # ---------------------------------------------------------------------------
   init_setup:
+    logging: *default-logging
     image: alpine:latest
     volumes:
       - ./production_eshop_files:/source_files:ro
@@ -164,6 +173,7 @@ services:
   #   02_pool_tracking.sql        – creates honeynet pooling metadata tables
   # ---------------------------------------------------------------------------
   honeypot_db_migration:
+    logging: *default-logging
     image: mysql:5.7
     depends_on:
       init_setup:
@@ -363,6 +373,7 @@ services:
   # honeypot_pool_replicating:<N> flag pool_router.lua's failover consults.
   # ---------------------------------------------------------------------------
   honeypot_content_sync:
+    logging: *default-logging
     image: mysql:5.7
     depends_on:
       honeypot_db_migration:
@@ -417,6 +428,7 @@ services:
 
   # Production WordPress database
   production_database:
+    logging: *default-logging
     image: mysql:5.7
     depends_on:
       init_setup:
@@ -471,6 +483,7 @@ services:
 
   # Production WordPress instance (clean, secure)
   production_eshop:
+    logging: *default-logging
     image: wordpress:6.8.3-php8.1
     depends_on:
       production_database:
@@ -628,6 +641,7 @@ services:
   # this container does one job and exits, it never serves live traffic.
   # ---------------------------------------------------------------------------
   production_db_seed:
+    logging: *default-logging
     image: wordpress:cli-php8.1
     user: root
     depends_on:
@@ -692,6 +706,7 @@ services:
     pids_limit: 100
 
   honeypot_db_seed_1:
+    logging: *default-logging
     image: wordpress:cli-php8.1
     user: root
     depends_on:
@@ -754,6 +769,7 @@ services:
     pids_limit: 100
 
   honeypot_db_seed_2:
+    logging: *default-logging
     image: wordpress:cli-php8.1
     user: root
     depends_on:
@@ -813,6 +829,7 @@ services:
     pids_limit: 100
 
   honeypot_db_seed_3:
+    logging: *default-logging
     image: wordpress:cli-php8.1
     user: root
     depends_on:
@@ -881,6 +898,7 @@ services:
 
   # Pool 1 – uses the original honeypot_database_data directory (backward compat)
   honeypot_database_1:
+    logging: *default-logging
     image: mysql:5.7
     depends_on:
       init_setup:
@@ -939,6 +957,7 @@ services:
 
   # Pool 2 – independent database instance
   honeypot_database_2:
+    logging: *default-logging
     image: mysql:5.7
     depends_on:
       init_setup:
@@ -984,6 +1003,7 @@ services:
 
   # Pool 3 – independent database instance
   honeypot_database_3:
+    logging: *default-logging
     image: mysql:5.7
     depends_on:
       init_setup:
@@ -1043,6 +1063,7 @@ services:
 
   # Pool 1 – uses the original honeypot_eshop_files directory (backward compat)
   honeypot_eshop_1:
+    logging: *default-logging
     image: wordpress:6.8.3-php8.1
     depends_on:
       honeypot_database_1:
@@ -1158,6 +1179,7 @@ services:
 
   # Pool 2 – isolated WordPress instance
   honeypot_eshop_2:
+    logging: *default-logging
     image: wordpress:6.8.3-php8.1
     depends_on:
       honeypot_database_2:
@@ -1243,6 +1265,7 @@ services:
 
   # Pool 3 – isolated WordPress instance
   honeypot_eshop_3:
+    logging: *default-logging
     image: wordpress:6.8.3-php8.1
     depends_on:
       honeypot_database_3:
@@ -1328,6 +1351,7 @@ services:
 
   # Redis for session management and threat intelligence
   session_store:
+    logging: *default-logging
     # KNOWN, UNFIXED WARNING: logs "WARNING Memory overcommit must be
     # enabled!" on every start. This is a HOST-level kernel setting
     # (vm.overcommit_memory, not namespaced per-container -- docker-compose
@@ -1375,6 +1399,7 @@ services:
   # network attachment point with visibility into honeynet traffic.
   # ---------------------------------------------------------------------------
   suricata_ids:
+    logging: *default-logging
     image: jasonish/suricata:latest
     depends_on:
       init_setup:
@@ -1517,6 +1542,7 @@ services:
   # and is limited in memory and CPU to avoid interfering with live traffic.
   # ---------------------------------------------------------------------------
   backup_service:
+    logging: *default-logging
     image: alpine:latest
     depends_on:
       production_database:
@@ -1570,6 +1596,7 @@ services:
     restart: unless-stopped
 
   vector_outbound:
+    logging: *default-logging
     image: timberio/vector:0.43.0-debian
     profiles:
       - elk
@@ -1634,6 +1661,7 @@ services:
   # traffic so that pool_router.lua never routes to a pool that is still starting.
   # ---------------------------------------------------------------------------
   reverse_proxy:
+    logging: *default-logging
     build:
       context: ./reverse_proxy_enhanced
       dockerfile: Dockerfile
@@ -1834,6 +1862,45 @@ services:
   #     timeout: 10s
   #     retries: 2
   #     start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # log_capper -- hard cap on FILE logs so no single log can fill the disk.
+  # ---------------------------------------------------------------------------
+  # The x-logging json-file limits above only bound each container's STDOUT
+  # log. Logs written to FILES in the bind-mounted log dirs -- Suricata's
+  # eve.json/fast.log, nginx's access/security/error.log, Vector's own logs --
+  # are NOT covered by that, and a runaway 20 GB eve.json is exactly what
+  # filled the disk. This tiny sidecar truncates any *.log/*.json under the
+  # mounted log dirs that grows past LOG_CAP_MB, every LOG_CAP_INTERVAL
+  # seconds, IN PLACE (`: > file`) so the writer's open fd keeps working.
+  # Recent history is still shipped to Elasticsearch by Vector, so truncating
+  # the local copy loses nothing important.
+  log_capper:
+    image: alpine:latest
+    container_name: log_capper
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      LOG_CAP_MB: "50"
+      LOG_CAP_INTERVAL: "20"
+    volumes:
+      - ./suricata_logs:/logs/suricata
+      - ./nginx_logs:/logs/nginx
+      - ./vector/logs:/logs/vector
+    command:
+      - sh
+      - -c
+      - |
+        cap_kb=$$(( $${LOG_CAP_MB} * 1024 ))
+        echo "log_capper: capping *.log/*.json over $${LOG_CAP_MB}MB (>$${cap_kb}k) every $${LOG_CAP_INTERVAL}s under /logs"
+        while true; do
+          find /logs -type f \( -name '*.log' -o -name '*.json' \) -size +$${cap_kb}k 2>/dev/null | while IFS= read -r f; do
+            : > "$$f" && echo "log_capper: truncated $$f (exceeded $${LOG_CAP_MB}MB)"
+          done
+          sleep "$${LOG_CAP_INTERVAL}"
+        done
+    networks:
+      - monitoring_network
 
 networks:
   # DEAD CODE: setup_network is defined but never assigned to any service.
