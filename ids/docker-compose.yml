@@ -23,7 +23,9 @@ services:
   # ---------------------------------------------------------------------------
   init_setup:
     logging: *default-logging
-    image: alpine:latest
+    # alpine + rsync/openssl, built once (see images/init_setup/Dockerfile)
+    # rather than `apk add`ed at the top of the command on every boot.
+    build: ./images/init_setup
     volumes:
       - ./production_eshop_files:/source_files:ro
       - ./production_database_data:/source_db:ro
@@ -43,8 +45,6 @@ services:
       sh -c "
       set -x
       echo 'Starting initialization setup (honeynet pool mode)...'
-
-      apk add --no-cache rsync openssl
 
       # -----------------------------------------------------------------------
       # Helper: idempotently SYNC source code files into a destination
@@ -374,16 +374,16 @@ services:
   # for the full non-destructive apply strategy and the exploit-gating
   # coordination with pool_router.lua's is_pool_healthy().
   #
-  # image: mysql:5.7 purely for its mysql/mysqldump client tools (same image
-  # family as every other DB-touching service here); it never runs mysqld
-  # itself. redis-cli isn't present on that image, so it's installed via yum
-  # at container start (same "install what you need at startup" pattern
-  # init_setup already uses with `apk add`), used to set/clear the
-  # honeypot_pool_replicating:<N> flag pool_router.lua's failover consults.
+  # Built from mysql:5.7 purely for its mysql/mysqldump client tools (same
+  # image family as every other DB-touching service here); it never runs
+  # mysqld itself. redis-cli isn't present on that image, so
+  # images/content_sync/Dockerfile adds it once at build time; it's used to
+  # set/clear the honeypot_pool_replicating:<N> flag pool_router.lua's
+  # failover consults.
   # ---------------------------------------------------------------------------
   honeypot_content_sync:
     logging: *default-logging
-    image: mysql:5.7
+    build: ./images/content_sync
     depends_on:
       honeypot_db_migration:
         condition: service_completed_successfully
@@ -424,11 +424,7 @@ services:
       - REDIS_HOST=session_store
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REPLICATION_INTERVAL_SECONDS=${REPLICATION_INTERVAL_SECONDS:-300}
-    command: >
-      bash -c "
-      yum install -y redis >/dev/null 2>&1 || echo 'WARNING: failed to install redis-cli via yum -- replication flag gating will be skipped this run';
-      exec bash /replicate_content_to_honeypot.sh
-      "
+    command: ["bash", "/replicate_content_to_honeypot.sh"]
     restart: unless-stopped
     networks:
       - production_network
@@ -1552,7 +1548,9 @@ services:
   # ---------------------------------------------------------------------------
   backup_service:
     logging: *default-logging
-    image: alpine:latest
+    # alpine + mysql-client, built once (see images/backup_service/Dockerfile)
+    # rather than `apk add`ed on every container start.
+    build: ./images/backup_service
     depends_on:
       production_database:
         condition: service_healthy
@@ -1573,7 +1571,6 @@ services:
       - BACKUP_RETENTION_DAYS=7
     command: |
       sh -c "
-        apk add --no-cache mysql-client > /dev/null 2>&1
         echo 'Backup service started. First backup in 5 minutes...'
         sleep 300
         while true; do
