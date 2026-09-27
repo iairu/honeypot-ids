@@ -120,6 +120,10 @@ services:
           sync_files /source_files /dest_files_\$$N \"honeypot pool-\$$N WordPress files\"
           rm -f /dest_files_\$$N/wp-content/mu-plugins/production-hardening.php
           echo \"  Removed production-hardening.php from pool-\$$N (honeypot retains attack surface)\"
+          # rsync never deletes, so files retired from production_eshop_files/
+          # would live on in the pools. Remove them explicitly. These two
+          # (SQL-proxy leftovers) named the production/honeypot split.
+          rm -f /dest_files_\$$N/wp-content/sql-routing.log /dest_files_\$$N/wp-content/db.php.backup
         ) &
       done
       wait
