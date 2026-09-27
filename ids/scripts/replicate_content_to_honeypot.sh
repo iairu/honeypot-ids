@@ -104,7 +104,7 @@ pool_host() {
 # problem -- and must never be allowed to abort the whole sync cycle over a
 # transient Redis hiccup.
 # --no-auth-warning deliberately omitted: this container's `yum install
-# redis` (see docker-compose.yml) pulls in whatever redis-cli happens to be
+# redis` (see images/content_sync/Dockerfile) pulls in whatever redis-cli happens to be
 # in this EL7-based image's default repos -- redis-cli 3.2.12, from 2016,
 # predating --no-auth-warning (added in Redis 5.0). Confirmed live that an
 # unrecognized flag is a FATAL parse error for redis-cli, not a warning --

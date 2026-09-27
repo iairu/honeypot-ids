@@ -44,6 +44,14 @@ services:
       interval: 10s
       timeout: 10s
       retries: 120
+      # Probe every 2s (not every `interval`) until the FIRST success during
+      # start_period, then fall back to `interval`. Without this, the first
+      # probe only runs a full `interval` after start, so init-password,
+      # kibana and vector_inbound each sat idle for up to 10s after
+      # Elasticsearch was already answering. Same on kibana below.
+      # Needs Docker Engine 25+ (ids/docker-compose.yml already relies on it).
+      start_period: 300s
+      start_interval: 2s
     logging:
       driver: json-file
       options:
@@ -59,7 +67,12 @@ services:
     entrypoint: >
       /bin/sh -c '
         echo "Setting the kibana_system password...";
-        until curl --cacert /certs/ca/ca.crt -X POST -u elastic:${ELASTIC_PASSWORD} -H "Content-Type: application/json" \
+        # --fail-with-body: without it curl exits 0 on an HTTP error, so a
+        # 503 from Elasticsearch (its .security index is often not
+        # allocated yet in the first seconds after the healthcheck passes)
+        # ended this loop as "success" with the password never set, and
+        # kibana then sat unhealthy indefinitely, unable to authenticate.
+        until curl -sS --fail-with-body --cacert /certs/ca/ca.crt -X POST -u elastic:${ELASTIC_PASSWORD} -H "Content-Type: application/json" \
           "https://es01:9200/_security/user/kibana_system/_password" -d "{\"password\":\"${KIBANA_PASSWORD}\"}";
           do echo "Waiting for Elasticsearch to be ready...";
           sleep 5;
@@ -128,6 +141,9 @@ services:
       interval: 10s
       timeout: 10s
       retries: 1200
+      # See es01's healthcheck comment: gates kibana_dashboards_setup.
+      start_period: 300s
+      start_interval: 2s
     depends_on:
       es01:
         condition: service_healthy
@@ -217,11 +233,18 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
+      start_period: 60s
+      start_interval: 2s
+    # Only needs Elasticsearch (its sole sink) plus init-password's
+    # single-node index template, which must exist before the first
+    # honeypot-* index is created. It used to also wait for kibana to be
+    # healthy, which Vector never talks to, so log ingestion from the edge
+    # host only began after Kibana's own (much slower) startup finished.
     depends_on:
       es01:
         condition: service_healthy
-      kibana:
-        condition: service_healthy
+      init-password:
+        condition: service_completed_successfully
     volumes:
       - ../vector/certs:/usr/share/vector/certs:ro
       - ../vector/vector.yaml:/etc/vector/vector.yaml:ro
