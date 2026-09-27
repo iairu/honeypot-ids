@@ -148,7 +148,9 @@ _G.config = {
     threat = {
         ip_whitelist = {
             "127.0.0.1/32",
+            "::1/128",          -- IPv6 loopback
             "100.64.0.0/10",    -- Tailscale
+            "fd7a:115c:a1e0::/48", -- Tailscale IPv6
             "10.0.0.0/8",       -- Private networks
         },
         max_threat_score = 100,
@@ -478,54 +480,15 @@ _G.config = {
 -- ---------------------------------------------------------------------------
 _G.utils = {}
 
---- Check whether an IP address falls within any whitelisted range.
+--- Check whether an IP address (IPv4 or IPv6) falls within any range in
+--- _G.config.threat.ip_whitelist. Real bit-level CIDR matching, including
+--- non-octet-aligned prefixes like /10 and IPv4-mapped IPv6 clients; see
+--- ip_rules.lua and tests/test_ip_rules.lua.
 ---
---- Uses a prefix-length-aware string comparison rather than a full CIDR
---- library to keep the dependency footprint minimal.  Sufficient for the
---- small, well-structured whitelist defined in _G.config.threat.ip_whitelist.
----
---- LIMITATION: The prefix-length field is parsed but the actual bit-mask
---- comparison is approximated by string prefix matching on the dotted-decimal
---- representation.  This works correctly for /8, /16, /24, and /32 masks
---- (which cover all entries in the default whitelist) but may produce wrong
---- results for non-octet-aligned prefixes such as /10 on a /12 boundary.
---- A production deployment with complex CIDR requirements should replace this
---- with a proper CIDR library.
----
---- @param  ip  string  IPv4 address in dotted-decimal notation.
+--- @param  ip  string  Client address as nginx reports it ($remote_addr).
 --- @return boolean  true if the IP is whitelisted.
 function _G.utils.is_ip_whitelisted(ip)
-    local whitelisted_ranges = _G.config.threat.ip_whitelist
-    local bit = require("bit")
-    
-    local function ip2num(ip_str)
-        if not ip_str then return nil end
-        local a, b, c, d = ip_str:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
-        if not a then return nil end
-        return bit.bor(bit.lshift(tonumber(a), 24), bit.lshift(tonumber(b), 16), bit.lshift(tonumber(c), 8), tonumber(d))
-    end
-
-    local ip_num = ip2num(ip)
-    if not ip_num then return false end
-
-    for _, range in ipairs(whitelisted_ranges) do
-        if string.find(range, "/") then
-            local network, prefix = range:match("([^/]+)/(%d+)")
-            local net_num = ip2num(network)
-            prefix = tonumber(prefix)
-            if net_num and prefix then
-                local mask = bit.lshift(-1, 32 - prefix)
-                if bit.band(ip_num, mask) == bit.band(net_num, mask) then
-                    return true
-                end
-            end
-        else
-            if ip == range then
-                return true
-            end
-        end
-    end
-    return false
+    return require("ip_rules").in_any(ip, _G.config.threat.ip_whitelist)
 end
 
 --- URL-decode a string (percent-encoding and "+" as space).
