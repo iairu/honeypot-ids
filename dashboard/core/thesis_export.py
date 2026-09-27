@@ -450,12 +450,43 @@ def available_highlights() -> list[tuple[Highlight, str]]:
 _LANG_LABEL = {"py": "Python", "lua": "Lua", "php": "PHP", "sh": "shell", "text": ""}
 
 
+_ZWSP = "​"  # zero-width space: an invisible line-break opportunity
+
+
+def _soft_break(text: str, run: int = 18) -> str:
+    """Insert zero-width break opportunities so long code lines / curl commands
+    wrap instead of running off the page. QTextDocument only breaks a
+    white-space:pre-wrap block at spaces and at these zero-width spaces, so
+    without them a long unbroken token (a URL, an SQLi payload) would overflow.
+    Breaks are added after common delimiters and inside any long unbroken run."""
+    out: list[str] = []
+    since = 0
+    for ch in text:
+        out.append(ch)
+        if ch.isspace():
+            since = 0
+        elif ch in "/&?=,;:._-\"'":
+            out.append(_ZWSP)
+            since = 0
+        else:
+            since += 1
+            if since >= run:
+                out.append(_ZWSP)
+                since = 0
+    return "".join(out)
+
+
 def _code_block(code: str) -> str:
+    # white-space:pre-wrap keeps the code's own spacing/indentation but still
+    # wraps at spaces and the zero-width breaks _soft_break inserts, so nothing
+    # runs off the page. _soft_break is applied to the RAW code (before _esc, so
+    # the zero-width spaces never land inside an HTML entity).
+    body = _esc(_soft_break(code))
     return (
         '<table width="100%" cellspacing="0" cellpadding="6" '
         'style="background-color:#f5f5f2; border:1px solid #cccccc;"><tr><td>'
         '<pre style="font-family:\'DejaVu Sans Mono\',\'Courier New\',monospace; '
-        f'font-size:8pt; color:#1a1a1a;">{_esc(code)}</pre>'
+        f'font-size:8pt; color:#1a1a1a; white-space:pre-wrap;">{body}</pre>'
         '</td></tr></table>')
 
 
