@@ -1681,10 +1681,6 @@ services:
         condition: service_healthy
       session_store:
         condition: service_healthy
-      # DEAD CODE: session_manager was never implemented; dependency kept as
-      # a commented placeholder in case a future session manager service is added.
-      #session_manager:
-      #  condition: service_healthy
       # suricata_ids is optional - it can run but doesn't block other services
       # suricata_ids:
       #   condition: service_healthy
@@ -1734,143 +1730,12 @@ services:
       # scores persist indefinitely (no decay); half-life tunes the fade rate.
       - THREAT_DECAY_ENABLED=${THREAT_DECAY_ENABLED:-true}
       - SCORE_DECAY_HALF_LIFE_SECONDS=${SCORE_DECAY_HALF_LIFE_SECONDS:-300}
-      # - SESSION_MANAGER_URL=http://session_manager:3001
     # healthcheck:
     #   test: ["CMD", "curl", "-f", "http://localhost/nginx-health"]
     #   interval: 30s
     #   timeout: 10s
     #   retries: 3
     #   start_period: 30s
-
-  # DEAD CODE: traffic_mirror
-  # Purpose was to use socat to mirror UDP/TCP traffic to Suricata.
-  # This approach is superseded by Suricata's direct AF_PACKET capture mode
-  # which observes all traffic on the Docker bridge without a separate mirror.
-  # Kept as a reference for alternative traffic capture architectures.
-  # traffic_mirror:
-  #   image: alpine/socat:latest
-  #   depends_on:
-  #     reverse_proxy:
-  #       condition: service_healthy
-  #     suricata_ids:
-  #       condition: service_healthy
-  #   networks:
-  #     - monitoring_network
-  #     - ids_network
-  #   command: |
-  #     sh -c "
-  #       echo 'Starting traffic mirroring...'
-  #       socat -d -d UDP-LISTEN:514,reuseaddr,fork UDP:suricata_ids:514 &
-  #       socat -d -d TCP-LISTEN:9999,reuseaddr,fork TCP:suricata_ids:9999 &
-  #       echo 'Traffic mirroring started'
-  #       wait
-  #     "
-  #   healthcheck:
-  #     test: ["CMD", "netstat", "-ln", "|", "grep", "514"]
-  #     interval: 60s
-  #     timeout: 5s
-  #     retries: 3
-  #     start_period: 15s
-
-  # DEAD CODE: log_aggregator (Fluent Bit)
-  # Originally intended as an alternative log shipper. Superseded by the
-  # vector_outbound service which fulfils the same role (shipping Nginx + Suricata
-  # logs to the ELK SIEM). No fluent_bit_config/ directory exists in the
-  # project, so this service cannot be started without further work.
-  # log_aggregator:
-  #   image: fluent/fluent-bit:latest
-  #   depends_on:
-  #     suricata_ids:
-  #       condition: service_healthy
-  #     reverse_proxy:
-  #       condition: service_healthy
-  #   volumes:
-  #     - ./fluent_bit_config:/fluent-bit/etc
-  #     - ./suricata_logs:/var/log/suricata:ro
-  #     - ./nginx_logs:/var/log/nginx:ro
-  #   networks:
-  #     - monitoring_network
-  #   healthcheck:
-  #     test: ["CMD", "pgrep", "fluent-bit"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-  #     start_period: 20s
-
-  # DEAD CODE: threat_intel
-  # Intended to periodically update threat intelligence data in Redis.
-  # The ./threat_intelligence/ build context directory does not exist in the
-  # project, so this service cannot be built. The threat_intel_data named
-  # volume (below) is referenced only by this service. The Lua layer
-  # (init_worker.lua) handles threat scoring internally via Redis directly
-  # without needing this external updater.
-  # threat_intel:
-  #   build:
-  #     context: ./threat_intelligence
-  #     dockerfile: Dockerfile
-  #   depends_on:
-  #     session_store:
-  #       condition: service_healthy
-  #   environment:
-  #     - REDIS_HOST=session_store
-  #     - REDIS_PASSWORD=${REDIS_PASSWORD}
-  #     - UPDATE_INTERVAL=3600
-  #   volumes:
-  #     - ./threat_intel_data:/data
-  #   networks:
-  #     - session_network
-  #   restart: unless-stopped
-  #   healthcheck:
-  #     test: ["CMD", "pgrep", "-f", "threat"]
-  #     interval: 60s
-  #     timeout: 10s
-  #     retries: 3
-  #     start_period: 30s
-
-  # DEAD CODE: file_sync
-  # Originally designed to periodically rsync WordPress files from production
-  # to the honeypot. This approach was superseded by the init_setup service
-  # which performs a one-time copy of production data into all three honeypot
-  # pool directories at startup. Ongoing sync is intentionally NOT done so
-  # each pool's state diverges as attackers interact with it (this is the
-  # desired honeypot behavior). Additionally, the referenced `honeypot_eshop`
-  # service no longer exists under that name (now honeypot_eshop_1/2/3).
-  # file_sync:
-  #   image: alpine:latest
-  #   depends_on:
-  #     production_eshop:
-  #       condition: service_healthy
-  #     honeypot_eshop:
-  #       condition: service_healthy
-  #   volumes:
-  #     - ./production_eshop_files:/source_files:ro
-  #     - ./production_database_data:/source_db:ro
-  #     - ./honeypot_eshop_files:/dest_files
-  #     - ./honeypot_database_data:/dest_db
-  #   command: |
-  #     sh -c "
-  #       echo 'Starting periodic file synchronization service...'
-  #       while true; do
-  #         echo 'Checking for file updates...'
-  #         
-  #         # Sync WordPress files if production has changes
-  #         if [ -d '/source_files' ] && [ -n \"\$$(find /source_files -mindepth 1 -maxdepth 1)\" ]; then
-  #           rsync -av --delete /source_files/ /dest_files/ || echo 'File sync failed'
-  #         fi
-  #         
-  #         # Sleep for 5 minutes before next sync
-  #         sleep 300
-  #       done
-  #     "
-  #   networks:
-  #     - monitoring_network
-  #   restart: unless-stopped
-  #   healthcheck:
-  #     test: ["CMD", "pgrep", "-f", "rsync", "||", "echo", "sync_service_running"]
-  #     interval: 300s
-  #     timeout: 10s
-  #     retries: 2
-  #     start_period: 30s
 
   # ---------------------------------------------------------------------------
   # log_capper -- hard cap on FILE logs so no single log can fill the disk.
@@ -1912,13 +1777,6 @@ services:
       - monitoring_network
 
 networks:
-  # DEAD CODE: setup_network is defined but never assigned to any service.
-  # It was likely a placeholder for the init_setup container, which now runs
-  # without an explicit network assignment (uses the default bridge).
-  # Removing it would be safe; retained here to avoid breaking any external
-  # tooling that may reference it by name.
-  setup_network:
-    driver: bridge
   production_network:
     driver: bridge
     ipam:
@@ -1969,8 +1827,6 @@ volumes:
   redis_data:
     driver: local
   suricata_logs:
-    driver: local
-  threat_intel_data:
     driver: local
   nginx_logs:
     driver: local
