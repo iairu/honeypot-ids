@@ -145,10 +145,15 @@ services:
       # -----------------------------------------------------------------------
       echo 'Generating SSL certificates...'
 
+      # Subject is deliberately bare (CN only): the old O=HoneypotOrg
+      # gave the deception away to the blind pentest. Existing certs are
+      # kept, so delete ssl_certificates/server.* (or use the dashboard
+      # Certificates page) to pick this up. Keep in sync with
+      # _gen_edge_nginx_cert() in dashboard/core/cert_ctl.py.
       if [ ! -f '/ssl_certs/server.crt' ] || [ ! -f '/ssl_certs/server.key' ]; then
         openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
           -keyout /ssl_certs/server.key -out /ssl_certs/server.crt \
-          -subj '/C=US/ST=State/L=City/O=HoneypotOrg/CN=localhost'
+          -subj '/CN=localhost'
         chmod 600 /ssl_certs/server.key
         chmod 644 /ssl_certs/server.crt
         echo 'SSL certificates generated successfully'

@@ -369,7 +369,7 @@ end
 
 -- Get or create session for current request
 function _M.get_or_create_session()
-    local session_id = ngx.var.cookie_PHPSESSID or ngx.var.cookie_HONEYPOT_SESSION
+    local session_id = ngx.var.cookie_PHPSESSID or ngx.var["cookie_" .. _G.config.session.cookie_name]
     local session_data
     
     if session_id then

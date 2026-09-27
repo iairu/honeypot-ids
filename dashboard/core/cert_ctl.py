@@ -159,7 +159,10 @@ def _gen_edge_nginx_cert() -> None:
     _run([
         "openssl", "req", "-x509", "-nodes", "-days", DAYS_VALID, "-newkey", "rsa:2048",
         "-keyout", str(key_path), "-out", str(crt_path),
-        "-subj", "/C=US/ST=State/L=City/O=HoneypotOrg/CN=localhost",
+        # CN only -- an O= field such as the old "HoneypotOrg" is visible to
+        # any client and gives the deception away. Keep in sync with
+        # ids/docker-compose.yml's init_setup.
+        "-subj", "/CN=localhost",
     ])
     key_path.chmod(0o600)
     crt_path.chmod(0o644)

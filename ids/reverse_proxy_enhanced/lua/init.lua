@@ -93,8 +93,13 @@ _G.config = {
     -- session: HTTP session management parameters.
     --
     --   cookie_name        – Name of the session-tracking cookie set by Nginx.
-    --                        Deliberately resembles a standard PHP session cookie
-    --                        to avoid raising suspicion in browser DevTools.
+    --                        "SERVERID" mimics an ordinary load-balancer
+    --                        stickiness cookie (HAProxy's default name) so it
+    --                        reveals nothing in DevTools. It used to be
+    --                        "HONEYPOT_SESSION", which gave the deception away
+    --                        in the blind pentest. nginx.conf's `security`
+    --                        log_format hardcodes $cookie_SERVERID; keep the two
+    --                        in sync.
     --   max_idle_time      – Session TTL in seconds after the last request.
     --                        3600 s (1 hour) matches typical WooCommerce checkout
     --                        session durations so honeypot sessions feel realistic.
@@ -103,7 +108,7 @@ _G.config = {
     --                        entries from the local shared dict.
     -- -----------------------------------------------------------------------
     session = {
-        cookie_name = "HONEYPOT_SESSION",
+        cookie_name = "SERVERID",
         max_idle_time = 3600,
         cleanup_interval = 300
     },
