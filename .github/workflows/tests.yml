@@ -1,0 +1,22 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lua:
+    name: Lua unit tests
+    runs-on: ubuntu-latest
+    steps:
+      # The repo carries full WordPress trees; skip their blobs.
+      - uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          sparse-checkout: ids/reverse_proxy_enhanced/lua
+      - name: Install Lua 5.1 (OpenResty's LuaJIT is 5.1-compatible)
+        run: sudo apt-get update && sudo apt-get install -y lua5.1
+      - name: Run suites
+        run: ids/reverse_proxy_enhanced/lua/tests/run_all.sh lua5.1
