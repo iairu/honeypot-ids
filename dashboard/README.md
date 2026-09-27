@@ -183,6 +183,27 @@ setup wizard…** without losing existing values.
   comment-preserving editing this whole app uses elsewhere); other
   existing `.env` keys and comments are untouched. The exported file
   contains real secrets in plaintext — store it securely, never commit it.
+- **Learn** — the teaching layer for cybersecurity students, opened
+  automatically once on first launch. **Start here** explains how a
+  request travels through the system and tours every page (what it's for,
+  what to try, what to notice), with links that jump to that page.
+  **Guided labs** are five short checklists (bring the system up, watch a
+  normal visitor, fire an SQL injection, investigate in the SIEM, tune the
+  detector); ticked steps persist in `state.json` and double-clicking a
+  step opens its page. **Glossary** is a searchable list of terms
+  (honeypot, IDS, threat score, decay, CVE, SQLi, SIEM, …), each with a
+  plain definition and what it means in this project. **Exploit lessons**
+  covers every exploit preset: attack class, OWASP Top 10 (2021)
+  category, MITRE ATT&CK technique, how it works and how to defend.
+  Content lives in `core/learning.py` (pure data, tested in
+  `tests/test_learning.py`, which fails if a new exploit preset has no
+  lesson).
+
+Learning aids elsewhere: hovering a sidebar entry says what the page is
+for; **F1** (Help → Help for this page) shows the current page's guide;
+the Exploits page has a **What is this?** button for the selected preset,
+preset tooltips with severity and attack class, and hovering a card on the
+Threat analyzer tab explains that signal in plain language.
 
 ## System tray
 
@@ -258,12 +279,14 @@ dashboard/
     settings_bundle.py              # export/import bundle (.env values + remote config)
     env_upload.py                    # .env transfer: scp a local file, or fetch/send TEXT over ssh
     project_upload.py                 # rsync a whole project directory to a remote host
+    learning.py                        # Learn page content: glossary, labs, exploit lessons
   ui/                     # PyQt6 widgets
     main_window.py, wizard.py, page_services.py, page_health.py,
     page_certs.py, page_settings.py, health_diagram.py, env_editor.py,
     remote_config_widget.py, process_runner.py, status_poller.py,
     log_export.py         # shared "export logs to a file" (Health + Services)
     env_source_tab.py     # Settings' per-project .env tab (Local/Remote toggle)
+    page_learn.py         # Learn page (tour, guided labs, glossary, exploit lessons)
 ```
 
 `core/` has no PyQt6 imports at all — every module in it was verified
