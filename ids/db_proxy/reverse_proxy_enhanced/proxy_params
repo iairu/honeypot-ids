@@ -1,0 +1,56 @@
+proxy_set_header Host $http_host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-Host $host;
+proxy_set_header X-Forwarded-Port $server_port;
+
+# Enable WebSocket support and keepalive
+proxy_http_version 1.1;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection $connection_upgrade;
+
+# Connection upgrade map (not allowed here)
+# map $http_upgrade $connection_upgrade {
+#     default upgrade;
+#     '' close;
+# }
+
+# Timeouts (increased for reliability and connection pool warmup)
+proxy_connect_timeout 30s;
+proxy_send_timeout 60s;
+proxy_read_timeout 60s;
+proxy_next_upstream_timeout 20s;
+proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+proxy_next_upstream_tries 3;
+
+# Buffering
+proxy_buffering on;
+proxy_buffer_size 128k;
+proxy_buffers 4 256k;
+proxy_busy_buffers_size 256k;
+
+# Cache control
+proxy_cache_bypass $http_upgrade;
+proxy_no_cache $cookie_nocache $arg_nocache;
+
+# Security headers passthrough
+proxy_hide_header X-Powered-By;
+proxy_hide_header Server;
+
+# Additional headers for better compatibility
+proxy_set_header Accept-Encoding "";
+proxy_set_header X-Forwarded-Server $host;
+proxy_set_header X-Original-Request $request_uri;
+
+# ---------------------------------------------------------------------------
+# Honeypot database routing (single-eshop / two-database topology).
+# Passes this reverse proxy's per-session threat decision ($route_decision:
+# "production" | "honeypot") to the single WordPress instance, whose db drop-in
+# (wp-content/db.php) uses it to connect $wpdb to the production OR the honeypot
+# database. Because this is a proxy_set_header, it ALWAYS overwrites any header
+# of the same name a client tried to send -- that is what makes the routing
+# trustworthy: a client cannot forge X-Honeypot-Backend to escape the honeypot
+# (or to reach production data). $route_decision defaults to "production" and is
+# only raised to "honeypot" by the Lua threat pipeline.
+proxy_set_header X-Honeypot-Backend $route_decision;

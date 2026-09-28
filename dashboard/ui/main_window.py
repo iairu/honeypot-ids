@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QSplitter, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
+from core import honeypot_layer
 from core.docker_ctl import all_targets, target_for
 from core.paths import DASHBOARD_DIR
 from core.learning import PAGE_GUIDES
@@ -76,6 +77,8 @@ class MainWindow(QMainWindow):
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.state = state
+        # Before any page builds a Target: they all read the active layer.
+        honeypot_layer.set_active(state.honeypot_layer)
         self.setWindowTitle("Honeypot / SIEM Dashboard")
         self.resize(1200, 800)
         if _APP_ICON_PATH.exists():
@@ -132,7 +135,8 @@ class MainWindow(QMainWindow):
         self.error_monitor = ErrorLogMonitor(self)
 
         self.services_page = ServicesPage(
-            self._get_targets, self.error_monitor, self._grab_health_screenshot)
+            self._get_targets, self.error_monitor, self._grab_health_screenshot, state)
+        self.services_page.layer_changed.connect(self._on_honeypot_layer_changed)
         self.health_page = HealthPage(self._get_targets, self.error_monitor)
         self.resources_page = ResourcesPage(self._get_targets)
         self.certs_page = CertsPage()
@@ -260,6 +264,14 @@ class MainWindow(QMainWindow):
         self.log_search_page.rebuild_targets()
         self.resources_page.rebuild_targets()
         self.security_feed.start(self._edge_target())
+
+    def _on_honeypot_layer_changed(self, _layer_id: str) -> None:
+        """Services page switched the ids stack's honeypot layer: rebuild
+        every page's targets (their compose file and labels changed), let the
+        Exploits page re-grey its presets, and re-poll right away."""
+        self._on_remote_settings_changed()
+        self.exploits_page.set_honeypot_layer()
+        self.poller.poll_now()
 
     def set_poll_interval(self, interval_ms: int) -> None:
         self.state.poll_interval_ms = interval_ms

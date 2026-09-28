@@ -78,6 +78,9 @@ class AppState:
     # that opens the Learn page on first launch has been shown.
     learn_completed_steps: list = field(default_factory=list)
     learn_welcome_shown: bool = False
+    # Honeypot layer of the ids stack: "reverse_proxy" (default) or
+    # "database" -- see core/honeypot_layer.py. Picked on the Services page.
+    honeypot_layer: str = "reverse_proxy"
 
     @classmethod
     def load(cls) -> "AppState":

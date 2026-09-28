@@ -24,6 +24,7 @@ from PyQt6.QtCore import QMarginsF, QSizeF, QUrl
 from PyQt6.QtGui import QFont, QImage, QTextDocument
 from PyQt6.QtPrintSupport import QPrinter
 
+from core import honeypot_layer
 from core.paths import REPO_ROOT, EDGE_COMPOSE_FILE, SIEM_COMPOSE_FILE
 # Reuse the exact Baskerville registration/selection the exploit report uses.
 from core.exploit_report_pdf import _report_font_family, _FONT_CSS_STACK, _esc
@@ -41,6 +42,9 @@ class Highlight:
     symbols: list[str] = field(default_factory=list)  # py/lua: names to extract, in order
     lines: tuple[int, int] | None = None               # 1-based inclusive fallback range
     condense: bool = True  # strip comments/docstrings/logging + collapse blanks
+    # Only include in this honeypot layer's export (core/honeypot_layer.py id);
+    # None = every layer.
+    layer: str | None = None
 
 
 # The curated chapter. Grouped by `section`, rendered in list order.
@@ -153,7 +157,7 @@ HIGHLIGHTS: list[Highlight] = [
         lang="py",
         symbols=["_resource_chart"],
     ),
-    # --- Per-request database routing (db-proxy branch only) ---
+    # --- Per-request database routing (database proxy layer only) ---
     Highlight(
         section="Per-request database routing",
         title="WordPress database-selection drop-in",
@@ -165,6 +169,7 @@ HIGHLIGHTS: list[Highlight] = [
             "decision names."),
         path="ids/production_eshop_files/wp-content/db.php",
         lang="php",
+        layer="database",
     ),
 ]
 
@@ -273,7 +278,11 @@ def service_overview() -> list[tuple[str, list[dict]]]:
     each row is {names, label, image, description}. Numbered replicas of the
     same base service (honeypot_database_1..3) collapse into one row."""
     out: list[tuple[str, list[dict]]] = []
-    for label, compose in (("Edge / honeypot stack", EDGE_COMPOSE_FILE),
+    layer = honeypot_layer.active()
+    edge_label = "Edge / honeypot stack"
+    if layer.compose_file != EDGE_COMPOSE_FILE.name:
+        edge_label += f" ({layer.short_label})"
+    for label, compose in ((edge_label, layer.compose_path),
                             ("SIEM stack", SIEM_COMPOSE_FILE)):
         services = _compose_services(compose)
         if not services:
@@ -439,6 +448,8 @@ def available_highlights() -> list[tuple[Highlight, str]]:
     """(highlight, code) for every manifest entry that resolves on this branch."""
     out = []
     for hl in HIGHLIGHTS:
+        if hl.layer is not None and hl.layer != honeypot_layer.active().id:
+            continue
         code = extract(hl)
         if code:
             out.append((hl, code))

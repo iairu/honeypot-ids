@@ -107,6 +107,24 @@ FORCE_RESEED=1 docker compose up production_db_seed && docker compose restart ho
 ./backups/manage_backups.sh list
 ```
 
+### Honeypot layer (reverse proxy or database proxy)
+
+The ids stack can deceive attackers at one of two layers. Pick the layer on the
+dashboard's Services page ("Honeypot layer"), or choose the compose file:
+
+- **Reverse proxy level** (default, recommended): `docker-compose.yml`. Suspicious
+  sessions are routed to separate honeypot WordPress containers.
+- **Database proxy level**: `docker-compose.db-proxy.yml`. One eshop serves
+  everything, and `wp-content/db.php` switches it between the production and honeypot
+  databases per request. It can't contain file-upload, path-traversal or RCE attacks.
+
+```bash
+docker compose -f docker-compose.db-proxy.yml up -d --remove-orphans   # switch to the database proxy level
+docker compose up -d --remove-orphans                                  # back to the default
+```
+
+The files that only this layer uses are listed in [`ids/db_proxy/README.md`](ids/db_proxy/README.md).
+
 ### Access points (local dev)
 
 - `https://localhost/` — main site, intelligent routing between production/honeypot (self-signed cert, auto-generated on `init_setup`)

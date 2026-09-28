@@ -17,6 +17,8 @@ from PyQt6.QtCore import QPointF, QRect, QRectF, Qt, QUrl
 from PyQt6.QtGui import (QColor, QFont, QFontMetrics, QImage, QPainter, QPen,
                          QPolygonF, QTextDocument)
 
+from core import honeypot_layer
+
 # Shared palette (kept close to the report's own band colours).
 _BLUE = "#1565c0"
 _GREEN = "#2e7d32"
@@ -124,7 +126,11 @@ def _label(p: QPainter, x, y, text, *, color=_INK, family="Serif") -> None:
 
 def architecture_diagram(family: str = "Serif") -> QImage:
     """The service topology: clients -> reverse proxy -> production/honeypot
-    eshops + their databases, with Redis, Suricata and the SIEM alongside."""
+    eshops + their databases, with Redis, Suricata and the SIEM alongside.
+    In the database proxy honeypot layer (core/honeypot_layer.py) the middle
+    shows the one eshop switching databases instead."""
+    if honeypot_layer.is_database():
+        return _db_proxy_architecture_diagram(family)
     img, p = _new(920, 540)
     p.setFont(QFont(family, 12, QFont.Weight.Bold))
     p.setPen(QColor(_INK))
@@ -175,8 +181,61 @@ def architecture_diagram(family: str = "Serif") -> QImage:
     return img
 
 
+def _db_proxy_architecture_diagram(family: str) -> QImage:
+    """architecture_diagram() for the database proxy layer: the proxy forwards
+    everything to ONE eshop, whose db.php drop-in connects to the production
+    or the honeypot database per request (X-Honeypot-Backend header)."""
+    img, p = _new(920, 540)
+    p.setFont(QFont(family, 12, QFont.Weight.Bold))
+    p.setPen(QColor(_INK))
+    p.drawText(20, 24, "System architecture (database proxy layer)")
+
+    cx = 460
+    specs = [
+        ("client", cx - 90, 40, 180, 44, "Internet / clients", "", "#eef2f7", _INK),
+        ("proxy", cx - 150, 130, 300, 62, "Reverse proxy",
+         "OpenResty + Lua: scores and tags each request", "#e7effa", _BLUE),
+        ("redis", 30, 132, 190, 60, "session_store (Redis)",
+         "sessions, IP reputation", "#eef0f2", _GREY),
+        ("suri", 700, 132, 190, 60, "Suricata IDS",
+         "network alerts -> reputation", "#fdf1e3", _ORANGE),
+        ("shop", cx - 160, 254, 320, 62, "Eshop (one WordPress)",
+         "db.php picks the database per request", "#e7effa", _BLUE),
+        ("pdb", 150, 372, 230, 50, "Production DB", "MySQL, real data", "#e8f3ea", _GREEN),
+        ("hdb", 540, 372, 230, 50, "Honeypot DB", "MySQL, scrubbed clone", "#f8e7e7", _RED),
+        ("siem", 250, 470, 420, 52, "SIEM",
+         "Vector -> Elasticsearch -> Kibana", "#efe8f7", _PURPLE),
+    ]
+    C = {s[0]: (s[1] + s[3] / 2, s[2] + s[4] / 2) for s in specs}
+
+    _arrow(p, C["client"][0], 84, C["proxy"][0], 130)
+    _arrow(p, 220, C["redis"][1], 310, C["proxy"][1], color=_GREY, dashed=True)
+    _arrow(p, 700, C["suri"][1], 610, C["proxy"][1], color=_ORANGE, dashed=True)
+    _arrow(p, C["proxy"][0], 192, C["shop"][0], 254, color=_BLUE)
+    _arrow(p, C["shop"][0] - 90, 316, C["pdb"][0], 372, color=_GREEN)
+    _arrow(p, C["shop"][0] + 90, 316, C["hdb"][0], 372, color=_RED)
+    # Proxy logs -> SIEM route out to the left margin, clear of the eshop and
+    # database boxes; Suricata alerts down the right margin.
+    _arrow(p, 330, 192, 330, 225, 110, 225, 110, C["siem"][1], 250, C["siem"][1],
+           color=_PURPLE, dashed=True)
+    _arrow(p, 840, 192, 840, C["siem"][1], 670, C["siem"][1], color=_PURPLE, dashed=True)
+
+    for _k, bx, by, bw, bh, t, s, fill, bd in specs:
+        _box(p, bx, by, bw, bh, t, s, fill=fill, border=bd, text=bd, family=family)
+
+    _label(p, C["proxy"][0], 223, "all traffic", color=_BLUE, family=family)
+    _label(p, (C["shop"][0] - 90 + C["pdb"][0]) / 2, 344, "clean", color=_GREEN, family=family)
+    _label(p, (C["shop"][0] + 90 + C["hdb"][0]) / 2, 344, "suspicious", color=_RED, family=family)
+    _label(p, 110, 440, "logs", color=_PURPLE, family=family)
+    _label(p, 840, 440, "alerts", color=_PURPLE, family=family)
+    p.end()
+    return img
+
+
 def request_flow_diagram(family: str = "Serif") -> QImage:
-    """How one request is classified and routed."""
+    """How one request is classified and routed. In the database proxy layer
+    the two outcomes are the same shop on different databases."""
+    db_layer = honeypot_layer.is_database()
     img, p = _new(920, 300)
     p.setFont(QFont(family, 12, QFont.Weight.Bold))
     p.setPen(QColor(_INK))
@@ -188,8 +247,10 @@ def request_flow_diagram(family: str = "Serif") -> QImage:
          "score the request, then decide", "#e7effa", _BLUE),
         ("dec", 460, 97, 190, 90, "Route?",
          "CVE match / high score / bad IP / sticky", "#fff7e6", _ORANGE),
-        ("hp", 770, 40, 130, 60, "Honeypot", "decoy shop", "#f8e7e7", _RED),
-        ("pr", 770, 184, 130, 60, "Production", "real shop", "#e8f3ea", _GREEN),
+        ("hp", 770, 40, 130, 60, "Honeypot",
+         "same shop, fake DB" if db_layer else "decoy shop", "#f8e7e7", _RED),
+        ("pr", 770, 184, 130, 60, "Production",
+         "same shop, real DB" if db_layer else "real shop", "#e8f3ea", _GREEN),
     ]
     C = {s[0]: (s[1] + s[3] / 2, s[2] + s[4] / 2) for s in specs}
 

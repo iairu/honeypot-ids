@@ -16,7 +16,7 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 
-from core import ssh
+from core import honeypot_layer, ssh
 from core.proc import succeeds
 from core.projects import PROJECT_IDS, Project, project as project_for
 from core.state import AppState, RemoteConfig
@@ -40,8 +40,20 @@ class Target:
         return self.remote is not None
 
     @property
+    def compose_file(self) -> str | None:
+        """The compose file to use when it isn't the directory's default
+        docker-compose.yml: the edge stack's database proxy layer (see
+        core/honeypot_layer.py). None means the default file."""
+        if self.project != "edge":
+            return None
+        file = honeypot_layer.active().compose_file
+        return None if file == "docker-compose.yml" else file
+
+    @property
     def label(self) -> str:
         base = self.spec.label
+        if self.compose_file:
+            base = f"{base}, {honeypot_layer.active().short_label}"
         return f"{base} (remote: {self.remote.host})" if self.is_remote else f"{base} (local)"
 
     @property
@@ -74,8 +86,10 @@ class Target:
         return f"{self.remote_compose_dir()}/.env"
 
     @staticmethod
-    def _global_flags(compose_args: tuple[str, ...]) -> list[str]:
+    def _global_flags(compose_args: tuple[str, ...], compose_file: str | None = None) -> list[str]:
         """Flags inserted between `docker compose` and the subcommand.
+
+        -f <file> (edge stack, database proxy layer only): see compose_file.
 
         --profile '*' (always): activates every profile, e.g. the edge
         project's `vector_outbound` service, which is `profiles: [elk]` --
@@ -93,6 +107,8 @@ class Target:
         the LogPanel-side rendering of the resulting escape codes.
         """
         flags = ["--profile", "*"]
+        if compose_file:
+            flags = ["-f", compose_file, *flags]
         if compose_args and compose_args[0] == "logs":
             flags += ["--ansi", "always"]
         return flags
@@ -117,7 +133,7 @@ class Target:
     def build(self, *compose_args: str) -> tuple[list[str], str | None]:
         """Returns (argv, cwd). cwd is None for remote (the ssh command
         does its own `cd`)."""
-        global_flags = self._global_flags(compose_args)
+        global_flags = self._global_flags(compose_args, self.compose_file)
         compose_args = self._augment_args(compose_args)
 
         if not self.is_remote:
@@ -132,7 +148,13 @@ class Target:
         container's stdout into another's stdin -- see core/backup_ctl.py's
         WP-file restore). `command` is a raw POSIX shell one-liner the
         caller has already assembled (arguments already shlex.quote'd),
-        run in the compose directory as-is."""
+        run in the compose directory as-is.
+
+        COMPOSE_FILE is exported first when this target uses a non-default
+        compose file, so the raw `docker compose` calls in `command` follow
+        the chosen honeypot layer just like build() does."""
+        if self.compose_file:
+            command = f"export COMPOSE_FILE={shlex.quote(self.compose_file)}; {command}"
         if not self.is_remote:
             return ["sh", "-c", command], self._local_dir()
 

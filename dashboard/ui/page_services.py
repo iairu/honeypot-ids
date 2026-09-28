@@ -5,14 +5,15 @@ from __future__ import annotations
 
 import os
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QFileDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+    QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton,
     QScrollArea, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core.container_status import summarize
+from core import honeypot_layer
 from core.docker_ctl import Target
 from core import services_report
 from ui.common import confirm, danger_button, muted_label, set_status
@@ -262,16 +263,44 @@ class TargetPanel(QGroupBox):
 
 
 class ServicesPage(QWidget):
+    # Emitted with the new layer id after the user switches "Honeypot layer"
+    # (state already saved, core.honeypot_layer already updated).
+    layer_changed = pyqtSignal(str)
+
     def __init__(self, get_targets, error_monitor: ErrorLogMonitor | None = None,
-                 health_screenshot_provider=None, parent=None):
+                 health_screenshot_provider=None, state=None, parent=None):
         super().__init__(parent)
         self._get_targets = get_targets
         self._error_monitor = error_monitor
         self._health_screenshot_provider = health_screenshot_provider
+        self._state = state
         self.panels: dict[str, TargetPanel] = {}
         self._tab_view = True
+        self._last_status: dict[str, list[dict]] = {}
 
         outer = QVBoxLayout(self)
+
+        # Which honeypot layer the ids stack runs (see core/honeypot_layer.py
+        # and ids/db_proxy/README.md). Applies to every ids target, local and
+        # remote; the siem stack is unaffected.
+        layer_row = QHBoxLayout()
+        layer_row.addWidget(QLabel("Honeypot layer:"))
+        self.layer_combo = QComboBox()
+        for layer in honeypot_layer.LAYERS.values():
+            self.layer_combo.addItem(layer.label, layer.id)
+        self.layer_combo.setItemData(
+            0, "Suspicious sessions are routed to separate honeypot WordPress "
+               "containers (ids/docker-compose.yml).", Qt.ItemDataRole.ToolTipRole)
+        self.layer_combo.setItemData(
+            1, "One eshop serves everything; the database is switched per request "
+               "(ids/docker-compose.db-proxy.yml). Isolates database-layer attacks "
+               "only -- see ids/db_proxy/COVERAGE.md.", Qt.ItemDataRole.ToolTipRole)
+        self.layer_combo.setCurrentIndex(
+            self.layer_combo.findData(honeypot_layer.active().id))
+        self.layer_combo.currentIndexChanged.connect(self._on_layer_selected)
+        layer_row.addWidget(self.layer_combo)
+        layer_row.addStretch()
+        outer.addLayout(layer_row)
 
         toggle_row = QHBoxLayout()
         toggle_row.addStretch()
@@ -358,7 +387,60 @@ class ServicesPage(QWidget):
         interrupt."""
         return any(p.is_mutating_action_running() for p in self.panels.values())
 
+    def _on_layer_selected(self, _index: int) -> None:
+        new_id = self.layer_combo.currentData()
+        old = honeypot_layer.active()
+        if new_id == old.id:
+            return
+        if self.any_mutating_action_running():
+            QMessageBox.information(
+                self, "Honeypot layer",
+                "A start/stop is still running. Switch the layer once it finishes.")
+            self._select_layer(old.id)
+            return
+
+        edge_keys = [t.key for t in self._get_targets() if t.project == "edge"]
+        running = [k for k in edge_keys
+                   if any(c.get("State") == "running" for c in self._last_status.get(k, []))]
+        new = honeypot_layer.layer(new_id)
+        apply_now = False
+        if running:
+            answer = QMessageBox.question(
+                self, "Switch honeypot layer",
+                f"The ids stack is running as the {old.short_label}.\n\n"
+                f"Recreate it now as the {new.short_label}? This runs "
+                "'docker compose up -d --remove-orphans' with the new compose file: "
+                "services that differ are replaced and the other layer's extra "
+                "services are removed. Data volumes are kept.\n\n"
+                "No = switch anyway and apply on the next Start.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Cancel,
+            )
+            if answer == QMessageBox.StandardButton.Cancel:
+                self._select_layer(old.id)
+                return
+            apply_now = answer == QMessageBox.StandardButton.Yes
+
+        honeypot_layer.set_active(new.id)
+        if self._state is not None:
+            self._state.honeypot_layer = new.id
+            self._state.save()
+        # Owners rebuild their targets (panel titles and every compose call
+        # now carry the new layer), this page included.
+        self.layer_changed.emit(new.id)
+        if apply_now:
+            for key in running:
+                panel = self.panels.get(key)
+                if panel is not None:
+                    panel._start()
+
+    def _select_layer(self, layer_id: str) -> None:
+        self.layer_combo.blockSignals(True)
+        self.layer_combo.setCurrentIndex(self.layer_combo.findData(layer_id))
+        self.layer_combo.blockSignals(False)
+
     def apply_status(self, results: dict[str, list[dict]]) -> None:
+        self._last_status.update(results)
         for key, containers in results.items():
             if key in self.panels:
                 self.panels[key].update_status(containers)
