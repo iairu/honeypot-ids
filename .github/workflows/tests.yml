@@ -32,6 +32,16 @@ jobs:
             dashboard
             ids/.env.example
             ids/docker-compose.yml
+            ids/docker-compose.db-proxy.yml
+            ids/db_proxy
+            ids/reverse_proxy_enhanced/nginx.conf
+            ids/reverse_proxy_enhanced/proxy_params
+            ids/reverse_proxy_enhanced/lua/health_check.lua
+            ids/reverse_proxy_enhanced/lua/init_worker.lua
+            ids/scripts/replicate_content_to_honeypot.sh
+            ids/honeypot_database_migrations/01_clean-honeypot-data.sql
+            ids/production_eshop_files/wp-content/db.php
+            ids/production_eshop_files/wp-content/mu-plugins/honeypot-db-backend-header.php
             siem/docker/.env.example
           sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
