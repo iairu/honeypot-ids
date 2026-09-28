@@ -176,6 +176,10 @@ class MainWindow(QMainWindow):
 
         self.poller = StatusPoller(self._get_targets, interval_ms=state.poll_interval_ms)
         self.poller.results_ready.connect(self._on_status_results)
+        # Pages that want fresh status when opened ask the poller thread
+        # instead of running `docker compose ps` on the GUI thread.
+        self.health_page.refresh_requested.connect(self.poller.poll_now)
+        self.exploits_page.refresh_requested.connect(self.poller.poll_now)
         self.poller.start()
 
         # Previous poll's classified status per (target_key, service), used

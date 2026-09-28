@@ -32,7 +32,7 @@ from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPen, QTextDocument
 from PyQt6.QtPrintSupport import QPrinter
 
 from core import resource_stats as rs
-from core.container_status import classify, is_ready
+from core.container_status import classify, start_settled
 from core.docker_ctl import Target
 from core.exploit_report_pdf import _report_font_family, _FONT_CSS_STACK, _esc, _resource_series_color
 from core import diagrams
@@ -43,7 +43,13 @@ SAMPLE_INTERVAL_S = 2.0
 # `docker compose ps` status/event check this often (it's ~0.5s per call).
 FAST_SAMPLE_INTERVAL_S = 0.25
 STATUS_CHECK_INTERVAL_S = 1.5
-START_MAX_SECONDS = 150.0
+# A safety cap, not the normal end of a start recording: that is
+# container_status.start_settled(). It has to outlast the slowest legitimate
+# start -- on a first boot the three honeypot MySQL pools initialise one after
+# another for minutes (their healthchecks allow a 420s start_period), and
+# `up -d` may build images first. The old 150s cap cut recordings off while
+# the databases were still coming up.
+START_MAX_SECONDS = 900.0
 STOP_MAX_SECONDS = 90.0
 # Keep sampling this long after the stack first looks settled, to catch the
 # post-startup tail (background jobs, first healthchecks).
@@ -59,7 +65,8 @@ class ServicesReport:
     target_label: str = ""
     operation: str = "start"          # "start" | "stop"
     duration_s: float = 0.0
-    exit_code: int | None = None      # the compose command's exit code (stop)
+    exit_code: int | None = None      # the compose command's exit code
+    hit_time_cap: bool = False        # stopped by START/STOP_MAX_SECONDS, not by settling
     # (elapsed_s, cpu_pct, ram_pct) for the whole host:
     sys_samples: list = field(default_factory=list)
     # (elapsed_s, {service: (cpu_pct, mem_bytes)}):
@@ -112,6 +119,8 @@ def _detect_events(prev: dict, cur: dict, elapsed: float, events: list) -> None:
         elif st != was:
             if st == "healthy":
                 add(f"{svc} healthy")
+            elif st == "starting" and was in ("created", "running"):
+                add(f"{svc} running, health pending")
             elif st == "unhealthy":
                 add(f"{svc} unhealthy")
             elif st == "exited_bad":
@@ -145,7 +154,9 @@ class ServicesReportWorker(QThread):
         self._cancel = True
 
     def notify_operation_finished(self, exit_code: int) -> None:
-        """Called (GUI thread) when the compose command for this export exits."""
+        """Called (GUI thread) when the compose command for this export exits.
+        For a start that's `up -d`, which returns once every depends_on
+        condition it waited on was met; for a stop it's `down`."""
         self._op_exit_code = exit_code
         self._op_done.set()
 
@@ -192,16 +203,16 @@ class ServicesReportWorker(QThread):
 
             # Fast (sub-second) per-container sampling from cgroups on a local
             # host; falls back to ~2s docker-stats sampling for a remote target.
+            # The sampler is refreshed on every status check below, so a
+            # start from a stopped stack switches to fast sampling as soon as
+            # the first containers are running.
             sampler = rs.FastSampler(self._target)
-            fast = sampler.available
-            sample_interval = FAST_SAMPLE_INTERVAL_S if fast else SAMPLE_INTERVAL_S
-            if fast:
-                svc_to_cid = sampler.cids
+            if sampler.available:
                 sampler.sample()  # prime CPU% delta baseline
             last_status_check = -1e9
 
             def _container_snap() -> dict:
-                if fast:
+                if sampler.available:
                     return {svc: (cpu, mem) for svc, cpu, mem in sampler.sample()}
                 try:
                     live = rs.collect_live(self._target)
@@ -212,6 +223,7 @@ class ServicesReportWorker(QThread):
             while not self._cancel:
                 elapsed = time.time() - start
                 if elapsed > self._max_seconds:
+                    data.hit_time_cap = True
                     break
                 self.progress.emit(
                     f"Recording {op} ({int(elapsed)}s)",
@@ -245,18 +257,28 @@ class ServicesReportWorker(QThread):
                     was_status = prev_status
                     prev_status = status
                     ps = self._target.ps()
-                    all_ready = bool(ps) and all(is_ready(c) for c in ps)
+                    sampler.refresh(ps)
 
                     if op == "start":
                         if not captured_mid and status:
                             data.stage_shots.append((
                                 "Starting: containers coming up", self._grab_health("mid")))
                             captured_mid = True
-                        if all_ready and settled_at is None:
+                        # Settled = `up -d` has exited AND nothing is still
+                        # created/health-starting. Checking only that every
+                        # container in `ps` looked ready ended the recording
+                        # while services further down the dependency chain
+                        # hadn't even been started yet.
+                        if settled_at is None and start_settled(
+                                ps, self._op_exit_code if self._op_done.is_set() else None):
                             settled_at = time.time()
+                            data.exit_code = self._op_exit_code
                             if not captured_end:
-                                data.stage_shots.append((
-                                    "All containers healthy", self._grab_health("end")))
+                                all_healthy = all(classify(c) in ("healthy", "running", "exited_ok")
+                                                  for c in ps)
+                                caption = ("All containers healthy" if all_healthy
+                                           else "Start finished (some containers not healthy)")
+                                data.stage_shots.append((caption, self._grab_health("end")))
                                 captured_end = True
                         if settled_at is not None and time.time() - settled_at > SETTLE_TAIL_S:
                             break
@@ -286,6 +308,7 @@ class ServicesReportWorker(QThread):
                     data.exit_code = self._op_exit_code
                     break
 
+                sample_interval = FAST_SAMPLE_INTERVAL_S if sampler.available else SAMPLE_INTERVAL_S
                 deadline = time.time() + sample_interval
                 while time.time() < deadline and not self._cancel:
                     time.sleep(min(0.1, max(0.0, deadline - time.time())))
@@ -436,6 +459,10 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
                  + (f' &nbsp;&middot;&nbsp; compose exit code: <b>{data.exit_code}</b>'
                     if data.exit_code is not None else '')
                  + '</td></tr></table><hr/>')
+    if data.hit_time_cap:
+        parts.append('<p style="color:#b35900;"><b>Recording hit its time limit</b> '
+                     f'({data.duration_s:.0f}s) before the stack settled, so the charts end '
+                     'while containers were still changing state.</p>')
     parts.append('<p style="color:#555;">Resource usage recorded while the stack was '
                  f'{"brought up" if data.operation == "start" else "taken down"}. Each dashed '
                  'red vertical line marks a major event (a container starting, going healthy or '

@@ -4,6 +4,8 @@ slow/unreachable SSH targets never freeze the UI.
 """
 from __future__ import annotations
 
+import threading
+
 from PyQt6.QtCore import QThread, pyqtSignal
 
 
@@ -21,9 +23,18 @@ class StatusPoller(QThread):
         self._get_targets = get_targets
         self._interval_ms = interval_ms
         self._stop = False
+        # Set to cut the current sleep short (poll_now()/stop()).
+        self._wake = threading.Event()
 
     def stop(self) -> None:
         self._stop = True
+        self._wake.set()
+
+    def poll_now(self) -> None:
+        """Run the next poll right away instead of after the rest of the
+        interval. Safe to call from the GUI thread; a call that lands while
+        a poll is already running just triggers one more straight after."""
+        self._wake.set()
 
     def set_interval(self, interval_ms: int) -> None:
         """Takes effect on the next sleep -- read fresh every loop
@@ -40,4 +51,5 @@ class StatusPoller(QThread):
             if self._stop:
                 return
             self.results_ready.emit(results)
-            self.msleep(self._interval_ms)
+            self._wake.wait(self._interval_ms / 1000)
+            self._wake.clear()
