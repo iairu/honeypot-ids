@@ -20,7 +20,8 @@ from core.content_sync_status import parse_content_sync_log
 from core.docker_ctl import PROJECT_LABELS
 from core.shell_ctl import build_shell_command
 from core.web_links import build_url, web_ui_for
-from ui.error_monitor import ErrorLogMonitor, is_error_log_line
+from core.log_error_match import is_error_log_line
+from ui.error_monitor import ErrorLogMonitor
 from ui.flow_layout import FlowLayout
 from core.container_status import classify, is_ready, status_detail
 from ui.health_diagram import HealthDiagram, STATUS_COLORS
@@ -132,8 +133,10 @@ class LegendWidget(QWidget):
             flow.addWidget(self._entry(text, swatch_color=STATUS_COLORS[key], tooltip=tooltips.get(key)))
 
         flow.addWidget(self._entry(
-            "Contains \"error\"", badge_text="!3",
-            tooltip="Bottom-right badge on a node: at least one log line for that service contains the word \"error\".",
+            "Contains \"error\", \"fail\" or \"fault\"", badge_text="!3",
+            tooltip="Bottom-right badge on a node: how many log lines for that service contain "
+                    "the word \"error\", or a word starting with \"fail\" or \"fault\" "
+                    "(failed, failure, faulty...).",
         ))
 
         self.setLayout(flow)
@@ -524,7 +527,8 @@ class HealthPage(QWidget):
         argv, cwd = target.build("logs", "--tail=all", "-f", service)
         self.log_panel.run(argv, cwd, line_filter=is_error_log_line)
         self.log_panel.append(
-            f'(showing every line containing "error" for {service}, full history -- '
+            f'(showing every line containing "error", "fail..." or "fault..." for {service}, '
+            "full history -- "
             "click elsewhere on the node, or View logs, for the full recent tail)\n\n"
         )
 
