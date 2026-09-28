@@ -141,5 +141,54 @@ class CertSubjectTests(unittest.TestCase):
         self.assertNotIn("honeypot", compose.split("-subj", 1)[1].splitlines()[0].lower())
 
 
+class ContainerStatusTests(unittest.TestCase):
+    """Start-settle logic behind "Start with PDF graph export"."""
+
+    @staticmethod
+    def _c(state="running", health="", exit_code="0"):
+        return {"State": state, "Health": health, "ExitCode": exit_code}
+
+    def test_health_starting_is_its_own_state(self):
+        from core.container_status import RUNNING, STARTING, classify
+        self.assertEqual(classify(self._c(health="starting")), STARTING)
+        self.assertEqual(classify(self._c()), RUNNING)
+
+    def test_not_settled_while_up_is_still_running(self):
+        # All visible containers look ready, but `up -d` hasn't exited: later
+        # services may still be waiting on their dependencies.
+        from core.container_status import start_settled
+        ready = [self._c(health="healthy"), self._c(state="exited")]
+        self.assertFalse(start_settled(ready, None))
+        self.assertTrue(start_settled(ready, 0))
+
+    def test_not_settled_while_a_database_is_in_start_period(self):
+        from core.container_status import start_settled
+        containers = [self._c(health="healthy"), self._c(health="starting")]
+        self.assertFalse(start_settled(containers, 0))
+
+    def test_not_settled_while_a_container_is_only_created(self):
+        from core.container_status import start_settled
+        self.assertFalse(start_settled([self._c(state="created")], 0))
+
+    def test_unhealthy_or_crashed_counts_as_settled(self):
+        # Waiting longer won't change these; the report should show them.
+        from core.container_status import start_settled
+        self.assertTrue(start_settled([self._c(health="unhealthy")], 0))
+        self.assertTrue(start_settled([self._c(state="exited", exit_code="1")], 0))
+
+    def test_failed_up_settles_even_with_created_dependents(self):
+        from core.container_status import start_settled
+        self.assertTrue(start_settled([self._c(state="created")], 1))
+
+    def test_empty_listing_is_not_settled(self):
+        from core.container_status import start_settled
+        self.assertFalse(start_settled([], 0))
+
+    def test_summary_counts_starting_as_not_up(self):
+        from core.container_status import summarize
+        text, _ = summarize([self._c(health="healthy"), self._c(health="starting")])
+        self.assertEqual(text, "1/2 up (1 starting)")
+
+
 if __name__ == "__main__":
     unittest.main()

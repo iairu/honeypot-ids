@@ -9,7 +9,7 @@ import html
 import re
 from datetime import datetime, timedelta, timezone
 
-from PyQt6.QtCore import QProcess, QTimer, QUrl, Qt
+from PyQt6.QtCore import QProcess, QTimer, QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QGroupBox, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton,
@@ -115,6 +115,7 @@ class LegendWidget(QWidget):
         # context lives in the tooltip instead.
         labels = {
             "healthy": "Up, healthy",
+            "starting": "Starting (health pending)",
             "running": "Up (no healthcheck)",
             "unhealthy": "Up, unhealthy",
             "exited_ok": "Exited OK (code 0)",
@@ -123,6 +124,8 @@ class LegendWidget(QWidget):
             "down": "Down / not created",
         }
         tooltips = {
+            "starting": "Running, but its healthcheck hasn't passed yet. The databases "
+                        "can sit here for a few minutes on a first start while they initialise.",
             "created": "A prior Start/Restart got interrupted partway through -- click Start again.",
         }
         for key, text in labels.items():
@@ -167,6 +170,11 @@ class LegendWidget(QWidget):
 
 
 class HealthPage(QWidget):
+    # Emitted when the page is shown; MainWindow wires it to the background
+    # StatusPoller's poll_now() so the fresh `docker compose ps` never runs
+    # on the GUI thread.
+    refresh_requested = pyqtSignal()
+
     def __init__(self, get_targets, error_monitor: ErrorLogMonitor | None = None, parent=None):
         super().__init__(parent)
         self._get_targets = get_targets
@@ -282,7 +290,7 @@ class HealthPage(QWidget):
         self._log_exporter = LogExporter(self)
 
     def showEvent(self, event) -> None:
-        """Forces one fresh `docker compose ps` per target the moment this
+        """Asks for one fresh `docker compose ps` per target the moment this
         page becomes visible, rather than leaving the diagram showing
         whatever the background StatusPoller (ui/main_window.py) last
         fetched -- that poller keeps running regardless of which page is
@@ -291,9 +299,16 @@ class HealthPage(QWidget):
         it takes the next tick to land. Same pattern as ExploitsPage's own
         showEvent()-driven reachability check. Selection/log-tail/restart-
         progress state is untouched -- apply_status() only ever rebuilds
-        the diagram and refreshes the (still-selected) detail panel."""
+        the diagram and refreshes the (still-selected) detail panel.
+
+        The poll itself runs on the StatusPoller thread and lands here
+        through apply_status(). Calling Target.ps() directly from here
+        froze the whole window: it's up to 15s per target, and while a
+        stack is starting (or a remote host is slow over SSH) it really
+        does take that long. The graph export's Health screenshots switch
+        to this page too, so they hit the same stall."""
         super().showEvent(event)
-        self.apply_status({t.key: t.ps() for t in self._get_targets()})
+        self.refresh_requested.emit()
 
     def apply_status(self, results: dict[str, list[dict]]) -> None:
         targets = self._get_targets()

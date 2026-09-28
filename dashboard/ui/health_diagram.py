@@ -68,6 +68,7 @@ def _border_color() -> QColor:
 
 STATUS_COLORS = {
     "healthy": QColor("#3fa34d"),        # running + healthy
+    "starting": QColor("#8fbf5a"),       # running, healthcheck still in start_period
     "running": QColor("#3f9fd9"),        # running, no healthcheck
     "unhealthy": QColor("#d9534f"),      # running but unhealthy
     "exited_ok": QColor("#7d7d7d"),      # exited, code 0 (expected one-shot)
