@@ -36,6 +36,7 @@ from core.container_status import classify, is_ready
 from core.docker_ctl import Target
 from core.exploit_report_pdf import _report_font_family, _FONT_CSS_STACK, _esc, _resource_series_color
 from core import diagrams
+from core import report_stats as st
 
 SAMPLE_INTERVAL_S = 2.0
 # When the fast cgroup sampler is available (local host), sample resources this
@@ -420,6 +421,73 @@ def _ts_chart(series: dict, colors: dict, events: list, y_label: str,
     return img
 
 
+# Load levels whose share of the recording the host table reports.
+_LEVELS_PCT = (50.0, 80.0)
+
+
+def _host_stats_html(sys_samples: list) -> str:
+    """Host CPU and RAM over the recorded window: mean and SD, the 95th
+    percentile and peak, how far the peak sits from normal, and the chance a
+    random moment of the window was at or above each load level.
+
+    No confidence interval of the mean here: the window IS the whole run, and
+    a single start/stop can't say how the next one would differ."""
+    rows = []
+    for idx, name in ((1, "Host CPU"), (2, "Host RAM used")):
+        vals = [smp[idx] for smp in sys_samples]
+        s = st.summarize(vals)
+        if s is None:
+            continue
+        rows.append((f"{name}, mean &plusmn; SD", f"{s.mean:.1f}% &plusmn; {s.sd:.1f}",
+                     f"average over {s.n} samples; the SD is the typical swing around it"))
+        rows.append((f"{name}, 95th percentile / peak", f"{s.p95:.1f}% / {s.max:.1f}%",
+                     "95% of the time usage was at or below the first figure"))
+        if s.sd > 0:
+            z = (s.max - s.mean) / s.sd
+            rows.append((f"{name}, how unusual the peak is", f"{z:.1f} SD above the mean",
+                         "more than ~3 SD is a rare spike rather than normal fluctuation"))
+        for level in _LEVELS_PCT:
+            share = st.exceedance(vals, level)
+            rows.append((f"{name}, P(&ge;{level:.0f}%)", st.fmt_pct(share, 1),
+                         "chance a random moment of this recording was at least this busy"))
+    return st.stats_table_html(rows, "Probability metrics: host")
+
+
+def _container_stats_html(container_samples: list, svcs: list) -> str:
+    """One row per container: mean CPU and SD, 95th percentile and peak CPU,
+    the share of the window above 50% CPU, mean memory and SD."""
+    rows = []
+    for svc in svcs:
+        cpu_vals = [snap[svc][0] for _, snap in container_samples if svc in snap]
+        cpu = st.summarize(cpu_vals)
+        mem = st.summarize([snap[svc][1] / 1048576.0 for _, snap in container_samples
+                            if svc in snap])
+        if cpu is None or mem is None:
+            continue
+        rows.append(
+            '<tr>'
+            f'<td>{_esc(svc)}</td>'
+            f'<td>{cpu.mean:.1f}% &plusmn; {cpu.sd:.1f}</td>'
+            f'<td>{cpu.p95:.1f}% / {cpu.max:.1f}%</td>'
+            f'<td>{st.fmt_pct(st.exceedance(cpu_vals, 50.0), 1)}</td>'
+            f'<td>{mem.mean:.0f} &plusmn; {mem.sd:.0f}</td>'
+            '</tr>')
+    if not rows:
+        return ""
+    return ('<table width="100%" cellspacing="0" cellpadding="3" border="1" '
+            'style="border-collapse:collapse; font-size:9pt; margin-top:4px; color:#333;">'
+            '<tr style="background-color:#eef3f8;"><th align="left" colspan="5">'
+            'Probability metrics: per container</th></tr>'
+            '<tr><th align="left">Container</th><th align="left">CPU mean &plusmn; SD</th>'
+            '<th align="left">CPU p95 / peak</th><th align="left">P(CPU &ge; 50%)</th>'
+            '<th align="left">Memory MiB, mean &plusmn; SD</th></tr>' + "".join(rows) + '</table>'
+            '<p style="color:#666; font-size:9pt;">P(CPU &ge; 50%) is the share of the '
+            'recording the container spent at half a core or more, i.e. the chance of '
+            'catching it that busy at a random moment. A peak far above the p95 means a '
+            'short burst (typically start-up work or a first healthcheck) rather than '
+            'sustained load.</p>')
+
+
 def render_services_pdf(data: ServicesReport, out_path: str) -> None:
     family = _report_font_family()
     doc = QTextDocument()
@@ -442,6 +510,7 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
                  'unhealthy, or stopping); the largest CPU peak is called out with the event it '
                  'lines up with. <b>Figure 1</b> shows how these services fit together &ndash; '
                  'the per-container graphs below track each box in it.</p>')
+    parts.append(st.GLOSSARY_HTML)
     parts.append(diagrams.figure_html(
         doc, diagrams.architecture_diagram(family), "svc-arch", 1,
         "System architecture: the services whose CPU / memory the per-container charts below "
@@ -462,6 +531,7 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
         parts.append(f'<span style="color:#444; font-size:10px;">'
                      f'<span style="color:{_SYS_CPU_COLOR};">&#9632;</span> host CPU % &nbsp; '
                      f'<span style="color:{_SYS_RAM_COLOR};">&#9632;</span> host RAM % used</span>')
+        parts.append(_host_stats_html(data.sys_samples))
     else:
         parts.append('<p style="color:#c62828;">Host CPU/RAM was not available on this target.</p>')
 
@@ -481,6 +551,7 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
         legend = " &nbsp; ".join(
             f'<span style="color:{cmap[s].name()};">&#9632;</span> {_esc(s)}' for s in svcs)
         parts.append(f'<span style="color:#444; font-size:10px;">Legend: {legend}</span>')
+        parts.append(_container_stats_html(data.container_samples, svcs))
     else:
         parts.append('<p style="color:#666;">No per-container samples were captured.</p>')
 
