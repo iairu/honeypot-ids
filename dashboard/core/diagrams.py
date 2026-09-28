@@ -315,6 +315,71 @@ def scoring_pipeline_diagram(family: str = "Serif") -> QImage:
     return img
 
 
+def db_proxy_bypass_diagram(family: str = "Serif") -> QImage:
+    """Why some CVEs get past the database proxy honeypot: the reverse proxy
+    catches them, but their effect lands in the one shared WordPress instance
+    (files / PHP runtime), and the honeypot split only happens below that, at
+    the database. The reason is written out in red next to the red link."""
+    img, p = _new(920, 470)
+    p.setFont(QFont(family, 12, QFont.Weight.Bold))
+    p.setPen(QColor(_INK))
+    p.drawText(20, 24, "Honeypot bypass on the database proxy level")
+
+    cx = 190
+    specs = [
+        ("client", cx - 110, 44, 220, 46, "Attacker", "file upload / traversal / RCE exploit",
+         "#eef2f7", _INK),
+        ("proxy", cx - 130, 130, 260, 62, "Reverse proxy",
+         "detects the exploit, tags it for the honeypot", "#e7effa", _BLUE),
+        ("shop", cx - 130, 250, 260, 70, "WordPress eshop (one, shared)",
+         "same files and PHP runtime for production and honeypot", "#fdecea", _RED),
+        ("pdb", 20, 390, 160, 52, "Production DB", "real data", "#e8f3ea", _GREEN),
+        ("hdb", 200, 390, 160, 52, "Honeypot DB", "scrubbed clone", "#eef0f2", _GREY),
+    ]
+    C = {s[0]: (s[1] + s[3] / 2, s[2] + s[4] / 2) for s in specs}
+
+    _arrow(p, cx, 90, cx, 130)
+    # The problem link: proxy -> the shared WordPress instance, in red.
+    _arrow(p, cx, 192, cx, 250, color=_RED, width=4)
+    _arrow(p, C["pdb"][0] + 30, 320, C["pdb"][0] + 30, 390, color=_GREEN)
+    _arrow(p, C["hdb"][0] - 30, 320, C["hdb"][0] - 30, 390, color=_GREY)
+    # The red callout points at the middle of the red link.
+    _arrow(p, 470, 221, cx + 14, 221, color=_RED, dashed=True)
+
+    for _k, bx, by, bw, bh, t, sub, fill, bd in specs:
+        _box(p, bx, by, bw, bh, t, sub, fill=fill, border=bd, text=bd, family=family)
+
+    _label(p, cx, 356, "honeypot split (db.php)", color=_GREY, family=family)
+
+    wrap = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop) | int(Qt.TextFlag.TextWordWrap)
+    callout = QRectF(470, 130, 430, 172)
+    p.setPen(QPen(QColor(_RED), 2))
+    p.setBrush(QColor("#fdecea"))
+    p.drawRoundedRect(callout, 8, 8)
+    p.setPen(QColor(_RED))
+    p.setFont(QFont(family, 10, QFont.Weight.Bold))
+    p.drawText(callout.adjusted(12, 10, -12, -10), wrap,
+               "Why it bypasses the honeypot")
+    p.setFont(QFont(family, 9))
+    p.drawText(callout.adjusted(12, 34, -12, -10), wrap,
+               "The problem is between the reverse proxy and the WordPress instance. "
+               "Even when the exploit is detected and routed \"to the honeypot\", it "
+               "still reaches the same WordPress that serves production. An uploaded "
+               "file or a traversal lands on the shared filesystem, and RCE runs in the "
+               "shared PHP runtime, where it can read wp-config.php's production "
+               "credentials. The honeypot was done one level lower, at the database, so "
+               "it cannot contain an attack that never needs the database.")
+
+    p.setPen(QColor(_GREY))
+    p.setFont(QFont(family, 8))
+    p.drawText(QRectF(400, 392, 500, 60), wrap,
+               "The honeypot only switches which database a request talks to. "
+               "Database-layer attacks (SQL injection, options writes) are contained; "
+               "everything above that level is shared with production.")
+    p.end()
+    return img
+
+
 def figure_html(doc: QTextDocument, img: QImage, key: str, number: int,
                 caption: str, width: int = 620) -> str:
     """Embed a figure into `doc` and return the <img> + numbered caption HTML.

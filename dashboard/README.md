@@ -111,7 +111,9 @@ setup wizard…** without losing existing values.
   bottom-right red **"!N"** badge appears automatically the moment any log
   line for that service (from the Services page's always-running combined
   log tail, so this works even while you're on a different page) contains
-  the word "error", case-insensitive — N is a running count, reset
+  the word "error", or a word starting with "fail" or "fault" ("failed",
+  "failure", "faulty"), case-insensitive (`core/log_error_match.py`) — N is
+  a running count, reset
   whenever that target's log tail restarts (Start/Restart/Stop/Purge, or
   just reopening the Services page tab) so it doesn't recount the same
   `--tail=50` scrollback forever. Hover a node for the exact count.
