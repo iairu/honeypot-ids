@@ -263,7 +263,10 @@ PAGE_GUIDES: dict[str, PageGuide] = {
         "Start, stop and watch the logs of both stacks (IDS and SIEM).",
         "Press Start on the ids project, then on siem, and watch the logs scroll.",
         "Every container is a separate service: proxy, eshops, databases, Suricata, "
-        "Redis. The combined log is what a sysadmin reads first when something breaks.",
+        "Redis. The combined log is what a sysadmin reads first when something breaks. "
+        "The Honeypot layer dropdown picks where the deception happens: at the reverse "
+        "proxy (separate honeypot eshops) or at the database (one eshop that switches "
+        "databases per request, which cannot contain file or code-execution attacks).",
     ),
     "health": PageGuide(
         "Live diagram of every container and whether it is healthy.",
