@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import base64
 
-from PyQt6.QtCore import QByteArray
+from PyQt6.QtCore import QByteArray, Qt
 from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QListWidget, QListWidgetItem, QMainWindow, QMenu, QMenuBar, QMessageBox,
@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 
 from core.docker_ctl import all_targets, target_for
 from core.paths import DASHBOARD_DIR
+from core.learning import PAGE_GUIDES
 from core.state import AppState
 from ui.dependency_banner import DependencyBanner
 from ui.error_monitor import ErrorLogMonitor
@@ -26,8 +27,10 @@ from ui.page_exploits import ExploitsPage
 from ui.page_extras import ExtrasPage
 from ui.page_health import HealthPage
 from ui.page_kibana import KibanaPage
+from ui.page_learn import LearnPage, page_guide_html
 from ui.page_log_search import LogSearchPage
 from ui.page_redis import RedisPage
+from ui.page_resources import ResourcesPage
 from ui.page_services import ServicesPage
 from ui.page_settings import SettingsPage
 from ui.security_feed import SecurityEventFeed
@@ -50,12 +53,13 @@ _APP_ICON_PATH = DASHBOARD_DIR / "resources" / "app_icon.svg"
 _NOTIFY_ON_STATUSES = {"unhealthy", "exited_bad"}
 
 PAGES = [
-    "services", "health", "certificates", "redis", "backups", "kibana",
-    "exploits", "log_search", "extras", "settings",
+    "services", "health", "resources", "certificates", "redis", "backups",
+    "kibana", "exploits", "log_search", "extras", "settings", "learn",
 ]
 PAGE_LABELS = {
     "services": "Services",
     "health": "Health",
+    "resources": "Resources",
     "certificates": "Certificates",
     "redis": "Redis",
     "backups": "Backups",
@@ -64,6 +68,7 @@ PAGE_LABELS = {
     "log_search": "Log Search",
     "extras": "Extras",
     "settings": "Settings",
+    "learn": "Learn",
 }
 
 
@@ -99,6 +104,10 @@ class MainWindow(QMainWindow):
         for page_id in PAGES:
             item = QListWidgetItem(PAGE_LABELS[page_id])
             item.setData(1, page_id)
+            # One-line "what is this page for" on hover (core/learning.py) --
+            # the sidebar is the first thing a newcomer reads.
+            if page_id in PAGE_GUIDES:
+                item.setToolTip(PAGE_GUIDES[page_id].summary)
             self.nav_list.addItem(item)
         self.nav_list.currentRowChanged.connect(self._on_nav_changed)
         splitter.addWidget(self.nav_list)
@@ -125,18 +134,25 @@ class MainWindow(QMainWindow):
         self.services_page = ServicesPage(
             self._get_targets, self.error_monitor, self._grab_health_screenshot)
         self.health_page = HealthPage(self._get_targets, self.error_monitor)
+        self.resources_page = ResourcesPage(self._get_targets)
         self.certs_page = CertsPage()
         self.redis_page = RedisPage(state)
         self.backups_page = BackupsPage(state)
         self.kibana_page = KibanaPage(state)
         self.exploits_page = ExploitsPage(state)
+        # Every exploit run drops a time-aligned marker onto the Resources
+        # graphs so its resource impact is visible.
+        self.exploits_page.exploit_ran.connect(self.resources_page.add_exploit_marker)
         self.log_search_page = LogSearchPage(state)
         self.extras_page = ExtrasPage(self._grab_health_screenshot)
         self.settings_page = SettingsPage(state, self._on_remote_settings_changed, self.set_poll_interval)
+        self.learn_page = LearnPage(state, PAGE_LABELS)
+        self.learn_page.open_page_requested.connect(self._open_page)
 
         for page_id, widget in [
             ("services", self.services_page),
             ("health", self.health_page),
+            ("resources", self.resources_page),
             ("certificates", self.certs_page),
             ("redis", self.redis_page),
             ("backups", self.backups_page),
@@ -145,14 +161,25 @@ class MainWindow(QMainWindow):
             ("log_search", self.log_search_page),
             ("extras", self.extras_page),
             ("settings", self.settings_page),
+            ("learn", self.learn_page),
         ]:
             self.stack.addWidget(widget)
 
         start_index = PAGES.index(state.last_page) if state.last_page in PAGES else 0
+        # First launch with this feature: open on Learn once, so a student
+        # sees the orientation and labs before the control pages.
+        if not state.learn_welcome_shown:
+            start_index = PAGES.index("learn")
+            state.learn_welcome_shown = True
+            state.save()
         self.nav_list.setCurrentRow(start_index)
 
         self.poller = StatusPoller(self._get_targets, interval_ms=state.poll_interval_ms)
         self.poller.results_ready.connect(self._on_status_results)
+        # Pages that want fresh status when opened ask the poller thread
+        # instead of running `docker compose ps` on the GUI thread.
+        self.health_page.refresh_requested.connect(self.poller.poll_now)
+        self.exploits_page.refresh_requested.connect(self.poller.poll_now)
         self.poller.start()
 
         # Previous poll's classified status per (target_key, service), used
@@ -213,6 +240,10 @@ class MainWindow(QMainWindow):
         configured, else local)."""
         return target_for("edge", self.state)
 
+    def _open_page(self, page_id: str) -> None:
+        if page_id in PAGES:
+            self.nav_list.setCurrentRow(PAGES.index(page_id))
+
     def _on_nav_changed(self, row: int) -> None:
         if 0 <= row < len(PAGES):
             self.stack.setCurrentIndex(row)
@@ -227,6 +258,7 @@ class MainWindow(QMainWindow):
         self.backups_page.rebuild_targets()
         self.exploits_page.rebuild_targets()
         self.log_search_page.rebuild_targets()
+        self.resources_page.rebuild_targets()
         self.security_feed.start(self._edge_target())
 
     def set_poll_interval(self, interval_ms: int) -> None:
@@ -325,6 +357,28 @@ class MainWindow(QMainWindow):
             action = view_menu.addAction(PAGE_LABELS[page_id])
             action.triggered.connect(lambda _checked, pid=page_id: self.nav_list.setCurrentRow(PAGES.index(pid)))
 
+        help_menu = menu_bar.addMenu("&Help")
+        page_help_action = help_menu.addAction("Help for this page")
+        page_help_action.setShortcut(QKeySequence("F1"))
+        page_help_action.triggered.connect(self._show_page_help)
+        learn_action = help_menu.addAction("Learn: labs, glossary, exploit lessons")
+        learn_action.triggered.connect(lambda: self._open_page("learn"))
+
+    def _show_page_help(self) -> None:
+        """F1: what the current page is for, what to try, what to notice
+        (core/learning.PAGE_GUIDES), with a jump to the Learn page."""
+        row = self.nav_list.currentRow()
+        page_id = PAGES[row] if 0 <= row < len(PAGES) else "learn"
+        box = QMessageBox(self)
+        box.setWindowTitle(f"Help: {PAGE_LABELS[page_id]}")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(page_guide_html(page_id, PAGE_LABELS[page_id]))
+        learn_btn = box.addButton("Open Learn page", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.exec()
+        if box.clickedButton() is learn_btn:
+            self._open_page("learn")
+
     # ---- keyboard shortcuts ----
 
     def _build_shortcuts(self) -> None:
@@ -380,6 +434,7 @@ class MainWindow(QMainWindow):
         self.backups_page.rebuild_targets()
         self.exploits_page.rebuild_targets()
         self.log_search_page.rebuild_targets()
+        self.resources_page.rebuild_targets()
         self.security_feed.start(self._edge_target())
 
     def _reload_settings_page(self) -> None:

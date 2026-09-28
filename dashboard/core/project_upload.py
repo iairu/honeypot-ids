@@ -36,7 +36,7 @@ EXCLUDE_PATTERNS = [
     ".git/", "__pycache__/", "*.pyc", "venv/", "node_modules/",
     "backups/",
     "suricata_logs/", "nginx_logs/",
-    "production_eshop_files_fresh_for_diff/",
+    "production_eshop_files_fresh_for_diff/",  # scripts/fetch_pristine_wordpress.sh
     "redis_data/",
     "honeypot_database_data/", "honeypot_database_data_2/", "honeypot_database_data_3/",
     "production_database_data/", "production_mysql_data/",

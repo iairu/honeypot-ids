@@ -16,7 +16,7 @@ Oblasť: Kombinované bezpečnostné riešenia
 
 # Technical & Operational Manual
 
-This file is the single technical/functional manual for the project: what it is, how to run it, how it works in detail, what's known-broken, and what's left to do. It supersedes and merges the following (now removed) files: `CHECKLIST.md`, `CHECKLIST-MANUAL.md`, `PROMPT_TODO.md`, `walkthrough.md` (both the root and `ids/` copies), `refactoring-plan.md`, `summary-for-claude.md`, `ids/README.md`, `ids/ELK_INTEGRATION.md`, `ids/SQL_PROXY_ROUTING.md`, and `ids/reverse_proxy_enhanced/HONEYPOT_ROUTING_TEST_CASES.md`. Thesis-scoped material (the LaTeX thesis under `master-thesis-latex/`) stays separate — see [§12](#12-thesis--academic-material). `COUNTERARGUMENTS.md`, `PLAN_DP1-3.md`, and `master-thesis-rewrite-plan/` are cited a few times below for historical context but no longer exist in the repository (removed in a later cleanup pass — see §12's note).
+This file is the single technical/functional manual for the project: what it is, how to run it, how it works in detail, what's known-broken, and what's left to do. It supersedes and merges the following (now removed) files: `CHECKLIST.md`, `CHECKLIST-MANUAL.md`, `PROMPT_TODO.md`, `walkthrough.md` (both the root and `ids/` copies), `refactoring-plan.md`, `summary-for-claude.md`, `ids/README.md`, `ids/ELK_INTEGRATION.md`, `ids/SQL_PROXY_ROUTING.md`, and `ids/reverse_proxy_enhanced/HONEYPOT_ROUTING_TEST_CASES.md`. Thesis-scoped material stays separate — see [§12](#12-thesis--academic-material). `COUNTERARGUMENTS.md`, `PLAN_DP1-3.md`, and `master-thesis-rewrite-plan/` are cited a few times below for historical context but no longer exist in the repository (removed in a later cleanup pass — see §12's note).
 
 Every claim below was checked against the running system or the current source as of this writing, not copied forward from older docs — see [§9](#9-known-issues--stale-documentation-corrections) for what was found stale in the files this replaces and corrected here.
 
@@ -36,6 +36,7 @@ This system spans **two separate hosts/VMs**, each its own independent `docker-c
 # 1. On the SIEM VM first:
 sudo apt install docker docker-compose curl wget zip unzip git jq
 cd siem/certs/root-ca && ./gen_elk_certs.sh && cd ../../docker
+cp .env.example .env && vi .env   # set real passwords; .env is gitignored
 sudo docker compose up
 # wait for http://<siem-vm-ip>:5601/app/home#/ to be reachable
 
@@ -120,7 +121,7 @@ ids/
 ├── reverse_proxy_enhanced/lua/   # the actual thesis contribution — see §4
 ├── reverse_proxy_enhanced/nginx.conf
 ├── production_eshop_files/       # real WordPress+WooCommerce+omega-storefront theme
-├── production_eshop_files_fresh_for_diff/  # pristine copy, for diffing only
+├── production_eshop_files_fresh_for_diff/  # gitignored; scripts/fetch_pristine_wordpress.sh rebuilds it for diffing
 ├── testing/                      # scenario_01-09.sh + BLIND_PENTEST_PROTOCOL.md — see §5
 ├── docker-compose.yml            # ~14 services, see §3
 ├── suricata_config/, suricata_rules/, suricata_logs/
@@ -133,7 +134,6 @@ ids/
 siem/   # SEPARATE docker-compose project — SIEM backend, own host
 ARCHITECTURE.md                       # the two-host split: why, data flow, single-host testing — see §1/§6
 dashboard/                            # PyQt6 GUI: start/stop/health/certs/settings for both projects, local+remote — see dashboard/README.md
-master-thesis-latex/                  # the thesis itself (LaTeX)
 ```
 
 ---
@@ -178,10 +178,12 @@ As of this session, the request-handling Lua code follows a deliberate **pipelin
 | `honeytoken_handler.lua` | `honeytoken_rules.lua` | 9 | Token-in-corpus matching |
 | `abuseipdb_client.lua` | `abuseipdb_rules.lua` | 14 | Report-eligibility + category mapping |
 | — | `prompt_injection_filter.lua` | 20 | OWASP LLM01-style detection (already pure by design, the original model for this pattern) |
-| — | `sophistication_analyzer.lua` | (fixed, untested pre-session) | Attacker classification |
+| — | `sophistication_analyzer.lua` | 26 | Attacker classification (one `ngx.time()` stub) |
+| `init.lua` `is_ip_whitelisted` | `ip_rules.lua` | 35 | IPv4/IPv6 CIDR matching |
+| `router.lua` `decide_route()` | — (stubbed) | 46 | The full staged routing pipeline, run against in-memory stubs |
 | — | `lua_pattern_utils.lua` | 9 | Shared `url_decode`/`escape_pattern`, deduplicated from 3 copies |
 
-**224 unit tests total, all passing** (`cd ids/reverse_proxy_enhanced/lua/tests && for f in test_*.lua; do lua "$f"; done`). `router.decide_route()` deliberately stays impure — its 10-stage pipeline interleaves session mutation with Redis/AbuseIPDB I/O too deeply to safely extract without risking a bug in the single most consequential function in the system; only its self-contained predicates (`is_static_asset`, `is_admin_access`, `is_rapid_automation`, `is_suspicious_upload`, `is_vulnerable_plugin_access`) were moved out.
+**484 unit tests across 17 suites, all passing**, run on every push and PR by `.github/workflows/tests.yml` (locally: `ids/reverse_proxy_enhanced/lua/tests/run_all.sh`; the table above lists the main suites). `router.decide_route()` deliberately stays impure (its tests stub `ngx`, `_G.config`/`_G.utils`, `pool_router` and `session_handler` instead) — its 10-stage pipeline interleaves session mutation with Redis/AbuseIPDB I/O too deeply to safely extract without risking a bug in the single most consequential function in the system; only its self-contained predicates (`is_static_asset`, `is_admin_access`, `is_rapid_automation`, `is_suspicious_upload`, `is_vulnerable_plugin_access`) were moved out.
 
 **Every `architecture.canvas` refactor candidate is now either split or confirmed to need no split.** The four adapters above (`session_handler.lua`, `admin_handler.lua`, `honeytoken_handler.lua`, `abuseipdb_client.lua`) were originally assessed as "I/O-dominated, lower value" and left unsplit — a later pass found genuinely pure decision cores in all four anyway (81 new tests) once the `ngx.*`/`_G.*` reads were turned into parameters. One real bug surfaced doing it: `session_handler.lua` had its own third, never-reconciled copy of the static-asset check (`router_rules.lua` and `threat_rules.lua` already document reconciling two disagreeing copies of this same check) that still didn't strip the query string, undercounting `request_count` for static-asset loads with cache-busting query strings. `pool_router.lua` is the one node that was assessed and correctly left alone both times — 100% Redis I/O, zero pattern-matching, no pure core exists to extract.
 
@@ -199,11 +201,11 @@ Writing these tests surfaced **six real, previously-invisible bugs**, all fixed 
 
 `production_db_seed`/`honeypot_db_seed_1/2/3` are one-shot (they run once and exit 0) — see §3.4.1 for what they do and why they exist.
 
-Networks: `production_network`, `honeypot_network`, `monitoring_network`, `session_network`, `ids_network`, plus a `setup_network` that's defined but never assigned to any service (dead, harmless).
+Networks: `production_network`, `honeypot_network`, `monitoring_network`, `session_network`, `ids_network`.
 
 ### 3.4 WordPress / WooCommerce layer
 
-`production_eshop_files/` — real WordPress + WooCommerce + a custom `omega-storefront` theme + mu-plugins, served on the production path. `production_eshop_files_fresh_for_diff/` sits alongside it as a pristine reference copy for diffing (intentional, not stale duplication). Three honeypot pool instances mirror production's fingerprint (same DB name `production_database`, same theme/plugins) so an attacker sees a consistent fake environment once IP-bound via `pool_router.lua`.
+`production_eshop_files/` — real WordPress + WooCommerce + a custom `omega-storefront` theme + mu-plugins, served on the production path. A pristine WordPress core of the same version can be downloaded next to it with `ids/scripts/fetch_pristine_wordpress.sh` (into the gitignored `production_eshop_files_fresh_for_diff/`) for diffing; it used to be committed, 81 MB of stock files. Three honeypot pool instances mirror production's fingerprint (same DB name `production_database`, same theme/plugins) so an attacker sees a consistent fake environment once IP-bound via `pool_router.lua`.
 
 **Fixed (was: known architectural gap)**: `init_setup`'s WordPress file-copy step now uses `rsync -a` and re-runs on every `docker compose up`, instead of the old one-shot `tar` copy that skipped entirely once a destination had any content — that used to make honeypot pool volumes silently drift from `production_eshop_files/` after first provisioning (hit directly earlier this session: pools were missing an entire theme + mu-plugins directory after a file was added post-provisioning, worked around manually via `docker cp`). The sync deliberately does **not** use `--delete`: it's a one-directional add/update from source, so files that exist only in a pool's volume (attacker-uploaded webshells under `wp-content/uploads`, other forensic artifacts from a real session) are left untouched — verified live by planting a file in a pool, re-running `init_setup`, and confirming it survived. `production-hardening.php` removal still runs after every sync (it re-reads from source each time now, so the removal has to be re-applied every run, not just once). Database data directories (`copy_files`, not `sync_files`) intentionally kept the old one-shot skip-if-populated behavior — that data is live, mutable MySQL state where an always-resync policy would be actively wrong, not just unnecessary.
 
@@ -365,7 +367,7 @@ Cross-referenced against internal telemetry: the agent's session classified as `
 
 ### 5.3 Unit tests
 
-224 tests across 10 suites (`tests/test_*.lua`), zero `ngx.*` dependency, runnable with a plain `lua` interpreter — see §3.2.
+484 Lua tests across 17 suites (`tests/test_*.lua`), runnable with a plain Lua 5.1 interpreter via `tests/run_all.sh` — see §3.2. The dashboard's Qt-free `core/` has its own stdlib-unittest suite (`cd dashboard && python3 -m unittest discover -s tests`). CI (`.github/workflows/tests.yml`) runs both on every push and PR.
 
 ---
 
@@ -415,7 +417,7 @@ Two other real duplication/overlap findings, not (yet) fixed at the code level:
 - Honeytokens
 - Botnet slowdown (tarpit delays)
 - AbuseIPDB, sophistication scoring, prompt injection filter, blind pentest evaluation (this session)
-- Pure/adapter Lua refactor + 224 unit tests (this session, across two passes — see §7)
+- Pure/adapter Lua refactor + unit tests (484 Lua tests now, plus dashboard core tests, all in CI — see §5.3)
 - Production hardening: XML-RPC, hotlink protection, version obfuscation, backup automation, container containment, `scripts/hardening_audit.sh` (this session — see §9.3)
 - ELK Dashboards, all 4 recommended dashboards (this session — IDS Alerts and Web Traffic & Threat Overview from an earlier session, Session Analysis and Attack Patterns added this session after fixing the session-level-data gap that blocked them — see §6)
 - WordPress plugins to preinstall (this session — see below)
@@ -439,11 +441,11 @@ Verified this session by checking claims against running code — these are corr
 - **The old `ids/README.md`'s architecture diagram and integration guide described a Node.js Session Manager and a Python Threat Intel service as live, working components**, with detailed request-flow code samples. Both are confirmed **dead code** — `docker-compose.yml` explicitly comments them out with `# DEAD CODE:` markers, alongside `traffic_mirror`, `log_aggregator`, and `file_sync` (also referenced as a working "continuous 5-minute sync" feature in that same old README). The actual system does all of this directly in Lua + Redis, described accurately in §3 above.
 - **`deploy.sh`, `test_system.sh`, and `test_sql_routing.sh` do not exist** despite being referenced as primary entry points in old docs. Use `docker compose` directly (§1).
 - **`nginx.conf` is baked into the Docker image at build time** while `reverse_proxy_enhanced/lua/*.lua` is bind-mounted live — `docker compose restart` silently does not pick up nginx.conf edits, only `--build` does. Discovered mid-session while debugging what looked like a code change having no effect.
-- **`init_setup`'s file-copy is one-shot** — honeypot pool volumes drift from `production_eshop_files/` after first provisioning (§3.4).
-- **The IPv4-only whitelist** (`_G.utils.is_ip_whitelisted` in `init.lua`) doesn't match IPv6 — `127.0.0.1/32` never matches loopback over IPv6 (`::1`). Prefer `curl -4` when testing locally.
+- **Pool drift is fixed**: `init_setup` rsyncs code on every `up` and `honeypot_content_sync` replicates DB content (§3.4). rsync never deletes, so files retired from production are removed from the pools explicitly in `init_setup`.
+- **The whitelist handles IPv6 now** (`ip_rules.lua`): real CIDR matching for both families, IPv4-mapped IPv6 normalised, `::1/128` in the default list. nginx itself still only listens on IPv4.
 - **`suricata_ids` exits immediately** in the local stack — **fixed**, see §9.2. It runs continuously, sees real traffic, and produces correct alerts.
 - **The `X-Route-Target`/`X-Threat-Score` leak is fixed** (this session) — previously returned to every client on every response, which is exactly what let the blind-pentest agent (§5.2) partially confirm the deception. Now gated behind `X-Internal-Test-Auth` (`INTERNAL_TEST_SECRET` in `.env`); fails closed if unset.
-- **The self-signed TLS cert's `O=HoneypotOrg` and the `HONEYPOT_SESSION` cookie name are real, tracked, self-incriminating values**, not local-testing artifacts — confirmed by the blind pentest (§5.2). Not fixed this session; flagged as a genuine finding.
+- **Self-incriminating values fixed**: the self-signed cert's subject is now just `CN=localhost` (was `O=HoneypotOrg`), the session cookie is `SERVERID` (was `HONEYPOT_SESSION`), and the web-reachable `wp-content/sql-routing.log` is gone. The blind pentest (§5.2) used all of these to spot the deception. Existing deployments keep their old cert until `ssl_certificates/server.*` is regenerated.
 
 ### 9.1 Fixed after analyzing `check-me.log` (a real capture from an earlier, pre-pooling deployment; gitignored like all `*.log` files, no longer present in the working tree)
 
@@ -573,7 +575,7 @@ Verified live end-to-end after all four fixes: `docker compose exec backup_servi
 
 Not merged into this file (intentionally out of scope — this file is technical/functional, not thesis-like):
 
-- `master-thesis-latex/` — the thesis itself (`main.tex`, chapters under `content/`, `appendices/`, `bib/`, `assets/`).
+- The LaTeX thesis (`master-thesis-latex/`) is no longer in this repository, and its CI workflow was removed with it.
 
 **Note on repo history**: earlier working notes referenced elsewhere in this file's changelog (§10) — `COUNTERARGUMENTS.md`, `PLAN_DP1/2/3.md`, `master-thesis-rewrite-plan/` (the "Shadow Honeypot" rewrite proposal, including its `ngx_http_mirror_module`-based Suricata integration idea), and `future-claude-prompts.md` — were removed from the repository root during a later cleanup pass and no longer exist. Where those old proposals are still relevant, the outcome is documented directly in the sections above (e.g. §3.6/§9.2 for what was actually implemented for Suricata traffic visibility, which ended up being `network_mode: host` + PCAP rather than nginx-level mirroring).
 

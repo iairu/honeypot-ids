@@ -166,15 +166,17 @@ local function score_user_agent(user_agent)
         return scores, "missing_user_agent"
     end
 
+    -- Plain find (4th arg): fragments are literals, and as Lua patterns the
+    -- "-" in e.g. "go-http-client" is a repeat operator that never matches.
     for _, fragment in ipairs(SCRIPTED_UA_FRAGMENTS) do
-        if string.find(ua_lower, fragment) then
+        if string.find(ua_lower, fragment, 1, true) then
             scores.scripted = scores.scripted + 35
             return scores, "scripted_tool_ua:" .. fragment
         end
     end
 
     for _, fragment in ipairs(AI_AGENT_UA_FRAGMENTS) do
-        if string.find(ua_lower, fragment) then
+        if string.find(ua_lower, fragment, 1, true) then
             scores.ai_assisted = scores.ai_assisted + 35
             return scores, "ai_agent_client_ua:" .. fragment
         end

@@ -157,10 +157,15 @@ class FastSampler:
     False and callers fall back to collect_live(). Container -> cgroup mapping
     is resolved ONCE at construction (a couple of docker calls); each sample()
     is then just a handful of tiny file reads (well under a millisecond each),
-    so it can be polled several times a second."""
+    so it can be polled several times a second.
+
+    refresh() picks up containers that started (or were recreated) after
+    construction -- a "Start with PDF graph export" from a stopped stack has
+    nothing running yet when the sampler is built."""
 
     def __init__(self, target: Target):
         self.available = False
+        self._target = target
         self._paths: dict[str, dict] = {}   # service -> {mode, cpu, mem}
         self._cid: dict[str, str] = {}       # service -> short container id
         self._prev: dict[str, tuple[int, float]] = {}  # service -> (cpu_ns, wall)
@@ -171,16 +176,28 @@ class FastSampler:
             listing = target.ps(timeout=10)
         except Exception:  # noqa: BLE001
             return
+        self.refresh(listing)
+
+    def refresh(self, listing: list[dict]) -> None:
+        """Resolve cgroup paths for running containers in a `ps` listing that
+        aren't being sampled yet, or whose container id changed (recreated).
+        One `docker inspect` for just those; a no-op when nothing is new."""
+        if self._target.is_remote:
+            return
         running = {}
         for c in listing:
             cid = c.get("ID") or ""
             svc = c.get("Service") or c.get("Name") or ""
-            if cid and svc and c.get("State") == "running":
-                running[cid] = svc
+            if not (cid and svc and c.get("State") == "running"):
+                continue
+            known = self._cid.get(svc, "")
+            if known and (known.startswith(cid[:12]) or cid.startswith(known)):
+                continue
+            running[cid] = svc
         if not running:
             return
         ids = " ".join(shlex.quote(i) for i in running)
-        out = _run(target,
+        out = _run(self._target,
                    "docker inspect --format '{{.Id}} {{.State.Pid}}' " + ids,
                    timeout=10)
         for line in out.splitlines():
@@ -196,6 +213,7 @@ class FastSampler:
             if paths:
                 self._paths[svc] = paths
                 self._cid[svc] = full_id[:12]
+                self._prev.pop(svc, None)  # new container: fresh CPU baseline
         self.available = bool(self._paths)
 
     def _resolve(self, full_id: str, pid: str) -> dict | None:

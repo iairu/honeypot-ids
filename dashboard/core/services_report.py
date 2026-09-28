@@ -32,10 +32,11 @@ from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPen, QTextDocument
 from PyQt6.QtPrintSupport import QPrinter
 
 from core import resource_stats as rs
-from core.container_status import classify, is_ready
+from core.container_status import classify, start_settled
 from core.docker_ctl import Target
 from core.exploit_report_pdf import _report_font_family, _FONT_CSS_STACK, _esc, _resource_series_color
 from core import diagrams
+from core import report_stats as st
 
 SAMPLE_INTERVAL_S = 2.0
 # When the fast cgroup sampler is available (local host), sample resources this
@@ -43,7 +44,13 @@ SAMPLE_INTERVAL_S = 2.0
 # `docker compose ps` status/event check this often (it's ~0.5s per call).
 FAST_SAMPLE_INTERVAL_S = 0.25
 STATUS_CHECK_INTERVAL_S = 1.5
-START_MAX_SECONDS = 150.0
+# A safety cap, not the normal end of a start recording: that is
+# container_status.start_settled(). It has to outlast the slowest legitimate
+# start -- on a first boot the three honeypot MySQL pools initialise one after
+# another for minutes (their healthchecks allow a 420s start_period), and
+# `up -d` may build images first. The old 150s cap cut recordings off while
+# the databases were still coming up.
+START_MAX_SECONDS = 900.0
 STOP_MAX_SECONDS = 90.0
 # Keep sampling this long after the stack first looks settled, to catch the
 # post-startup tail (background jobs, first healthchecks).
@@ -59,7 +66,8 @@ class ServicesReport:
     target_label: str = ""
     operation: str = "start"          # "start" | "stop"
     duration_s: float = 0.0
-    exit_code: int | None = None      # the compose command's exit code (stop)
+    exit_code: int | None = None      # the compose command's exit code
+    hit_time_cap: bool = False        # stopped by START/STOP_MAX_SECONDS, not by settling
     # (elapsed_s, cpu_pct, ram_pct) for the whole host:
     sys_samples: list = field(default_factory=list)
     # (elapsed_s, {service: (cpu_pct, mem_bytes)}):
@@ -112,6 +120,8 @@ def _detect_events(prev: dict, cur: dict, elapsed: float, events: list) -> None:
         elif st != was:
             if st == "healthy":
                 add(f"{svc} healthy")
+            elif st == "starting" and was in ("created", "running"):
+                add(f"{svc} running, health pending")
             elif st == "unhealthy":
                 add(f"{svc} unhealthy")
             elif st == "exited_bad":
@@ -145,7 +155,9 @@ class ServicesReportWorker(QThread):
         self._cancel = True
 
     def notify_operation_finished(self, exit_code: int) -> None:
-        """Called (GUI thread) when the compose command for this export exits."""
+        """Called (GUI thread) when the compose command for this export exits.
+        For a start that's `up -d`, which returns once every depends_on
+        condition it waited on was met; for a stop it's `down`."""
         self._op_exit_code = exit_code
         self._op_done.set()
 
@@ -192,16 +204,16 @@ class ServicesReportWorker(QThread):
 
             # Fast (sub-second) per-container sampling from cgroups on a local
             # host; falls back to ~2s docker-stats sampling for a remote target.
+            # The sampler is refreshed on every status check below, so a
+            # start from a stopped stack switches to fast sampling as soon as
+            # the first containers are running.
             sampler = rs.FastSampler(self._target)
-            fast = sampler.available
-            sample_interval = FAST_SAMPLE_INTERVAL_S if fast else SAMPLE_INTERVAL_S
-            if fast:
-                svc_to_cid = sampler.cids
+            if sampler.available:
                 sampler.sample()  # prime CPU% delta baseline
             last_status_check = -1e9
 
             def _container_snap() -> dict:
-                if fast:
+                if sampler.available:
                     return {svc: (cpu, mem) for svc, cpu, mem in sampler.sample()}
                 try:
                     live = rs.collect_live(self._target)
@@ -212,6 +224,7 @@ class ServicesReportWorker(QThread):
             while not self._cancel:
                 elapsed = time.time() - start
                 if elapsed > self._max_seconds:
+                    data.hit_time_cap = True
                     break
                 self.progress.emit(
                     f"Recording {op} ({int(elapsed)}s)",
@@ -245,18 +258,28 @@ class ServicesReportWorker(QThread):
                     was_status = prev_status
                     prev_status = status
                     ps = self._target.ps()
-                    all_ready = bool(ps) and all(is_ready(c) for c in ps)
+                    sampler.refresh(ps)
 
                     if op == "start":
                         if not captured_mid and status:
                             data.stage_shots.append((
                                 "Starting: containers coming up", self._grab_health("mid")))
                             captured_mid = True
-                        if all_ready and settled_at is None:
+                        # Settled = `up -d` has exited AND nothing is still
+                        # created/health-starting. Checking only that every
+                        # container in `ps` looked ready ended the recording
+                        # while services further down the dependency chain
+                        # hadn't even been started yet.
+                        if settled_at is None and start_settled(
+                                ps, self._op_exit_code if self._op_done.is_set() else None):
                             settled_at = time.time()
+                            data.exit_code = self._op_exit_code
                             if not captured_end:
-                                data.stage_shots.append((
-                                    "All containers healthy", self._grab_health("end")))
+                                all_healthy = all(classify(c) in ("healthy", "running", "exited_ok")
+                                                  for c in ps)
+                                caption = ("All containers healthy" if all_healthy
+                                           else "Start finished (some containers not healthy)")
+                                data.stage_shots.append((caption, self._grab_health("end")))
                                 captured_end = True
                         if settled_at is not None and time.time() - settled_at > SETTLE_TAIL_S:
                             break
@@ -286,6 +309,7 @@ class ServicesReportWorker(QThread):
                     data.exit_code = self._op_exit_code
                     break
 
+                sample_interval = FAST_SAMPLE_INTERVAL_S if sampler.available else SAMPLE_INTERVAL_S
                 deadline = time.time() + sample_interval
                 while time.time() < deadline and not self._cancel:
                     time.sleep(min(0.1, max(0.0, deadline - time.time())))
@@ -420,6 +444,73 @@ def _ts_chart(series: dict, colors: dict, events: list, y_label: str,
     return img
 
 
+# Load levels whose share of the recording the host table reports.
+_LEVELS_PCT = (50.0, 80.0)
+
+
+def _host_stats_html(sys_samples: list) -> str:
+    """Host CPU and RAM over the recorded window: mean and SD, the 95th
+    percentile and peak, how far the peak sits from normal, and the chance a
+    random moment of the window was at or above each load level.
+
+    No confidence interval of the mean here: the window IS the whole run, and
+    a single start/stop can't say how the next one would differ."""
+    rows = []
+    for idx, name in ((1, "Host CPU"), (2, "Host RAM used")):
+        vals = [smp[idx] for smp in sys_samples]
+        s = st.summarize(vals)
+        if s is None:
+            continue
+        rows.append((f"{name}, mean &plusmn; SD", f"{s.mean:.1f}% &plusmn; {s.sd:.1f}",
+                     f"average over {s.n} samples; the SD is the typical swing around it"))
+        rows.append((f"{name}, 95th percentile / peak", f"{s.p95:.1f}% / {s.max:.1f}%",
+                     "95% of the time usage was at or below the first figure"))
+        if s.sd > 0:
+            z = (s.max - s.mean) / s.sd
+            rows.append((f"{name}, how unusual the peak is", f"{z:.1f} SD above the mean",
+                         "more than ~3 SD is a rare spike rather than normal fluctuation"))
+        for level in _LEVELS_PCT:
+            share = st.exceedance(vals, level)
+            rows.append((f"{name}, P(&ge;{level:.0f}%)", st.fmt_pct(share, 1),
+                         "chance a random moment of this recording was at least this busy"))
+    return st.stats_table_html(rows, "Probability metrics: host")
+
+
+def _container_stats_html(container_samples: list, svcs: list) -> str:
+    """One row per container: mean CPU and SD, 95th percentile and peak CPU,
+    the share of the window above 50% CPU, mean memory and SD."""
+    rows = []
+    for svc in svcs:
+        cpu_vals = [snap[svc][0] for _, snap in container_samples if svc in snap]
+        cpu = st.summarize(cpu_vals)
+        mem = st.summarize([snap[svc][1] / 1048576.0 for _, snap in container_samples
+                            if svc in snap])
+        if cpu is None or mem is None:
+            continue
+        rows.append(
+            '<tr>'
+            f'<td>{_esc(svc)}</td>'
+            f'<td>{cpu.mean:.1f}% &plusmn; {cpu.sd:.1f}</td>'
+            f'<td>{cpu.p95:.1f}% / {cpu.max:.1f}%</td>'
+            f'<td>{st.fmt_pct(st.exceedance(cpu_vals, 50.0), 1)}</td>'
+            f'<td>{mem.mean:.0f} &plusmn; {mem.sd:.0f}</td>'
+            '</tr>')
+    if not rows:
+        return ""
+    return ('<table width="100%" cellspacing="0" cellpadding="3" border="1" '
+            'style="border-collapse:collapse; font-size:9pt; margin-top:4px; color:#333;">'
+            '<tr style="background-color:#eef3f8;"><th align="left" colspan="5">'
+            'Probability metrics: per container</th></tr>'
+            '<tr><th align="left">Container</th><th align="left">CPU mean &plusmn; SD</th>'
+            '<th align="left">CPU p95 / peak</th><th align="left">P(CPU &ge; 50%)</th>'
+            '<th align="left">Memory MiB, mean &plusmn; SD</th></tr>' + "".join(rows) + '</table>'
+            '<p style="color:#666; font-size:9pt;">P(CPU &ge; 50%) is the share of the '
+            'recording the container spent at half a core or more, i.e. the chance of '
+            'catching it that busy at a random moment. A peak far above the p95 means a '
+            'short burst (typically start-up work or a first healthcheck) rather than '
+            'sustained load.</p>')
+
+
 def render_services_pdf(data: ServicesReport, out_path: str) -> None:
     family = _report_font_family()
     doc = QTextDocument()
@@ -436,12 +527,17 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
                  + (f' &nbsp;&middot;&nbsp; compose exit code: <b>{data.exit_code}</b>'
                     if data.exit_code is not None else '')
                  + '</td></tr></table><hr/>')
+    if data.hit_time_cap:
+        parts.append('<p style="color:#b35900;"><b>Recording hit its time limit</b> '
+                     f'({data.duration_s:.0f}s) before the stack settled, so the charts end '
+                     'while containers were still changing state.</p>')
     parts.append('<p style="color:#555;">Resource usage recorded while the stack was '
                  f'{"brought up" if data.operation == "start" else "taken down"}. Each dashed '
                  'red vertical line marks a major event (a container starting, going healthy or '
                  'unhealthy, or stopping); the largest CPU peak is called out with the event it '
                  'lines up with. <b>Figure 1</b> shows how these services fit together &ndash; '
                  'the per-container graphs below track each box in it.</p>')
+    parts.append(st.GLOSSARY_HTML)
     parts.append(diagrams.figure_html(
         doc, diagrams.architecture_diagram(family), "svc-arch", 1,
         "System architecture: the services whose CPU / memory the per-container charts below "
@@ -462,6 +558,7 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
         parts.append(f'<span style="color:#444; font-size:10px;">'
                      f'<span style="color:{_SYS_CPU_COLOR};">&#9632;</span> host CPU % &nbsp; '
                      f'<span style="color:{_SYS_RAM_COLOR};">&#9632;</span> host RAM % used</span>')
+        parts.append(_host_stats_html(data.sys_samples))
     else:
         parts.append('<p style="color:#c62828;">Host CPU/RAM was not available on this target.</p>')
 
@@ -481,6 +578,7 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
         legend = " &nbsp; ".join(
             f'<span style="color:{cmap[s].name()};">&#9632;</span> {_esc(s)}' for s in svcs)
         parts.append(f'<span style="color:#444; font-size:10px;">Legend: {legend}</span>')
+        parts.append(_container_stats_html(data.container_samples, svcs))
     else:
         parts.append('<p style="color:#666;">No per-container samples were captured.</p>')
 

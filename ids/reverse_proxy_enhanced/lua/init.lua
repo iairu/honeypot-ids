@@ -73,8 +73,18 @@ _G.config = {
         host = "session_store",
         port = 6379,
         password = os.getenv("REDIS_PASSWORD") or "session_redis_password",  -- Fallback for backwards compatibility
-        timeout = 1000,
-        read_timeout = 3000,
+        -- 2000/5000 (was 1000/3000): confirmed live that under a post-startup
+        -- load burst (all 4 DBs bootstrapping + 4 PHP + ES/Kibana on shared
+        -- CPUs) even the AUTH reply occasionally missed the old 3 s read
+        -- window, logging "Failed to authenticate with Redis: timeout" from a
+        -- background timer. Redis itself isn't slow (empty slowlog) -- it's a
+        -- host scheduling stall -- so widening the window a bit, plus the
+        -- single reconnect retry get_connection() now does, absorbs the
+        -- hiccup instead of failing a whole background cycle. Off the hot path
+        -- (see init_worker.lua's mirror_replication_flags note), so no
+        -- per-request latency cost.
+        timeout = 2000,
+        read_timeout = 5000,
         pool_size = 100,
         backlog = nil
     },
@@ -83,8 +93,13 @@ _G.config = {
     -- session: HTTP session management parameters.
     --
     --   cookie_name        – Name of the session-tracking cookie set by Nginx.
-    --                        Deliberately resembles a standard PHP session cookie
-    --                        to avoid raising suspicion in browser DevTools.
+    --                        "SERVERID" mimics an ordinary load-balancer
+    --                        stickiness cookie (HAProxy's default name) so it
+    --                        reveals nothing in DevTools. It used to be
+    --                        "HONEYPOT_SESSION", which gave the deception away
+    --                        in the blind pentest. nginx.conf's `security`
+    --                        log_format hardcodes $cookie_SERVERID; keep the two
+    --                        in sync.
     --   max_idle_time      – Session TTL in seconds after the last request.
     --                        3600 s (1 hour) matches typical WooCommerce checkout
     --                        session durations so honeypot sessions feel realistic.
@@ -93,7 +108,7 @@ _G.config = {
     --                        entries from the local shared dict.
     -- -----------------------------------------------------------------------
     session = {
-        cookie_name = "HONEYPOT_SESSION",
+        cookie_name = "SERVERID",
         max_idle_time = 3600,
         cleanup_interval = 300
     },
@@ -133,12 +148,25 @@ _G.config = {
     threat = {
         ip_whitelist = {
             "127.0.0.1/32",
+            "::1/128",          -- IPv6 loopback
             "100.64.0.0/10",    -- Tailscale
+            "fd7a:115c:a1e0::/48", -- Tailscale IPv6
             "10.0.0.0/8",       -- Private networks
         },
         max_threat_score = 100,
         honeypot_threshold = 80,  -- Raised from 50 to prevent false positives
-        score_decay_half_life_seconds = tonumber(os.getenv("SCORE_DECAY_HALF_LIFE_SECONDS")) or 300,
+        -- THREAT_DECAY_ENABLED=false turns threat decay OFF entirely: a
+        -- half-life of 0 makes every decay path (router_rules/suricata_rules
+        -- decayed_score, decay_policy.decay) return the stored peak unchanged,
+        -- so a session's / IP's threat score persists indefinitely once earned.
+        -- Default true, using SCORE_DECAY_HALF_LIFE_SECONDS (or 300).
+        score_decay_half_life_seconds = (function()
+            local enabled = (os.getenv("THREAT_DECAY_ENABLED") or "true"):lower()
+            if enabled == "false" or enabled == "0" or enabled == "no" then
+                return 0
+            end
+            return tonumber(os.getenv("SCORE_DECAY_HALF_LIFE_SECONDS")) or 300
+        end)(),
         -- Escalation of the decay above (see lua/decay_policy.lua): decay is
         -- slowed based on how much abuse a source has actually committed,
         -- tracked as an uncapped `offenses` count (bumped once per recorded
@@ -452,54 +480,15 @@ _G.config = {
 -- ---------------------------------------------------------------------------
 _G.utils = {}
 
---- Check whether an IP address falls within any whitelisted range.
+--- Check whether an IP address (IPv4 or IPv6) falls within any range in
+--- _G.config.threat.ip_whitelist. Real bit-level CIDR matching, including
+--- non-octet-aligned prefixes like /10 and IPv4-mapped IPv6 clients; see
+--- ip_rules.lua and tests/test_ip_rules.lua.
 ---
---- Uses a prefix-length-aware string comparison rather than a full CIDR
---- library to keep the dependency footprint minimal.  Sufficient for the
---- small, well-structured whitelist defined in _G.config.threat.ip_whitelist.
----
---- LIMITATION: The prefix-length field is parsed but the actual bit-mask
---- comparison is approximated by string prefix matching on the dotted-decimal
---- representation.  This works correctly for /8, /16, /24, and /32 masks
---- (which cover all entries in the default whitelist) but may produce wrong
---- results for non-octet-aligned prefixes such as /10 on a /12 boundary.
---- A production deployment with complex CIDR requirements should replace this
---- with a proper CIDR library.
----
---- @param  ip  string  IPv4 address in dotted-decimal notation.
+--- @param  ip  string  Client address as nginx reports it ($remote_addr).
 --- @return boolean  true if the IP is whitelisted.
 function _G.utils.is_ip_whitelisted(ip)
-    local whitelisted_ranges = _G.config.threat.ip_whitelist
-    local bit = require("bit")
-    
-    local function ip2num(ip_str)
-        if not ip_str then return nil end
-        local a, b, c, d = ip_str:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
-        if not a then return nil end
-        return bit.bor(bit.lshift(tonumber(a), 24), bit.lshift(tonumber(b), 16), bit.lshift(tonumber(c), 8), tonumber(d))
-    end
-
-    local ip_num = ip2num(ip)
-    if not ip_num then return false end
-
-    for _, range in ipairs(whitelisted_ranges) do
-        if string.find(range, "/") then
-            local network, prefix = range:match("([^/]+)/(%d+)")
-            local net_num = ip2num(network)
-            prefix = tonumber(prefix)
-            if net_num and prefix then
-                local mask = bit.lshift(-1, 32 - prefix)
-                if bit.band(ip_num, mask) == bit.band(net_num, mask) then
-                    return true
-                end
-            end
-        else
-            if ip == range then
-                return true
-            end
-        end
-    end
-    return false
+    return require("ip_rules").in_any(ip, _G.config.threat.ip_whitelist)
 end
 
 --- URL-decode a string (percent-encoding and "+" as space).
@@ -621,29 +610,48 @@ _G.redis_pool = {}
 --- Borrow a Redis connection from the worker-local keepalive pool.
 --- @return redis|nil, string|nil  Connection object or nil + error message.
 function _G.redis_pool.get_connection()
-    local red = redis:new()
-    -- set_timeouts(connect, send, read) -- see the config block's
-    -- read_timeout note for why the reply timeout is the looser one.
-    red:set_timeouts(_G.config.redis.timeout, _G.config.redis.timeout, _G.config.redis.read_timeout)
-    
-    local ok, err = red:connect(_G.config.redis.host, _G.config.redis.port)
-    if not ok then
-        ngx.log(ngx.ERR, "Failed to connect to Redis: ", err)
-        return nil, err
-    end
-    
-    -- Authenticate if password is set.
-    -- AUTH is sent even on keepalive-reused connections because resty-redis
-    -- does not track auth state across the keepalive pool boundary.
-    if _G.config.redis.password then
-        local res, err = red:auth(_G.config.redis.password)
-        if not res then
-            ngx.log(ngx.ERR, "Failed to authenticate with Redis: ", err)
-            return nil, err
+    -- One connect+auth attempt. Returns (red, nil) or (nil, err). A pooled
+    -- socket that has silently gone bad surfaces here as a connect or AUTH
+    -- error/timeout, which is exactly the transient case the retry below
+    -- absorbs.
+    local function attempt()
+        local red = redis:new()
+        -- set_timeouts(connect, send, read) -- see the config block's
+        -- read_timeout note for why the reply timeout is the looser one.
+        red:set_timeouts(_G.config.redis.timeout, _G.config.redis.timeout, _G.config.redis.read_timeout)
+
+        local ok, err = red:connect(_G.config.redis.host, _G.config.redis.port)
+        if not ok then
+            return nil, "connect: " .. tostring(err)
         end
+
+        -- Authenticate if password is set. AUTH is sent even on
+        -- keepalive-reused connections because resty-redis does not track
+        -- auth state across the keepalive pool boundary.
+        if _G.config.redis.password then
+            local res, aerr = red:auth(_G.config.redis.password)
+            if not res then
+                return nil, "auth: " .. tostring(aerr)
+            end
+        end
+        return red, nil
     end
-    
-    return red, nil
+
+    -- Retry once on a transient connect/auth failure (typically a "timeout"
+    -- from a momentary host scheduling stall, or a stale pooled socket). A
+    -- second, genuinely-failing attempt is logged and returned so callers
+    -- still degrade gracefully; the retry just stops a single hiccup from
+    -- failing a whole background cycle.
+    local red, err = attempt()
+    if red then
+        return red, nil
+    end
+    red, err = attempt()
+    if red then
+        return red, nil
+    end
+    ngx.log(ngx.ERR, "Redis get_connection failed after retry: ", err)
+    return nil, err
 end
 
 --- Return a Redis connection to the worker-local keepalive pool.

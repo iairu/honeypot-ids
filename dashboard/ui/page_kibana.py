@@ -20,6 +20,10 @@ Beyond a bare embedded browser:
     Discover page, laid out in a FlowLayout (ui/flow_layout.py) alongside
     the "Remember credentials" checkbox so an arbitrary number of them
     wraps onto additional rows instead of forcing the window wider.
+  - "Export PDF…": full-page screenshots of every bookmark page, each with
+    a short explanation of what it shows (ui/kibana_export.py captures in a
+    hidden view sharing this page's login; core/kibana_report.py writes the
+    PDF).
   - A causality banner on load failure: QWebEngineView's own error page
     just says something generic like "can't reach this page", with no way
     for the user to tell "is the SIEM stack down, or something else" --
@@ -30,14 +34,22 @@ Beyond a bare embedded browser:
 from __future__ import annotations
 
 import json
+import os
 
-from PyQt6.QtWidgets import QCheckBox, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtWidgets import (
+    QCheckBox, QFileDialog, QLabel, QMessageBox, QProgressDialog, QPushButton, QVBoxLayout,
+    QWidget,
+)
 
 from core.docker_ctl import target_for
 from core.kibana_credentials import get_elastic_credentials
+from core.kibana_report import render_kibana_pdf
 from core.state import AppState
 from ui.browser_widget import BrowserWidget
 from ui.flow_layout import FlowLayout
+from ui.kibana_export import KibanaCapture
 
 KIBANA_PORT = 5601
 _PROFILE_NAME = "kibana_dashboard"
@@ -132,6 +144,15 @@ class KibanaPage(QWidget):
             btn.clicked.connect(lambda _checked, p=path: self._navigate_to(p))
             toolbar.addWidget(btn)
 
+        self.export_btn = QPushButton("Export PDF…")
+        self.export_btn.setToolTip(
+            "Full-page screenshot of every page button above, each with an explanation "
+            "of what it shows, in one PDF")
+        self.export_btn.clicked.connect(self._export_pdf)
+        toolbar.addWidget(self.export_btn)
+        self._capture: KibanaCapture | None = None
+        self._export_path = ""
+
         toolbar_widget = QWidget()
         toolbar_widget.setLayout(toolbar)
         layout.addWidget(toolbar_widget)
@@ -175,6 +196,71 @@ class KibanaPage(QWidget):
         # repeat that round-trip on every navigation.
         self._credentials = get_elastic_credentials(self.state)
         self._autologin_attempted_for_url = None
+
+    def _autologin_script(self) -> str | None:
+        if not self._credentials:
+            return None
+        username, password = self._credentials
+        return _AUTOLOGIN_JS_TEMPLATE % {
+            "username": json.dumps(username),
+            "password": json.dumps(password),
+        }
+
+    def _export_pdf(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Kibana PDF", "kibana-pages.pdf", "PDF files (*.pdf)")
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+        self._export_path = path
+        self.export_btn.setEnabled(False)
+        # The capture shares this browser's profile; rebuilding the browser
+        # (the toggle below) mid-capture would delete it out from under it.
+        self.remember_check.setEnabled(False)
+
+        self._progress = QProgressDialog("Capturing Kibana pages…", "Cancel", 0, len(_BOOKMARKS), self)
+        self._progress.setWindowTitle("Kibana PDF export")
+        self._progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._progress.setMinimumDuration(0)
+        self._progress.setValue(0)
+
+        self._capture = KibanaCapture(
+            self.browser.profile, _default_kibana_url(self.state), _BOOKMARKS,
+            autologin_js=self._autologin_script(), parent=self)
+        self._capture.progress.connect(self._on_capture_progress)
+        self._capture.done.connect(self._on_capture_done)
+        self._progress.canceled.connect(self._capture.cancel)
+        self._capture.start()
+
+    def _on_capture_progress(self, index: int, label: str) -> None:
+        self._progress.setValue(index)
+        self._progress.setLabelText(f"Capturing {index + 1}/{len(_BOOKMARKS)}: {label}…")
+
+    def _on_capture_done(self, shots: list) -> None:
+        cancelled = self._progress.wasCanceled()
+        self._progress.canceled.disconnect()
+        self._progress.close()
+        self._capture.deleteLater()
+        self._capture = None
+        self.export_btn.setEnabled(True)
+        self.remember_check.setEnabled(True)
+        if cancelled or not shots:
+            return
+        path = self._export_path
+        try:
+            captured = render_kibana_pdf(shots, path, _default_kibana_url(self.state))
+        except Exception as e:  # noqa: BLE001 -- surface any render failure to the user
+            QMessageBox.warning(self, "Export failed", str(e))
+            return
+        missing = len(shots) - captured
+        note = (f"\n\n{missing} page(s) could not be captured; the PDF says why."
+                if missing else "")
+        if QMessageBox.question(
+            self, "Saved",
+            f"Saved the Kibana PDF ({captured} page screenshot(s)) to:\n{path}{note}\n\nOpen it now?",
+        ) == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(path)))
 
     def _navigate_to(self, path: str) -> None:
         base = _default_kibana_url(self.state).rstrip("/")
@@ -240,9 +326,4 @@ class KibanaPage(QWidget):
             return
         self._autologin_attempted_for_url = url_str
 
-        username, password = self._credentials
-        script = _AUTOLOGIN_JS_TEMPLATE % {
-            "username": json.dumps(username),
-            "password": json.dumps(password),
-        }
-        self.browser.page.runJavaScript(script)
+        self.browser.page.runJavaScript(self._autologin_script())

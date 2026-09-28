@@ -73,6 +73,11 @@ class AppState:
     # ui/security_feed.py. Each entry: {timestamp, kind, label, detail,
     # color, score}.
     security_events: list = field(default_factory=list)
+    # Learn page (ui/page_learn.py): ids of guided-lab steps the user has
+    # ticked off (core/learning.LABS), and whether the one-time welcome
+    # that opens the Learn page on first launch has been shown.
+    learn_completed_steps: list = field(default_factory=list)
+    learn_welcome_shown: bool = False
 
     @classmethod
     def load(cls) -> "AppState":
