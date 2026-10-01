@@ -43,6 +43,8 @@ jobs:
             ids/production_eshop_files/wp-content/db.php
             ids/production_eshop_files/wp-content/mu-plugins/honeypot-db-backend-header.php
             siem/docker/.env.example
+            siem/kibana
+            siem/vector/vector.yaml
           sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:

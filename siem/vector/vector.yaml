@@ -77,6 +77,34 @@ transforms:
             del(.session_id)
           }
         }
+        # Routing-decision fields (nginx.conf's log_format security, filled
+        # from router_rules.lua's decision_trace()): this request's own
+        # score, the session's decayed carry-over, offenses, decay state,
+        # whether the URI matched an attack pattern (uri_class
+        # attack_pattern/safe) and which patterns, and the honeypot reason.
+        # A separate parse so lines from an older proxy without them still
+        # get the fields above.
+        dec, dec_err = parse_regex(.message,
+          r'request_score="(?P<request_score>[^"]*)" decayed_score="(?P<decayed_score>[^"]*)" offenses="(?P<offenses>[^"]*)" decay_state="(?P<decay_state>[^"]*)" uri_class="(?P<uri_class>[^"]*)" patterns="(?P<patterns>[^"]*)" reason="(?P<route_reason>[^"]*)"')
+        if dec_err == null {
+          . = merge(., dec)
+          .request_score = to_int(.request_score) ?? 0
+          .decayed_score = to_int(.decayed_score) ?? 0
+          .offenses = to_int(.offenses) ?? 0
+          # Points the effective threat_score gained from history rather
+          # than from this request -- how much decay still has to wear off.
+          carried = (to_int(.threat_score) ?? 0) - .request_score
+          if carried < 0 { carried = 0 }
+          .carried_score = carried
+          if .patterns == "-" {
+            del(.patterns)
+          } else {
+            .patterns = split(string!(.patterns), "|")
+          }
+          if .route_reason == "-" {
+            del(.route_reason)
+          }
+        }
       }
 
       ##############################################################
