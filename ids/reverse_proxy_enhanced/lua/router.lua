@@ -132,7 +132,8 @@ local function assign_honeypot_pool(routing_decision, extra_session_data, remote
     ngx.log(ngx.WARN,
         "[POOL] IP ", remote_ip,
         " assigned to honeypot pool ", pool_num,
-        " (upstream=", upstream, ")",
+        " (honeypot_eshop_", pool_num, " + honeypot_database_", pool_num,
+        ", upstream=", upstream, ")",
         " reason=", sd.honeypot_reason or "unknown")
 
     return pool_num

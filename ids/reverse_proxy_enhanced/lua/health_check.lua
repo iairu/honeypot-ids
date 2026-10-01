@@ -6,6 +6,18 @@ local cjson = require "cjson"
 
 local _M = {}
 
+-- Log lines name the containers behind an upstream ("honeypot pool 2
+-- (honeypot_eshop_2 + honeypot_database_2) [honeypot_backend_2]") rather than
+-- the bare upstream alias, which is no container or compose service anyone can
+-- find. See pool_router_rules.describe_upstream().
+local rules_ok, pool_rules = pcall(require, "pool_router_rules")
+local function label(backend_name)
+    if rules_ok then
+        return pool_rules.describe_upstream(backend_name)
+    end
+    return backend_name
+end
+
 -- Health check configuration
 --
 -- HEALTH_CHECK_TIMEOUT was previously declared here but never actually
@@ -58,16 +70,16 @@ function _M.check_backend(backend_name, backend_url)
     })
     
     if not res then
-        ngx.log(ngx.WARN, "[HEALTH] Backend ", backend_name, " check failed: ", err)
+        ngx.log(ngx.WARN, "[HEALTH] Backend ", label(backend_name), " check failed: ", err)
         return false, err
     end
     
     -- Accept 200-399 status codes (including redirects) as healthy
     if res.status >= 200 and res.status < 400 then
-        ngx.log(ngx.DEBUG, "[HEALTH] Backend ", backend_name, " is healthy (status: ", res.status, ")")
+        ngx.log(ngx.DEBUG, "[HEALTH] Backend ", label(backend_name), " is healthy (status: ", res.status, ")")
         return true
     else
-        ngx.log(ngx.WARN, "[HEALTH] Backend ", backend_name, " returned unhealthy status: ", res.status)
+        ngx.log(ngx.WARN, "[HEALTH] Backend ", label(backend_name), " returned unhealthy status: ", res.status)
         return false, "unhealthy_status_" .. res.status
     end
 end
@@ -109,7 +121,7 @@ function _M.update_backend_status(backend_name, is_healthy)
         -- Mark as unhealthy if it fails threshold
         if current_status.consecutive_failures >= UNHEALTHY_THRESHOLD then
             current_status.healthy = false
-            ngx.log(ngx.ERR, "[HEALTH] Backend ", backend_name, " marked as UNHEALTHY after ", 
+            ngx.log(ngx.ERR, "[HEALTH] Backend ", label(backend_name), " marked as UNHEALTHY after ", 
                    current_status.consecutive_failures, " consecutive failures")
         end
     end
@@ -137,7 +149,7 @@ function _M.is_backend_ready(backend_name)
     -- If last check was more than 30 seconds ago, consider it stale
     local current_time = ngx.time()
     if status.last_check and (current_time - status.last_check) > 30 then
-        ngx.log(ngx.WARN, "[HEALTH] Backend ", backend_name, " status is stale, assuming ready")
+        ngx.log(ngx.WARN, "[HEALTH] Backend ", label(backend_name), " status is stale, assuming ready")
         return true -- Assume ready to avoid blocking traffic
     end
     
@@ -149,13 +161,13 @@ function _M.wait_for_backend(backend_name, backend_url, max_wait_seconds)
     local start_time = ngx.time()
     local wait_seconds = 0
     
-    ngx.log(ngx.INFO, "[HEALTH] Waiting for backend ", backend_name, " to become ready...")
+    ngx.log(ngx.INFO, "[HEALTH] Waiting for backend ", label(backend_name), " to become ready...")
     
     while wait_seconds < max_wait_seconds do
         local is_healthy = _M.perform_health_check(backend_name, backend_url)
         
         if is_healthy then
-            ngx.log(ngx.INFO, "[HEALTH] Backend ", backend_name, " is ready after ", wait_seconds, " seconds")
+            ngx.log(ngx.INFO, "[HEALTH] Backend ", label(backend_name), " is ready after ", wait_seconds, " seconds")
             return true
         end
         
@@ -163,13 +175,13 @@ function _M.wait_for_backend(backend_name, backend_url, max_wait_seconds)
         wait_seconds = ngx.time() - start_time
     end
     
-    ngx.log(ngx.ERR, "[HEALTH] Backend ", backend_name, " did not become ready within ", max_wait_seconds, " seconds")
+    ngx.log(ngx.ERR, "[HEALTH] Backend ", label(backend_name), " did not become ready within ", max_wait_seconds, " seconds")
     return false
 end
 
 -- Pre-warm connections to a backend
 function _M.prewarm_backend_connections(backend_name, backend_url, num_connections)
-    ngx.log(ngx.INFO, "[PREWARM] Pre-warming ", num_connections, " connections to ", backend_name)
+    ngx.log(ngx.INFO, "[PREWARM] Pre-warming ", num_connections, " connections to ", label(backend_name))
     
     local httpc = http.new()
     httpc:set_timeouts(5000, 5000, 5000) -- 5s timeouts
@@ -186,10 +198,10 @@ function _M.prewarm_backend_connections(backend_name, backend_url, num_connectio
         
         if res and res.status == 200 then
             success_count = success_count + 1
-            ngx.log(ngx.DEBUG, "[PREWARM] Connection ", i, "/", num_connections, " to ", backend_name, " successful")
+            ngx.log(ngx.DEBUG, "[PREWARM] Connection ", i, "/", num_connections, " to ", label(backend_name), " successful")
         else
             fail_count = fail_count + 1
-            ngx.log(ngx.WARN, "[PREWARM] Connection ", i, "/", num_connections, " to ", backend_name, " failed: ", err or "status_" .. (res and res.status or "unknown"))
+            ngx.log(ngx.WARN, "[PREWARM] Connection ", i, "/", num_connections, " to ", label(backend_name), " failed: ", err or "status_" .. (res and res.status or "unknown"))
         end
         
         -- Small delay between connections
@@ -198,7 +210,7 @@ function _M.prewarm_backend_connections(backend_name, backend_url, num_connectio
         end
     end
     
-    ngx.log(ngx.INFO, "[PREWARM] Pre-warming complete for ", backend_name, 
+    ngx.log(ngx.INFO, "[PREWARM] Pre-warming complete for ", label(backend_name), 
            ": ", success_count, " successful, ", fail_count, " failed")
     
     return success_count, fail_count
@@ -225,6 +237,7 @@ function _M.get_all_statuses()
             pool_id  = i,
             upstream = upstream,
             service  = "honeypot_eshop_" .. i,
+            database = "honeypot_database_" .. i,
             status   = _M.get_backend_status(upstream),
         }
     end
