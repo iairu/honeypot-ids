@@ -36,6 +36,18 @@
 
 local http = require "resty.http"
 
+-- Reuse health_check.lua's tuned probe timeout rather than a separate,
+-- shorter hardcoded value: this module's GET on install.php renders a full
+-- page (heavier than health_check's own HEAD /robots.txt probe) yet used to
+-- time out after only 5000ms, half of health_check.lua's 8000ms -- tuned up
+-- specifically because this same PHP/DB path was seen exceeding 5s under
+-- transient contention (see health_check.lua's HEALTH_CHECK_TIMEOUT
+-- comment). The shorter timeout here tripped on exactly that same
+-- contention, logging "[WP_INSTALL_STATE] Probe failed ... timeout" for a
+-- backend that was never actually down.
+local health_check_ok, health_check = pcall(require, "health_check")
+local PROBE_TIMEOUT = (health_check_ok and health_check.HEALTH_CHECK_TIMEOUT) or 8000
+
 local _M = {}
 
 -- Shared dictionary for cached install state -- reuses threat_intel, the
@@ -59,7 +71,7 @@ local INSTALLED_MARKER = "already installed"
 -- ---------------------------------------------------------------------------
 function _M.refresh(backend_name, backend_url)
     local httpc = http.new()
-    httpc:set_timeouts(5000, 5000, 5000)
+    httpc:set_timeouts(PROBE_TIMEOUT, PROBE_TIMEOUT, PROBE_TIMEOUT)
 
     local res, err = httpc:request_uri(backend_url .. "/wp-admin/install.php", {
         method = "GET",

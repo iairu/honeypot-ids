@@ -1520,7 +1520,56 @@ services:
         # `--pcap[=<dev>]` -- passing a bare flag (no value at all, as done
         # here) sidesteps the whole issue by deferring entirely to the
         # config file, which is also the more maintainable form regardless.
-        exec suricata -c /etc/suricata/suricata.yaml --pcap -l /var/log/suricata
+        #
+        # No longer a bare `exec suricata ...`: stdout/stderr now go
+        # through a filter that drops the two specific known-harmless
+        # startup warnings documented in suricata_config/suricata.yaml's
+        # KNOWN-HARMLESS STARTUP WARNINGS comment (the "any" pseudo-device
+        # ioctl probes) from what reaches `docker compose logs` -- every
+        # other message, current or future, still reaches stdout
+        # unfiltered. Tried first: Suricata's own per-output
+        # logging.outputs.console.level config key -- confirmed LIVE that
+        # Suricata 8.0.6 parses that key (--dump-config shows it set) but
+        # does not actually enforce it on the console output: messages
+        # below the configured level (even plain "i:" info lines) kept
+        # printing regardless. Raising the GLOBAL default-log-level
+        # instead would work, but was already rejected (see the other
+        # file's comment) since that also silences genuinely useful
+        # warnings from the persisted suricata.log file, not just the
+        # cosmetic ones from this console stream.
+        #
+        # Can't just pipe into grep under `exec`, though: `exec suricata
+        # ... | grep -v ...` makes grep, not suricata, the pipeline's last
+        # process, so `$$!` after backgrounding it would capture grep's PID
+        # -- with no handle on suricata's own PID, a `docker stop`/
+        # `restart` SIGTERM would only reach grep, and suricata would run
+        # on unsignaled until Docker's stop-grace-period expires and force-
+        # kills it, losing its graceful-shutdown stats line. A FIFO avoids
+        # that: suricata writes into one end, grep reads the other, and
+        # `$$!` right after backgrounding suricata (not the grep job)
+        # captures the PID the trap below actually needs to signal.
+        FILTER_FIFO=/tmp/suricata_stdout.fifo
+        rm -f "$$FILTER_FIFO"
+        mkfifo "$$FILTER_FIFO"
+
+        grep -v --line-buffered -E \
+          "ioctl: (Failure when trying to get MTU via ioctl for 'any'|any: failed to get SIOCETHTOOL ioctl): No such device" \
+          < "$$FILTER_FIFO" &
+
+        suricata -c /etc/suricata/suricata.yaml --pcap -l /var/log/suricata > "$$FILTER_FIFO" 2>&1 &
+        sc_pid=$$!
+
+        # Forward docker stop/restart's SIGTERM (and SIGINT, for a manual
+        # Ctrl-C) to suricata so it shuts down gracefully -- writing its
+        # final device/stats line, same as it always did under `exec` --
+        # instead of being force-killed once this wrapper shell, not
+        # suricata, is the direct child Docker actually signals.
+        trap 'kill -TERM "$$sc_pid" 2>/dev/null; wait "$$sc_pid"; exit $$?' TERM INT
+
+        wait "$$sc_pid"
+        exit_code=$$?
+        rm -f "$$FILTER_FIFO"
+        exit "$$exit_code"
     healthcheck:
       test: ["CMD", "test", "-f", "/var/log/suricata/fast.log"]
       interval: 30s

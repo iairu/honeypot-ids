@@ -45,6 +45,7 @@ local UNHEALTHY_THRESHOLD = 5
 local HEALTHY_THRESHOLD = 2
 
 _M.HEALTH_CHECK_INTERVAL = HEALTH_CHECK_INTERVAL
+_M.HEALTH_CHECK_TIMEOUT = HEALTH_CHECK_TIMEOUT
 
 -- Shared dictionary for health status
 local health_status = ngx.shared.threat_intel -- Reuse existing dict
@@ -182,21 +183,39 @@ end
 -- Pre-warm connections to a backend
 function _M.prewarm_backend_connections(backend_name, backend_url, num_connections)
     ngx.log(ngx.INFO, "[PREWARM] Pre-warming ", num_connections, " connections to ", label(backend_name))
-    
+
     local httpc = http.new()
     httpc:set_timeouts(5000, 5000, 5000) -- 5s timeouts
-    
+
     local success_count = 0
     local fail_count = 0
-    
+
+    -- Probe /robots.txt, not the bare backend_url: a HEAD to "/" on
+    -- production_eshop reliably comes back as a 301 (WordPress's own
+    -- redirect_canonical sends it to the configured siteurl, e.g.
+    -- "http://localhost/", since this probe -- unlike real client traffic,
+    -- which nginx forwards with the original Host header -- has no Host
+    -- header matching that siteurl). That 301 isn't a sign of a down
+    -- backend, but the strict `status == 200` check below used to count it
+    -- as a failed connection every single time, logging 20 (x num workers)
+    -- spurious [PREWARM] ... failed: status_301 WARN lines on every startup
+    -- even though the backend was perfectly healthy. /robots.txt is the
+    -- same endpoint check_backend() above already settled on for exactly
+    -- this kind of false-positive avoidance (see its comment), and it
+    -- doesn't trigger the canonical redirect.
+    local probe_endpoint = backend_url .. "/robots.txt"
+
     for i = 1, num_connections do
-        local res, err = httpc:request_uri(backend_url, {
+        local res, err = httpc:request_uri(probe_endpoint, {
             method = "HEAD",
             keepalive_timeout = 120000,
             keepalive_pool = 512
         })
-        
-        if res and res.status == 200 then
+
+        -- Accept 200-399 (including redirects), matching check_backend()'s
+        -- own tolerance above -- a connection that completes with a
+        -- redirect still warmed a real keepalive connection to the backend.
+        if res and res.status >= 200 and res.status < 400 then
             success_count = success_count + 1
             ngx.log(ngx.DEBUG, "[PREWARM] Connection ", i, "/", num_connections, " to ", label(backend_name), " successful")
         else
