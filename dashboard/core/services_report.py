@@ -21,6 +21,7 @@ blocks on an event until the GUI thread hands back a PNG path.
 """
 from __future__ import annotations
 
+import html
 import subprocess
 import threading
 import time
@@ -76,6 +77,8 @@ class ServicesReport:
     events: list = field(default_factory=list)
     # (caption, png_path):
     stage_shots: list = field(default_factory=list)
+    # Where per-container CPU/memory came from (cgroup files or docker stats).
+    resource_source: str = ""
 
 
 # ---- host /proc sampling (works local or over SSH via Target.build_shell) ----
@@ -320,6 +323,7 @@ class ServicesReportWorker(QThread):
                     "Final state", self._grab_health("end")))
 
             data.duration_s = round(time.time() - start, 1)
+            data.resource_source = rs.describe_sampling(sampler, FAST_SAMPLE_INTERVAL_S)
             # Drop stages whose grab failed (empty path) so the PDF has no blanks.
             data.stage_shots = [(cap, p) for cap, p in data.stage_shots if p]
             self.finished_ok.emit(data)
@@ -564,6 +568,9 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
 
     # 2. per-container charts (CPU, memory)
     parts.append('<h2 style="color:#222;">2. Per-container</h2>')
+    if data.resource_source:
+        parts.append('<p style="color:#666666;">CPU and memory were '
+                     + html.escape(data.resource_source) + '.</p>')
     if data.container_samples:
         svcs = sorted({s for _, snap in data.container_samples for s in snap})
         cmap = {s: _resource_series_color(i) for i, s in enumerate(svcs)}
