@@ -1,0 +1,3 @@
+- fix nginx pool wrongly labeled service (honeypot_backendN instead of honeypot_databaseN or honeypot_eshopN)
+- make each kibana dashboard unique (right now they all appear with just about same widgets), have kibana show threat decision making, decay and other useful information, for top uris specifically mark if the url is considered a possible attack pattern or safe
+- for some reason the measurements of cpu and ram activity show proper peaks at each exploit time and also on service startup, however on local arch linux instance the measurements are completely inconsistent as no peaks occur during exploit time nor service launch

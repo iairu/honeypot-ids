@@ -41,4 +41,23 @@ if [ ! -d venv ]; then
     ./venv/bin/python3 setup_progress.py
 fi
 
+# Guard against a broken X11 keyboard layout. Some systems end up with a
+# live XKB layout/variant combo (e.g. layout "sk", variant "qwertz", likely
+# inherited from a console keymap name that doesn't map onto an actual X11
+# variant) that the installed xkeyboard-config data has no symbols for.
+# Most apps tolerate that silently, but QtWebEngine's xkbcommon loader
+# treats it as fatal and aborts the whole process on startup. Detect that
+# case here and fall back to the plain layout (no variant) before Qt/Chromium
+# ever gets near it.
+if [ -n "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ] \
+        && command -v setxkbmap >/dev/null 2>&1 && command -v xkbcomp >/dev/null 2>&1; then
+    if ! setxkbmap -print | xkbcomp -w 0 - "$DISPLAY" >/dev/null 2>&1; then
+        layout=$(setxkbmap -query 2>/dev/null | awk '/^layout:/{print $2}')
+        layout=${layout:-us}
+        echo "Warning: current X11 keyboard layout/variant fails to compile" \
+             "(would crash QtWebEngine); falling back to '$layout' with no variant." >&2
+        setxkbmap "$layout" 2>/dev/null || true
+    fi
+fi
+
 exec ./venv/bin/python3 main.py "$@"
