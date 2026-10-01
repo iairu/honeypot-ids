@@ -154,10 +154,14 @@ services:
       # kept, so delete ssl_certificates/server.* (or use the dashboard
       # Certificates page) to pick this up. Keep in sync with
       # _gen_edge_nginx_cert() in dashboard/core/cert_ctl.py.
+      #
+      # One line on purpose: compose splits this string into argv itself,
+      # and inside the double quotes it keeps the newline after a trailing
+      # backslash, so a continued command ran as three separate ones and
+      # server.crt was never written (reverse_proxy then exits on a fresh
+      # checkout).
       if [ ! -f '/ssl_certs/server.crt' ] || [ ! -f '/ssl_certs/server.key' ]; then
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-          -keyout /ssl_certs/server.key -out /ssl_certs/server.crt \
-          -subj '/CN=localhost'
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout /ssl_certs/server.key -out /ssl_certs/server.crt -subj '/CN=localhost'
         chmod 600 /ssl_certs/server.key
         chmod 644 /ssl_certs/server.crt
         echo 'SSL certificates generated successfully'
