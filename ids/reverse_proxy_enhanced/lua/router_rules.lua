@@ -377,4 +377,78 @@ function _M.analyze_behavior_patterns(session_data, current_time, request_uri)
     }
 end
 
+-- ---------------------------------------------------------------------------
+-- decision_trace(fresh_score, decayed_base, session_data, threat_result,
+--                half_life_seconds, cfg)
+--
+-- The "why" behind one routing decision, as flat strings for nginx's
+-- `security` access log (nginx.conf's log_format security), which Vector
+-- parses into Kibana fields. Without it the log only carried the final
+-- effective score, so Kibana could show *that* a request went to the
+-- honeypot but not what this request contributed, how much was carried over
+-- from the session's decaying history, or whether the URI itself looked like
+-- an attack.
+--
+--   request_score  this request's own fresh score, before accumulation
+--   decayed_score  the session's carried-over score after decay (0 if none)
+--   offenses       recorded attack signals on the session so far
+--   decay_state    "none"        no prior score to decay
+--                  "off"         decay disabled (half-life <= 0)
+--                  "permaflagged" a confirmed attacker: never decays
+--                  "decaying"    prior score fading toward production
+--   uri_class      "attack_pattern" if any URI/CVE pattern matched, else "safe"
+--   patterns       matched pattern/CVE names joined with "|", or "-"
+--
+-- Values are sanitised (no quotes, spaces or backslashes) so they can't break
+-- the quoted key="value" log format.
+-- ---------------------------------------------------------------------------
+local function log_safe(v)
+    v = tostring(v == nil and "-" or v)
+    v = v:gsub('[%s"\\]', "_")
+    if v == "" then return "-" end
+    if #v > 200 then v = v:sub(1, 200) end
+    return v
+end
+
+function _M.decision_trace(fresh_score, decayed_base, session_data, threat_result,
+                           half_life_seconds, cfg)
+    session_data = session_data or {}
+    threat_result = threat_result or {}
+    cfg = cfg or {}
+    local offenses = tonumber(session_data.offenses) or 0
+    local peak = tonumber(session_data.threat_score) or 0
+
+    local decay_state
+    if peak <= 0 then
+        decay_state = "none"
+    elseif decay_policy.is_permaflagged(peak, offenses, cfg.permaflag_score, cfg.permaflag_offenses) then
+        decay_state = "permaflagged"
+    elseif not half_life_seconds or half_life_seconds <= 0 then
+        decay_state = "off"
+    else
+        decay_state = "decaying"
+    end
+
+    local names, seen = {}, {}
+    for _, list in ipairs({ threat_result.patterns_matched or {}, threat_result.cve_matched or {} }) do
+        for _, p in ipairs(list) do
+            local name = type(p) == "table" and (p.cve or p.name or p.id) or p
+            name = name and log_safe(name)
+            if name and name ~= "-" and not seen[name] then
+                seen[name] = true
+                names[#names + 1] = name
+            end
+        end
+    end
+
+    return {
+        request_score = tostring(math.floor((tonumber(fresh_score) or 0) + 0.5)),
+        decayed_score = tostring(math.floor((tonumber(decayed_base) or 0) + 0.5)),
+        offenses      = tostring(offenses),
+        decay_state   = decay_state,
+        uri_class     = (#names > 0) and "attack_pattern" or "safe",
+        patterns      = (#names > 0) and log_safe(table.concat(names, "|")) or "-",
+    }
+end
+
 return _M

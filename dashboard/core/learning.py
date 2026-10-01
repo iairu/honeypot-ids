@@ -77,7 +77,8 @@ GLOSSARY: list[GlossaryTerm] = [
         "user doesn't mark them as an attacker forever.",
         "A session's peak score halves every SCORE_DECAY_HALF_LIFE_SECONDS (300 s by "
         "default); repeat offenders decay more slowly. Setting THREAT_DECAY_ENABLED=false "
-        "in the edge .env turns decay off so scores persist.",
+        "in the edge .env turns decay off so scores persist. Kibana's Threat Decisions & "
+        "Decay dashboard plots each request's own score against what it carried over.",
         "settings",
     ),
     GlossaryTerm(
@@ -300,7 +301,8 @@ PAGE_GUIDES: dict[str, PageGuide] = {
     ),
     "kibana": PageGuide(
         "The SIEM's dashboards: every request, alert and security event.",
-        "Open Attack Patterns after running a few exploits and find your CVEs.",
+        "Open Attack Patterns after running a few exploits and find your CVEs, then open "
+        "Threat Decisions & Decay to see why each request was diverted.",
         "This is the analyst's view. The same attack you fired appears here as "
         "structured events you can filter, count and correlate.",
     ),

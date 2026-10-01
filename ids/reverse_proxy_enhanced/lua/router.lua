@@ -132,7 +132,8 @@ local function assign_honeypot_pool(routing_decision, extra_session_data, remote
     ngx.log(ngx.WARN,
         "[POOL] IP ", remote_ip,
         " assigned to honeypot pool ", pool_num,
-        " (upstream=", upstream, ")",
+        " (honeypot_eshop_", pool_num, " + honeypot_database_", pool_num,
+        ", upstream=", upstream, ")",
         " reason=", sd.honeypot_reason or "unknown")
 
     return pool_num
@@ -153,6 +154,9 @@ end
 --                                   .upstream        upstream block name
 --                                   .update_session  boolean
 --                                   .session_data    fields to merge into session
+--                                   .trace           decision fields for the
+--                                                    access log (absent on the
+--                                                    early static/install exits)
 -- ---------------------------------------------------------------------------
 function _M.decide_route(session_data, threat_result, remote_ip, session_id)
     local routing_decision = {
@@ -246,6 +250,12 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
             session_data, ngx.time(), _G.config.threat.score_decay_half_life_seconds, _G.config.threat)
         local fresh_score = threat_result.score
         new_signal_fired = fresh_score > 10
+        -- Decision-making fields for the security access log / Kibana
+        -- (router_rules.decision_trace); nginx.conf copies them into
+        -- ngx.var after this returns.
+        routing_decision.trace = router_rules.decision_trace(
+            fresh_score, decayed_base, session_data, threat_result,
+            _G.config.threat.score_decay_half_life_seconds, _G.config.threat)
         if new_signal_fired then
             threat_result.score = math.min(_G.config.threat.max_threat_score, decayed_base + fresh_score)
         else

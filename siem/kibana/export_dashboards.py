@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Exports the two Honeypot dashboards (and everything they reference --
-the data view, all 13 panel visualizations) to saved_objects/
-honeypot-dashboards.ndjson, the file kibana_dashboards_setup imports on
-every `docker compose up`.
+"""Exports the Honeypot dashboards (and everything they reference -- the
+data view and every panel visualization) from a live Kibana to
+saved_objects/honeypot-dashboards.ndjson, the file kibana_dashboards_setup
+imports on every `docker compose up`.
 
-Run this after build_dashboards.py, or after hand-editing a panel live in
-Kibana, to refresh the committed NDJSON. Deliberately does NOT include the
+Only needed after hand-editing a panel live in Kibana: for changes made in
+build_dashboards.py, `python3 build_dashboards.py --ndjson` writes the same
+file offline. Deliberately does NOT include the
 `defaultRoute` config object -- see build_dashboards.py's docstring for why
 that's set via a direct settings API call instead.
 
@@ -21,7 +22,8 @@ from _kibana_client import make_session, parse_connection_args
 
 DASHBOARD_IDS = [
     "dashboard-ids-alerts", "dashboard-web-threat-overview",
-    "dashboard-session-analysis", "dashboard-attack-patterns",
+    "dashboard-threat-decisions", "dashboard-session-analysis",
+    "dashboard-attack-patterns",
 ]
 OUTPUT_PATH = Path(__file__).resolve().parent / "saved_objects" / "honeypot-dashboards.ndjson"
 

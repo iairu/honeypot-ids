@@ -202,5 +202,23 @@ do
           rules.is_health_status_healthy({ healthy = false, last_check = 940 }, 1000) == false)
 end
 
+print("== describe_upstream(): log labels name real containers ==")
+do
+    local d2 = rules.describe_upstream("honeypot_backend_2")
+    check("pool upstream names its eshop service", d2:find("honeypot_eshop_2", 1, true) ~= nil)
+    check("pool upstream names its database service", d2:find("honeypot_database_2", 1, true) ~= nil)
+    check("pool upstream does not lead with the upstream alias",
+          d2:sub(1, #"honeypot pool 2") == "honeypot pool 2")
+    check("pool label keeps the upstream name for grepping", d2:find("[honeypot_backend_2]", 1, true) ~= nil)
+    check("production upstream names production_eshop",
+          rules.describe_upstream("production_backend"):sub(1, #"production_eshop") == "production_eshop")
+    check("unknown upstream passes through", rules.describe_upstream("other") == "other")
+    check("nil is safe", rules.describe_upstream(nil) == "nil")
+    for i = 1, POOL_COUNT do
+        local d = rules.describe_upstream(rules.upstream_for_pool(i))
+        check("pool " .. i .. " label uses its own service", d:find(rules.service_for_pool(i), 1, true) ~= nil)
+    end
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

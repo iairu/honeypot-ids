@@ -20,6 +20,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 
@@ -147,6 +148,24 @@ def collect_live(target: Target, timeout: float = 12.0) -> list[ContainerResourc
     return results
 
 
+# Sentinel from FastSampler._resolve(): the PID docker reported is not that
+# container on this host.
+_FOREIGN = object()
+
+
+def cgroup_matches_container(proc_cgroup: str, full_id: str) -> bool:
+    """True if a /proc/<pid>/cgroup listing places the process in the cgroup
+    of container `full_id` (its full 64-hex id appears in a cgroup path)."""
+    full_id = (full_id or "").strip().lower()
+    if len(full_id) < 12:
+        return False
+    for line in proc_cgroup.splitlines():
+        path = line.split(":", 2)[-1].lower()
+        if full_id in path:
+            return True
+    return False
+
+
 class FastSampler:
     """Sub-second per-container CPU% / memory, read straight from the cgroup
     filesystem instead of `docker stats` (which blocks ~1s per call to compute
@@ -165,6 +184,10 @@ class FastSampler:
 
     def __init__(self, target: Target):
         self.available = False
+        # Set when the docker daemon's container PIDs turn out not to belong
+        # to this host (see _resolve()); the sampler then stays unavailable for
+        # good and callers use `docker stats` instead.
+        self.foreign = False
         self._target = target
         self._paths: dict[str, dict] = {}   # service -> {mode, cpu, mem}
         self._cid: dict[str, str] = {}       # service -> short container id
@@ -182,7 +205,7 @@ class FastSampler:
         """Resolve cgroup paths for running containers in a `ps` listing that
         aren't being sampled yet, or whose container id changed (recreated).
         One `docker inspect` for just those; a no-op when nothing is new."""
-        if self._target.is_remote:
+        if self._target.is_remote or self.foreign:
             return
         running = {}
         for c in listing:
@@ -207,23 +230,55 @@ class FastSampler:
             full_id, pid = parts[0], parts[1]
             svc = next((s for sid, s in running.items()
                         if full_id.startswith(sid) or sid.startswith(full_id[:12])), None)
-            if not svc:
+            if not svc or pid == "0":  # 0: it stopped between ps and inspect
                 continue
             paths = self._resolve(full_id, pid)
+            if paths is _FOREIGN:
+                self._go_foreign(svc, pid)
+                return
             if paths:
                 self._paths[svc] = paths
                 self._cid[svc] = full_id[:12]
                 self._prev.pop(svc, None)  # new container: fresh CPU baseline
         self.available = bool(self._paths)
 
-    def _resolve(self, full_id: str, pid: str) -> dict | None:
+    def _go_foreign(self, svc: str, pid: str) -> None:
+        """The daemon reported a PID for `svc` that is not that container on
+        this host. That happens when docker runs somewhere else than the
+        dashboard: Docker Desktop's VM (common on Arch, where docker-desktop
+        sets its own `desktop-linux` context), a remote DOCKER_HOST/context,
+        or a dashboard running inside its own PID namespace (a container,
+        toolbox, flatpak). The PID then names some unrelated host process --
+        or none -- so its cgroup counters move with whatever that process does,
+        not with the container: graphs with no peak at the exploit or at
+        startup. Give up on cgroup sampling for every service rather than mix
+        real and bogus series, and let the caller fall back to docker stats."""
+        self.foreign = True
+        self.available = False
+        self._paths.clear()
+        self._prev.clear()
+        print(f"[resource_stats] {svc}: PID {pid} from docker is not that "
+              "container on this host (Docker Desktop VM, remote docker "
+              "context or separate PID namespace?) -- sampling via docker "
+              "stats instead of cgroup files.", file=sys.stderr)
+
+    def _resolve(self, full_id: str, pid: str):
         """Map a container's host PID to its cgroup CPU/memory stat files by
-        reading /proc/<pid>/cgroup -- exact regardless of cgroup driver."""
+        reading /proc/<pid>/cgroup -- exact regardless of cgroup driver.
+
+        Returns the paths dict, None when the files can't be found, or
+        _FOREIGN when the PID is not this container on this host: every
+        docker cgroup driver (cgroupfs "/docker/<id>", systemd
+        "docker-<id>.scope", rootless, podman "libpod-<id>.scope") puts the
+        full container id in the cgroup path, so a missing PID or an id-less
+        path means the daemon's PIDs come from another PID namespace."""
         try:
             with open(f"/proc/{pid}/cgroup", encoding="ascii", errors="replace") as fh:
                 cg = fh.read()
         except OSError:
-            return None
+            return _FOREIGN
+        if not cgroup_matches_container(cg, full_id):
+            return _FOREIGN
         if self._v2:
             m = re.search(r"^0::(.+)$", cg, re.M)
             if not m:
@@ -301,6 +356,20 @@ class FastSampler:
     def log_by_service(self, log_sizes: dict[str, int]) -> dict[str, int]:
         """Map collect_log_sizes()'s {full_id: bytes} onto {service: bytes}."""
         return sizes_by_service(log_sizes, self._cid)
+
+
+def describe_sampling(sampler: "FastSampler", interval: float) -> str:
+    """One line for a report caption saying where CPU/memory samples came from."""
+    if sampler.available:
+        return f"read from the containers' cgroup files every {interval:g} s"
+    if sampler.foreign:
+        return ("read with docker stats (~2 s per sample): docker's container "
+                "PIDs are not processes on this host (Docker Desktop VM, a remote "
+                "docker context or a separate PID namespace), so the cgroup files "
+                "can't be used")
+    if getattr(sampler, "_target", None) is not None and sampler._target.is_remote:
+        return "read with docker stats over SSH (~2 s per sample)"
+    return "read with docker stats (~2 s per sample)"
 
 
 def sizes_by_service(log_sizes: dict[str, int], svc_to_cid: dict[str, str]) -> dict[str, int]:

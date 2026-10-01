@@ -82,7 +82,7 @@ local function init_worker()
                     5  -- 5 keepalive connections per pool instance
                 )
                 ngx.log(ngx.INFO,
-                    "[PREWARM] Honeypot pool ", i, " (", upstream, "): ",
+                    "[PREWARM] Honeypot pool ", i, " (", svc, " + honeypot_database_", i, "): ",
                     success, " connections established, ", failed, " failed")
             end
         end

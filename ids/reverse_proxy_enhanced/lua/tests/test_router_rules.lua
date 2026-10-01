@@ -179,5 +179,35 @@ do
 end
 
 print()
+print("== decision_trace() ==")
+do
+    local t = rules.decision_trace(30.4, 12.6, { threat_score = 50, offenses = 2 },
+        { patterns_matched = { "union select", "directory_traversal", "union select" },
+          cve_matched = { "CVE-2023-28121" } }, 300, { permaflag_score = 100, permaflag_offenses = 5 })
+    check("request score is this request's own, rounded", t.request_score == "30")
+    check("decayed score is the carried-over base, rounded", t.decayed_score == "13")
+    check("offenses are reported", t.offenses == "2")
+    check("prior score that can fade is decaying", t.decay_state == "decaying")
+    check("matched patterns mark the URI as an attack pattern", t.uri_class == "attack_pattern")
+    check("pattern names are joined, deduplicated and space-free",
+          t.patterns == "union_select|directory_traversal|CVE-2023-28121")
+
+    local clean = rules.decision_trace(0, 0, {}, { patterns_matched = {}, cve_matched = {} }, 300, {})
+    check("clean request is safe", clean.uri_class == "safe" and clean.patterns == "-")
+    check("no prior score means nothing to decay", clean.decay_state == "none")
+
+    check("peak at permaflag_score is permaflagged",
+          rules.decision_trace(0, 100, { threat_score = 100 }, {}, 300, { permaflag_score = 100 }).decay_state
+              == "permaflagged")
+    check("enough offenses is permaflagged",
+          rules.decision_trace(0, 40, { threat_score = 40, offenses = 5 }, {}, 300, { permaflag_offenses = 5 }).decay_state
+              == "permaflagged")
+    check("half-life 0 means decay is off",
+          rules.decision_trace(0, 40, { threat_score = 40 }, {}, 0, {}).decay_state == "off")
+    check("quotes cannot break the log format",
+          rules.decision_trace(0, 0, {}, { patterns_matched = { 'a"b\\c' } }, 300, {}).patterns == "a_b_c")
+    check("nil inputs are tolerated", rules.decision_trace(nil, nil, nil, nil, nil, nil).uri_class == "safe")
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

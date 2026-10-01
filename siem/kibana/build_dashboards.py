@@ -1,38 +1,39 @@
 #!/usr/bin/env python3
-"""Creates (or overwrites) the two committed Honeypot Kibana dashboards and
-their underlying data view/visualizations via the Saved Objects API.
+"""Defines the five Honeypot Kibana dashboards (IDS Alerts, Web Traffic,
+Threat Decisions & Decay, Session Analysis, Attack Patterns), their
+visualizations and the honeypot-* data view, and either pushes them to a
+live Kibana or writes the committed NDJSON.
 
-This is the *authoring* tool -- run it once by hand against a live Kibana
-whenever the dashboards themselves need to change (new panel, different
-aggregation, etc.), then re-export with export_dashboards.py and commit the
-refreshed saved_objects/honeypot-dashboards.ndjson. It is NOT part of the
-automatic provisioning path -- that's kibana_dashboards_setup's job in
-docker-compose.yml, which only ever imports the already-committed NDJSON.
+    python3 build_dashboards.py --ndjson [PATH]
+        Writes saved_objects/honeypot-dashboards.ndjson (or PATH) offline --
+        no Kibana needed. This is the file kibana_dashboards_setup in
+        docker-compose.yml imports on every `docker compose up`; commit it
+        after changing anything here.
+
+    python3 build_dashboards.py
+        Creates/overwrites the same objects in a live Kibana via the Saved
+        Objects API (KIBANA_URL, ELASTIC_USERNAME, ELASTIC_PASSWORD env vars,
+        or --kibana-url/--user/--password). export_dashboards.py can then
+        re-export them if panels were hand-edited in Kibana afterwards.
 
 All object IDs are fixed/stable (not auto-generated) so that:
   - re-running this script is idempotent (overwrite=true),
-  - dashboard/ui/page_kibana.py's bookmark buttons, which hardcode
-    dashboard-web-threat-overview / dashboard-ids-alerts, keep working.
-
-Usage: KIBANA_URL, ELASTIC_USERNAME, ELASTIC_PASSWORD env vars (or pass
---kibana-url/--user/--password), then:
-    python3 build_dashboards.py
+  - dashboard/ui/page_kibana.py's bookmark buttons, which hardcode the
+    dashboard-* ids, keep working.
 """
 from __future__ import annotations
 
 import json
 import sys
-
-import requests
-
-from _kibana_client import make_session, parse_connection_args
+from pathlib import Path
 
 DATA_VIEW_ID = "honeypot-data-view"
+NDJSON_PATH = Path(__file__).resolve().parent / "saved_objects" / "honeypot-dashboards.ndjson"
 
 
 def _viz(vis_id: str, title: str, vis_type: str, aggs: list[dict], *,
          query: str = "", filters: list[dict] | None = None,
-         params_extra: dict | None = None) -> tuple[str, dict]:
+         params_extra: dict | None = None, description: str = "") -> tuple[str, dict]:
     """Builds a classic-type visualization saved object body.
 
     Classic (not Lens) visualizations were chosen deliberately, same as the
@@ -52,6 +53,7 @@ def _viz(vis_id: str, title: str, vis_type: str, aggs: list[dict], *,
     body = {
         "attributes": {
             "title": title,
+            "description": description,
             "visState": json.dumps(vis_state),
             "uiStateJSON": "{}",
             "kibanaSavedObjectMeta": {
@@ -69,8 +71,72 @@ def _viz(vis_id: str, title: str, vis_type: str, aggs: list[dict], *,
     return vis_id, body
 
 
-def _count_metric_agg() -> dict:
-    return {"id": "1", "enabled": True, "type": "count", "schema": "metric", "params": {}}
+def _markdown(vis_id: str, title: str, text: str) -> tuple[str, dict]:
+    """A text panel (no data) -- each dashboard opens with one saying what it
+    answers and how to read it, since the audience is students."""
+    vis_state = {
+        "title": title, "type": "markdown", "aggs": [],
+        "params": {"markdown": text, "fontSize": 12, "openLinksInNewTab": False},
+    }
+    body = {
+        "attributes": {
+            "title": title,
+            "description": "",
+            "visState": json.dumps(vis_state),
+            "uiStateJSON": "{}",
+            "kibanaSavedObjectMeta": {
+                "searchSourceJSON": json.dumps({"query": {"query": "", "language": "kuery"}, "filter": []})
+            },
+        },
+        "references": [],
+    }
+    return vis_id, body
+
+
+def _xy_params(chart: str, series: list[tuple[str, str]], *, mode: str = "normal",
+               y_title: str = "", threshold: float | None = None,
+               horizontal: bool = False) -> dict:
+    """Full vislib xy params (line/area/histogram/horizontal_bar).
+
+    ``series`` is [(metric agg id, label)], one line/bar series each.
+    ``threshold`` draws a dashed reference line (the honeypot threshold)."""
+    cat_pos, val_pos = ("left", "bottom") if horizontal else ("bottom", "left")
+    params = {
+        "type": chart,
+        "grid": {"categoryLines": False, "valueAxis": "ValueAxis-1"},
+        "categoryAxes": [{
+            "id": "CategoryAxis-1", "type": "category", "position": cat_pos, "show": True,
+            "style": {}, "scale": {"type": "linear"},
+            "labels": ({"show": True, "rotate": 0, "filter": False, "truncate": 200} if horizontal
+                       else {"show": True, "filter": True, "truncate": 100}),
+            "title": {},
+        }],
+        "valueAxes": [{
+            "id": "ValueAxis-1", "name": "LeftAxis-1", "type": "value", "position": val_pos,
+            "show": True, "style": {}, "scale": {"type": "linear", "mode": mode},
+            "labels": {"show": True, "rotate": 0, "filter": False, "truncate": 100},
+            "title": {"text": y_title},
+        }],
+        "seriesParams": [{
+            "show": True,
+            "type": "histogram" if chart in ("histogram", "horizontal_bar") else chart,
+            "mode": "stacked" if mode == "stacked" or chart in ("histogram", "horizontal_bar") else "normal",
+            "data": {"label": label, "id": agg_id},
+            "valueAxis": "ValueAxis-1", "drawLinesBetweenPoints": True,
+            "lineWidth": 2, "interpolate": "linear", "showCircles": True,
+        } for agg_id, label in series],
+        "addTooltip": True, "addLegend": True, "legendPosition": "right",
+        "times": [], "addTimeMarker": False, "labels": {"show": False},
+        "detailedTooltip": True,
+        "thresholdLine": {"show": threshold is not None, "value": threshold or 0,
+                          "width": 1, "style": "dashed", "color": "#E7664C"},
+    }
+    return params
+
+
+def _count_metric_agg(label: str = "") -> dict:
+    params = {"customLabel": label} if label else {}
+    return {"id": "1", "enabled": True, "type": "count", "schema": "metric", "params": params}
 
 
 def _date_histogram_agg(agg_id: str = "2") -> dict:
@@ -83,18 +149,21 @@ def _date_histogram_agg(agg_id: str = "2") -> dict:
 
 
 def _terms_agg(field: str, agg_id: str = "2", size: int = 10, schema: str = "segment",
-                order_by: str = "1") -> dict:
-    return {
-        "id": agg_id, "enabled": True, "type": "terms", "schema": schema,
-        "params": {"field": field, "orderBy": order_by, "order": "desc", "size": size,
-                    "otherBucket": False, "otherBucketLabel": "Other", "missingBucket": False},
-    }
+                order_by: str = "1", label: str = "") -> dict:
+    params = {"field": field, "orderBy": order_by, "order": "desc", "size": size,
+              "otherBucket": False, "otherBucketLabel": "Other", "missingBucket": False}
+    if label:
+        params["customLabel"] = label
+    return {"id": agg_id, "enabled": True, "type": "terms", "schema": schema, "params": params}
 
 
-def _metric_agg(agg_type: str, field: str, agg_id: str) -> dict:
+def _metric_agg(agg_type: str, field: str, agg_id: str, label: str = "") -> dict:
     """A non-count metric (cardinality/max/min/avg), schema=metric -- same
     shape as _count_metric_agg() but for a real field."""
-    return {"id": agg_id, "enabled": True, "type": agg_type, "schema": "metric", "params": {"field": field}}
+    params = {"field": field}
+    if label:
+        params["customLabel"] = label
+    return {"id": agg_id, "enabled": True, "type": agg_type, "schema": "metric", "params": params}
 
 
 def _histogram_agg(field: str, interval: int, agg_id: str = "2") -> dict:
@@ -102,6 +171,13 @@ def _histogram_agg(field: str, interval: int, agg_id: str = "2") -> dict:
         "id": agg_id, "enabled": True, "type": "histogram", "schema": "segment",
         "params": {"field": field, "interval": interval, "min_doc_count": True, "extended_bounds": {}},
     }
+
+
+_TABLE = {"perPage": 10, "showPartialRows": False, "showMetricsAtAllLevels": False,
+          "showTotal": False, "totalFunc": "sum", "percentageCol": ""}
+_TAGCLOUD = {"scale": "linear", "orientation": "single", "minFontSize": 14,
+             "maxFontSize": 48, "showLabel": False}
+_PIE = {"isDonut": True, "labels": {"show": True, "values": True, "last_level": True, "truncate": 100}}
 
 
 # The honeypot-* data view spans EVERY shipped log type (docker, suricata,
@@ -117,6 +193,12 @@ def _histogram_agg(field: str, interval: int, agg_id: str = "2") -> dict:
 # on which fields happen to only exist on the intended type.
 _IDS_Q = 'log_type:"suricata" and event_type:"alert"'
 _WEB_Q = 'log_type:"nginx_security"'
+# nginx_security lines that carry the routing-decision fields
+# (request_score/decayed_score/offenses/decay_state/uri_class/patterns/
+# route_reason -- nginx.conf's log_format security, router_rules.lua's
+# decision_trace(), parsed in siem/vector/vector.yaml). Lines from a proxy
+# that predates them simply don't match.
+_DECISION_Q = f'{_WEB_Q} and decay_state:*'
 
 # session_id-bearing nginx_security requests -- the per-request threat-scored
 # traffic each attacker session is made of (§3.5/§6). attacker_sophistication_
@@ -134,85 +216,210 @@ _SOPHISTICATION_Q = 'log_type:"nginx_error" and security_event_type:"attacker_so
 # parsing block in vector.yaml.
 _ATTACK_Q = 'log_type:"nginx_error" and security_event_type:*'
 
+# reverse_proxy's honeypot_threshold (init.lua, hard-coded): an effective
+# score at or above it diverts the session to the honeypot. Drawn as a
+# reference line on the score charts.
+HONEYPOT_THRESHOLD = 80
+
+# Each dashboard answers a different question and uses different panel
+# types, so they no longer read as copies of each other (the old four were
+# all "count metric + count-over-time + pies + top-N tables"):
+#   IDS Alerts        -- what the network IDS saw (severity bars, protocols,
+#                        ports), independent of the proxy's own scoring
+#   Web Traffic       -- what was requested and how it was answered, with
+#                        every top URI marked attack_pattern or safe
+#   Threat Decisions  -- why each request went where it went: own score vs.
+#     & Decay            carried-over score vs. threshold, decay states,
+#                        offenses, routing reasons
+#   Session Analysis  -- who: per-session volume, duration, peak threat,
+#                        offenses and sophistication class
+#   Attack Patterns   -- what the attacks were: matched patterns, CVEs,
+#                        honeytokens, security events over time
 VISUALIZATIONS = [
     # -- IDS Alerts (Suricata) --------------------------------------------
+    _markdown("viz-ids-guide", "About: IDS Alerts",
+              "**Network-level view.** Suricata inspects raw traffic before the reverse proxy "
+              "scores it, so these alerts are an independent second opinion. Severity 1 is the "
+              "most serious. Alerts also raise the source IP's reputation, which the proxy "
+              "folds into its threat score."),
     _viz("viz-ids-total-alerts", "Total Alerts", "metric",
-         [_count_metric_agg()], query=_IDS_Q),
-    _viz("viz-ids-alerts-over-time", "Alerts Over Time", "histogram",
-         [_count_metric_agg(), _date_histogram_agg()], query=_IDS_Q),
-    _viz("viz-ids-alerts-by-category", "Alerts by Category", "pie",
-         [_count_metric_agg(), _terms_agg("alert.category.keyword", size=10)],
-         query=_IDS_Q),
-    _viz("viz-ids-alerts-by-severity", "Alerts by Severity", "pie",
-         [_count_metric_agg(), _terms_agg("alert.severity", size=10)],
-         query=_IDS_Q),
+         [_count_metric_agg("Suricata alerts")], query=_IDS_Q),
+    _viz("viz-ids-alerts-over-time", "Alerts Over Time by Severity", "histogram",
+         [_count_metric_agg(), _date_histogram_agg(),
+          _terms_agg("alert.severity", agg_id="3", size=4, schema="group", label="Severity")],
+         query=_IDS_Q,
+         params_extra=_xy_params("histogram", [("1", "Alerts")], mode="stacked", y_title="Alerts")),
+    _viz("viz-ids-alerts-by-category", "Alerts by Category", "horizontal_bar",
+         [_count_metric_agg(), _terms_agg("alert.category.keyword", size=10, label="Category")],
+         query=_IDS_Q,
+         params_extra=_xy_params("horizontal_bar", [("1", "Alerts")], horizontal=True)),
+    _viz("viz-ids-alerts-by-protocol", "Alerts by Application Protocol", "pie",
+         [_count_metric_agg(), _terms_agg("app_proto.keyword", size=8, label="Protocol")],
+         query=_IDS_Q, params_extra=_PIE),
     _viz("viz-ids-top-signatures", "Top Signatures", "table",
-         [_count_metric_agg(), _terms_agg("alert.signature.keyword", agg_id="2", size=10, schema="bucket")],
-         query=_IDS_Q),
+         [_count_metric_agg("Alerts"), _metric_agg("min", "alert.severity", "3", "Worst severity"),
+          _terms_agg("alert.signature.keyword", agg_id="2", size=10, schema="bucket", label="Signature")],
+         query=_IDS_Q, params_extra=_TABLE),
     _viz("viz-ids-top-source-ips", "Top Source IPs", "table",
-         [_count_metric_agg(), _terms_agg("src_ip.keyword", agg_id="2", size=10, schema="bucket")],
-         query=_IDS_Q),
+         [_count_metric_agg("Alerts"), _metric_agg("cardinality", "alert.signature.keyword", "3", "Distinct signatures"),
+          _terms_agg("src_ip.keyword", agg_id="2", size=10, schema="bucket", label="Source IP")],
+         query=_IDS_Q, params_extra=_TABLE),
+    _viz("viz-ids-dest-ports", "Targeted Destination Ports", "tagcloud",
+         [_count_metric_agg(), _terms_agg("dest_port", size=15)],
+         query=_IDS_Q, params_extra=_TAGCLOUD),
 
-    # -- Web Traffic & Threat Overview -------------------------------------
+    # -- Web Traffic ---------------------------------------------------------
+    _markdown("viz-web-guide", "About: Web Traffic",
+              "**What was requested and how it was answered.** Every request passes the reverse "
+              "proxy, which scores it and sends it to production or the honeypot. "
+              "**Top URIs** marks each URI as `attack_pattern` (it matched an attack pattern or "
+              "CVE signature) or `safe`. See *Threat Decisions & Decay* for why a request was routed "
+              "where it was."),
     _viz("viz-web-total-requests", "Total Requests", "metric",
-         [_count_metric_agg()], query=_WEB_Q),
-    _viz("viz-web-requests-over-time", "Requests Over Time by Route", "histogram",
-         [_count_metric_agg(), _date_histogram_agg(), _terms_agg("route.keyword", agg_id="3", size=5, schema="group")],
-         query=_WEB_Q),
+         [_count_metric_agg("Requests")], query=_WEB_Q),
+    _viz("viz-web-requests-over-time", "Requests Over Time by Route", "area",
+         [_count_metric_agg(), _date_histogram_agg(),
+          _terms_agg("route.keyword", agg_id="3", size=5, schema="group", label="Route")],
+         query=_WEB_Q,
+         params_extra=_xy_params("area", [("1", "Requests")], mode="stacked", y_title="Requests")),
     _viz("viz-web-routing-pie", "Production vs Honeypot Routing", "pie",
-         [_count_metric_agg(), _terms_agg("route.keyword", size=5)], query=_WEB_Q),
-    _viz("viz-web-threat-score-histogram", "Threat Score Distribution", "histogram",
-         [_count_metric_agg(), _histogram_agg("threat_score", 10)], query=_WEB_Q),
-    _viz("viz-web-top-uris", "Top URIs", "table",
-         [_count_metric_agg(), _terms_agg("uri.keyword", agg_id="2", size=10, schema="bucket")], query=_WEB_Q),
+         [_count_metric_agg(), _terms_agg("route.keyword", size=5, label="Route")],
+         query=_WEB_Q, params_extra=_PIE),
+    _viz("viz-web-uri-class-pie", "Attack-Pattern vs Safe Requests", "pie",
+         [_count_metric_agg(), _terms_agg("uri_class.keyword", size=2, label="URI class")],
+         query=_DECISION_Q, params_extra=_PIE),
+    _viz("viz-web-status-codes", "HTTP Status Codes", "histogram",
+         [_count_metric_agg(), _terms_agg("status", size=10, label="Status"),
+          _terms_agg("route.keyword", agg_id="3", size=2, schema="group", label="Route")],
+         query=_WEB_Q,
+         params_extra=_xy_params("histogram", [("1", "Requests")], mode="stacked", y_title="Requests")),
+    _viz("viz-web-top-uris", "Top URIs (attack pattern or safe)", "table",
+         [_count_metric_agg("Requests"), _metric_agg("max", "threat_score", "4", "Peak threat score"),
+          _terms_agg("uri.keyword", agg_id="2", size=15, schema="bucket", label="URI"),
+          _terms_agg("uri_class.keyword", agg_id="3", size=2, schema="bucket", label="Attack pattern or safe")],
+         query=_DECISION_Q, params_extra=_TABLE),
     _viz("viz-web-top-user-agents", "Top User-Agents", "table",
-         [_count_metric_agg(), _terms_agg("user_agent.keyword", agg_id="2", size=10, schema="bucket")], query=_WEB_Q),
-    _viz("viz-web-top-suspicious-ips", "Top IPs Flagged Suspicious", "table",
-         [_count_metric_agg(), _terms_agg("remote_addr.keyword", agg_id="2", size=10, schema="bucket")],
-         query=f"{_WEB_Q} and suspicious:true"),
+         [_count_metric_agg("Requests"),
+          _terms_agg("user_agent.keyword", agg_id="2", size=10, schema="bucket", label="User-Agent")],
+         query=_WEB_Q, params_extra=_TABLE),
+    _viz("viz-web-methods", "HTTP Methods", "tagcloud",
+         [_count_metric_agg(), _terms_agg("method.keyword", size=10)],
+         query=_WEB_Q, params_extra=_TAGCLOUD),
+
+    # -- Threat Decisions & Decay ---------------------------------------------
+    _markdown("viz-decision-guide", "About: Threat Decisions & Decay",
+              f"**Why each request went where it went.** The proxy adds this request's own score "
+              f"(*request score*) to what is left of the session's earlier score after decay "
+              f"(*carried score*). If the result (*effective score*) reaches **{HONEYPOT_THRESHOLD}** "
+              f"(dashed line) the session is diverted to the honeypot. Scores halve every half-life; "
+              f"each offense slows that, and a *permaflagged* session never decays."),
+    _viz("viz-decision-honeypot-count", "Requests Diverted to Honeypot", "metric",
+         [_count_metric_agg("Diverted requests")], query=f'{_WEB_Q} and route:"honeypot"'),
+    _viz("viz-decision-score-composition", "Effective Score = Own + Carried (avg)", "line",
+         [_metric_agg("avg", "threat_score", "1", "Effective score"),
+          _metric_agg("avg", "request_score", "3", "This request's own score"),
+          _metric_agg("avg", "carried_score", "4", "Carried over from history"),
+          _date_histogram_agg()],
+         query=_DECISION_Q,
+         params_extra=_xy_params("line", [("1", "Effective score"), ("3", "This request's own score"),
+                                          ("4", "Carried over from history")],
+                                 y_title="Threat score", threshold=HONEYPOT_THRESHOLD)),
+    _viz("viz-decision-peak-score", "Peak Effective Score vs Threshold", "line",
+         [_metric_agg("max", "threat_score", "1", "Peak effective score"),
+          _metric_agg("max", "decayed_score", "3", "Peak decayed carry-over"),
+          _date_histogram_agg()],
+         query=_DECISION_Q,
+         params_extra=_xy_params("line", [("1", "Peak effective score"), ("3", "Peak decayed carry-over")],
+                                 y_title="Threat score", threshold=HONEYPOT_THRESHOLD)),
+    _viz("viz-decision-decay-states", "Decay State of Requests", "pie",
+         [_count_metric_agg(), _terms_agg("decay_state.keyword", size=4, label="Decay state")],
+         query=_DECISION_Q, params_extra=_PIE),
+    _viz("viz-decision-routing-reasons", "Honeypot Routing Reasons", "horizontal_bar",
+         [_count_metric_agg(), _terms_agg("route_reason.keyword", size=10, label="Reason")],
+         query=f'{_DECISION_Q} and route:"honeypot"',
+         params_extra=_xy_params("horizontal_bar", [("1", "Requests")], horizontal=True)),
+    _viz("viz-decision-offenses", "Offenses per Request's Session", "histogram",
+         [_count_metric_agg(), _histogram_agg("offenses", 1),
+          _terms_agg("route.keyword", agg_id="3", size=2, schema="group", label="Route")],
+         query=_DECISION_Q,
+         params_extra=_xy_params("histogram", [("1", "Requests")], mode="stacked", y_title="Requests")),
+    _viz("viz-decision-by-route", "Score Breakdown by Route", "table",
+         [_count_metric_agg("Requests"),
+          _metric_agg("avg", "request_score", "3", "Avg own score"),
+          _metric_agg("avg", "carried_score", "4", "Avg carried score"),
+          _metric_agg("avg", "threat_score", "5", "Avg effective score"),
+          _metric_agg("max", "offenses", "6", "Max offenses"),
+          _terms_agg("route.keyword", agg_id="2", size=2, schema="bucket", label="Route"),
+          _terms_agg("decay_state.keyword", agg_id="7", size=4, schema="bucket", label="Decay state")],
+         query=_DECISION_Q, params_extra=_TABLE),
 
     # -- Session Analysis ---------------------------------------------------
+    _markdown("viz-session-guide", "About: Session Analysis",
+              "**Who is behind the traffic.** A session is one visitor (cookie, or IP when the "
+              "cookie is dropped). Its score accumulates across requests and decays over time, so "
+              "a session can be diverted even if no single request crossed the threshold. "
+              "*Offenses* counts the attack signals a session has fired."),
     _viz("viz-session-total-sessions", "Total Distinct Sessions", "metric",
-         [_metric_agg("cardinality", "session_id.keyword", "1")], query=_SESSION_Q),
-    _viz("viz-session-over-time", "Distinct Sessions Active Over Time", "histogram",
-         [_metric_agg("cardinality", "session_id.keyword", "1"), _date_histogram_agg()],
-         query=_SESSION_Q),
+         [_metric_agg("cardinality", "session_id.keyword", "1", "Sessions")], query=_SESSION_Q),
+    _viz("viz-session-over-time", "Distinct Sessions Active Over Time by Route", "histogram",
+         [_metric_agg("cardinality", "session_id.keyword", "1"), _date_histogram_agg(),
+          _terms_agg("route.keyword", agg_id="3", size=2, schema="group", order_by="1", label="Route")],
+         query=_SESSION_Q,
+         params_extra=_xy_params("histogram", [("1", "Sessions")], mode="stacked", y_title="Sessions")),
     _viz("viz-session-requests-table", "Requests & Duration per Session", "table",
-         [_count_metric_agg(), _metric_agg("min", "timestamp", "2"), _metric_agg("max", "timestamp", "3"),
-          _terms_agg("session_id.keyword", agg_id="4", size=15, schema="bucket", order_by="1")],
-         query=_SESSION_Q),
-    _viz("viz-session-top-threat", "Top Sessions by Peak Threat Score", "table",
-         [_metric_agg("max", "threat_score", "1"),
-          _terms_agg("session_id.keyword", agg_id="2", size=15, schema="bucket", order_by="1")],
-         query=_SESSION_Q),
+         [_count_metric_agg("Requests"), _metric_agg("min", "timestamp", "2", "First seen"),
+          _metric_agg("max", "timestamp", "3", "Last seen"),
+          _metric_agg("cardinality", "uri.keyword", "5", "Distinct URIs"),
+          _terms_agg("session_id.keyword", agg_id="4", size=15, schema="bucket", order_by="1", label="Session")],
+         query=_SESSION_Q, params_extra=_TABLE),
+    _viz("viz-session-top-threat", "Most Hostile Sessions", "table",
+         [_metric_agg("max", "threat_score", "1", "Peak effective score"),
+          _metric_agg("max", "offenses", "3", "Offenses"),
+          _metric_agg("cardinality", "patterns.keyword", "4", "Distinct attack patterns"),
+          _terms_agg("session_id.keyword", agg_id="2", size=15, schema="bucket", order_by="1", label="Session")],
+         query=_SESSION_Q, params_extra=_TABLE),
     _viz("viz-session-sophistication-pie", "Sophistication Classifications", "pie",
-         [_count_metric_agg(), _terms_agg("security_event.classification.keyword", size=10)],
-         query=_SOPHISTICATION_Q),
-    _viz("viz-session-sophistication-confidence", "Sophistication Confidence Over Time", "histogram",
-         [_metric_agg("avg", "security_event.confidence", "1"), _date_histogram_agg()],
-         query=_SOPHISTICATION_Q),
+         [_count_metric_agg(), _terms_agg("security_event.classification.keyword", size=10, label="Class")],
+         query=_SOPHISTICATION_Q, params_extra=_PIE),
+    _viz("viz-session-sophistication-confidence", "Sophistication Confidence Over Time", "line",
+         [_metric_agg("avg", "security_event.confidence", "1", "Avg confidence"), _date_histogram_agg()],
+         query=_SOPHISTICATION_Q,
+         params_extra=_xy_params("line", [("1", "Avg confidence")], y_title="Confidence")),
 
     # -- Attack Patterns ------------------------------------------------------
+    _markdown("viz-attack-guide", "About: Attack Patterns",
+              "**What the attacks were.** The cloud shows which attack patterns and CVE signatures "
+              "requests matched; the table lists the URIs that matched them. The lower panels come "
+              "from security events the proxy logs explicitly (CVE matches, honeytoken reuse, "
+              "high-threat requests)."),
     _viz("viz-attack-total-events", "Total Security Events", "metric",
-         [_count_metric_agg()], query=_ATTACK_Q),
-    _viz("viz-attack-events-over-time", "Security Events Over Time by Type", "histogram",
+         [_count_metric_agg("Security events")], query=_ATTACK_Q),
+    _viz("viz-attack-pattern-cloud", "Matched Attack Patterns", "tagcloud",
+         [_count_metric_agg(), _terms_agg("patterns.keyword", size=30)],
+         query=f'{_DECISION_Q} and uri_class:"attack_pattern"', params_extra=_TAGCLOUD),
+    _viz("viz-attack-pattern-uris", "URIs Matching Attack Patterns", "table",
+         [_count_metric_agg("Requests"), _metric_agg("max", "request_score", "4", "Own score"),
+          _terms_agg("uri.keyword", agg_id="2", size=15, schema="bucket", label="URI"),
+          _terms_agg("patterns.keyword", agg_id="3", size=3, schema="bucket", label="Pattern")],
+         query=f'{_DECISION_Q} and uri_class:"attack_pattern"', params_extra=_TABLE),
+    _viz("viz-attack-events-over-time", "Security Events Over Time by Type", "area",
          [_count_metric_agg(), _date_histogram_agg(),
-          _terms_agg("security_event_type.keyword", agg_id="3", size=8, schema="group")],
-         query=_ATTACK_Q),
-    _viz("viz-attack-events-by-type", "Events by Type", "pie",
-         [_count_metric_agg(), _terms_agg("security_event_type.keyword", size=10)], query=_ATTACK_Q),
-    _viz("viz-attack-routing-reasons", "Honeypot Routing Reasons", "pie",
-         [_count_metric_agg(), _terms_agg("security_event.reason.keyword", size=10)],
-         query=f'{_ATTACK_Q} and security_event_type:"routing_to_honeypot"'),
+          _terms_agg("security_event_type.keyword", agg_id="3", size=8, schema="group", label="Event type")],
+         query=_ATTACK_Q,
+         params_extra=_xy_params("area", [("1", "Events")], mode="stacked", y_title="Events")),
     _viz("viz-attack-top-cves", "Top CVEs Detected", "table",
-         [_count_metric_agg(), _terms_agg("security_event.cve.keyword", agg_id="2", size=10, schema="bucket")],
-         query=f'{_ATTACK_Q} and security_event_type:"cve_pattern_detected"'),
+         [_count_metric_agg("Detections"),
+          _metric_agg("cardinality", "remote_addr.keyword", "3", "Distinct IPs"),
+          _terms_agg("security_event.cve.keyword", agg_id="2", size=10, schema="bucket", label="CVE")],
+         query=f'{_ATTACK_Q} and security_event_type:"cve_pattern_detected"', params_extra=_TABLE),
     _viz("viz-attack-top-ips", "Top Attacking IPs", "table",
-         [_count_metric_agg(), _terms_agg("remote_addr.keyword", agg_id="2", size=10, schema="bucket")],
-         query=_ATTACK_Q),
-    _viz("viz-attack-honeytoken-types", "Honeytoken Hits by Type", "table",
-         [_count_metric_agg(), _terms_agg("security_event.token_type.keyword", agg_id="2", size=10, schema="bucket")],
-         query=f'{_ATTACK_Q} and security_event_type:"honeytoken_used"'),
+         [_count_metric_agg("Events"),
+          _metric_agg("cardinality", "security_event_type.keyword", "3", "Event types"),
+          _terms_agg("remote_addr.keyword", agg_id="2", size=10, schema="bucket", label="IP")],
+         query=_ATTACK_Q, params_extra=_TABLE),
+    _viz("viz-attack-honeytoken-types", "Honeytoken Hits by Type", "pie",
+         [_count_metric_agg(), _terms_agg("security_event.token_type.keyword", size=10, label="Token type")],
+         query=f'{_ATTACK_Q} and security_event_type:"honeytoken_used"', params_extra=_PIE),
 ]
 
 
@@ -258,58 +465,106 @@ def _dashboard(dash_id: str, title: str, description: str, layout: list[tuple[st
 DASHBOARDS = [
     _dashboard(
         "dashboard-ids-alerts", "Honeypot: IDS Alerts (Suricata)",
-        "Suricata alert volume, categories, severities, top signatures and source IPs.",
+        "Network IDS view: alert severity over time, categories, protocols, targeted ports, top signatures and source IPs.",
         [
-            ("viz-ids-total-alerts", 0, 0, 12, 8),
-            ("viz-ids-alerts-over-time", 12, 0, 36, 8),
-            ("viz-ids-alerts-by-category", 0, 8, 16, 15),
-            ("viz-ids-alerts-by-severity", 16, 8, 16, 15),
-            ("viz-ids-top-signatures", 32, 8, 16, 15),
-            ("viz-ids-top-source-ips", 0, 23, 48, 15),
+            ("viz-ids-guide", 0, 0, 16, 8),
+            ("viz-ids-total-alerts", 16, 0, 8, 8),
+            ("viz-ids-alerts-over-time", 24, 0, 24, 8),
+            ("viz-ids-alerts-by-category", 0, 8, 24, 15),
+            ("viz-ids-alerts-by-protocol", 24, 8, 12, 15),
+            ("viz-ids-dest-ports", 36, 8, 12, 15),
+            ("viz-ids-top-signatures", 0, 23, 28, 15),
+            ("viz-ids-top-source-ips", 28, 23, 20, 15),
         ],
     ),
     _dashboard(
         "dashboard-web-threat-overview", "Honeypot: Web Traffic & Threat Overview",
-        "All nginx traffic: request volume, production-vs-honeypot routing, threat scores, top URIs/User-Agents/suspicious IPs.",
+        "What was requested and how it was answered: volume by route, status codes, methods, and top URIs marked attack_pattern or safe.",
         [
-            ("viz-web-total-requests", 0, 0, 12, 8),
-            ("viz-web-requests-over-time", 12, 0, 36, 8),
-            ("viz-web-routing-pie", 0, 8, 16, 15),
-            ("viz-web-threat-score-histogram", 16, 8, 32, 15),
-            ("viz-web-top-uris", 0, 23, 16, 15),
-            ("viz-web-top-user-agents", 16, 23, 16, 15),
-            ("viz-web-top-suspicious-ips", 32, 23, 16, 15),
+            ("viz-web-guide", 0, 0, 16, 8),
+            ("viz-web-total-requests", 16, 0, 8, 8),
+            ("viz-web-requests-over-time", 24, 0, 24, 8),
+            ("viz-web-top-uris", 0, 8, 28, 18),
+            ("viz-web-routing-pie", 28, 8, 10, 9),
+            ("viz-web-uri-class-pie", 38, 8, 10, 9),
+            ("viz-web-methods", 28, 17, 20, 9),
+            ("viz-web-status-codes", 0, 26, 24, 13),
+            ("viz-web-top-user-agents", 24, 26, 24, 13),
+        ],
+    ),
+    _dashboard(
+        "dashboard-threat-decisions", "Honeypot: Threat Decisions & Decay",
+        "Why each request was routed where it was: own vs. carried-over score against the honeypot threshold, decay states, offenses and routing reasons.",
+        [
+            ("viz-decision-guide", 0, 0, 36, 8),
+            ("viz-decision-honeypot-count", 36, 0, 12, 8),
+            ("viz-decision-score-composition", 0, 8, 48, 14),
+            ("viz-decision-peak-score", 0, 22, 24, 13),
+            ("viz-decision-decay-states", 24, 22, 12, 13),
+            ("viz-decision-offenses", 36, 22, 12, 13),
+            ("viz-decision-routing-reasons", 0, 35, 20, 14),
+            ("viz-decision-by-route", 20, 35, 28, 14),
         ],
     ),
     _dashboard(
         "dashboard-session-analysis", "Honeypot: Session Analysis",
-        "Per-session request volume and duration, peak threat scores, and attacker-sophistication classification.",
+        "Per-session request volume and duration, peak threat, offenses and attacker-sophistication classification.",
         [
-            ("viz-session-total-sessions", 0, 0, 12, 8),
-            ("viz-session-over-time", 12, 0, 36, 8),
-            ("viz-session-requests-table", 0, 8, 24, 15),
-            ("viz-session-top-threat", 24, 8, 24, 15),
-            ("viz-session-sophistication-pie", 0, 23, 16, 15),
-            ("viz-session-sophistication-confidence", 16, 23, 32, 15),
+            ("viz-session-guide", 0, 0, 16, 8),
+            ("viz-session-total-sessions", 16, 0, 8, 8),
+            ("viz-session-over-time", 24, 0, 24, 8),
+            ("viz-session-requests-table", 0, 8, 26, 16),
+            ("viz-session-top-threat", 26, 8, 22, 16),
+            ("viz-session-sophistication-pie", 0, 24, 16, 14),
+            ("viz-session-sophistication-confidence", 16, 24, 32, 14),
         ],
     ),
     _dashboard(
         "dashboard-attack-patterns", "Honeypot: Attack Patterns",
-        "log_security_event()-sourced events: honeypot routing reasons, CVE matches, honeytoken hits, top attacking IPs.",
+        "Which attack patterns and CVEs requests matched, the URIs behind them, honeytoken hits and top attacking IPs.",
         [
-            ("viz-attack-total-events", 0, 0, 12, 8),
-            ("viz-attack-events-over-time", 12, 0, 36, 8),
-            ("viz-attack-events-by-type", 0, 8, 16, 15),
-            ("viz-attack-routing-reasons", 16, 8, 16, 15),
-            ("viz-attack-top-cves", 32, 8, 16, 15),
-            ("viz-attack-top-ips", 0, 23, 24, 15),
-            ("viz-attack-honeytoken-types", 24, 23, 24, 15),
+            ("viz-attack-guide", 0, 0, 16, 8),
+            ("viz-attack-total-events", 16, 0, 8, 8),
+            ("viz-attack-events-over-time", 24, 0, 24, 8),
+            ("viz-attack-pattern-cloud", 0, 8, 20, 16),
+            ("viz-attack-pattern-uris", 20, 8, 28, 16),
+            ("viz-attack-top-cves", 0, 24, 18, 14),
+            ("viz-attack-top-ips", 18, 24, 18, 14),
+            ("viz-attack-honeytoken-types", 36, 24, 12, 14),
         ],
     ),
 ]
 
+DASHBOARD_IDS = [dash_id for dash_id, _ in DASHBOARDS]
 
-def put(session: requests.Session, base: str, obj_type: str, obj_id: str, body: dict) -> None:
+
+def saved_objects() -> list[tuple[str, str, dict]]:
+    """Every object to create, in dependency order: (type, id, body)."""
+    objs = [("index-pattern", DATA_VIEW_ID,
+             {"attributes": {"title": "honeypot-*", "timeFieldName": "timestamp"}, "references": []})]
+    objs += [("visualization", vid, body) for vid, body in VISUALIZATIONS]
+    objs += [("dashboard", did, body) for did, body in DASHBOARDS]
+    return objs
+
+
+def write_ndjson(path: Path) -> None:
+    """Writes the saved objects as an import-ready NDJSON file without a live
+    Kibana (same format `_export` produces, minus server-side timestamps)."""
+    lines = []
+    for obj_type, obj_id, body in saved_objects():
+        lines.append(json.dumps({
+            "attributes": body["attributes"],
+            "coreMigrationVersion": "8.8.0",
+            "id": obj_id,
+            "managed": False,
+            "references": body.get("references", []),
+            "type": obj_type,
+        }, sort_keys=True))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Wrote {path} ({len(lines)} objects)")
+
+
+def put(session, base: str, obj_type: str, obj_id: str, body: dict) -> None:
     resp = session.post(f"{base}/api/saved_objects/{obj_type}/{obj_id}?overwrite=true",
                          json=body, verify=False, timeout=30)
     if resp.status_code >= 300:
@@ -319,17 +574,19 @@ def put(session: requests.Session, base: str, obj_type: str, obj_id: str, body: 
 
 
 def main() -> None:
+    if len(sys.argv) >= 2 and sys.argv[1] == "--ndjson":
+        write_ndjson(Path(sys.argv[2]) if len(sys.argv) > 2 else NDJSON_PATH)
+        return
+
+    # Imported here so --ndjson (and the dashboard tests that import this
+    # module) work without `requests` installed.
+    from _kibana_client import make_session, parse_connection_args
+
     args = parse_connection_args()
     session = make_session(args.user, args.password)
 
-    put(session, args.kibana_url, "index-pattern", DATA_VIEW_ID,
-        {"attributes": {"title": "honeypot-*", "timeFieldName": "timestamp"}})
-
-    for viz_id, body in VISUALIZATIONS:
-        put(session, args.kibana_url, "visualization", viz_id, body)
-
-    for dash_id, body in DASHBOARDS:
-        put(session, args.kibana_url, "dashboard", dash_id, body)
+    for obj_type, obj_id, body in saved_objects():
+        put(session, args.kibana_url, obj_type, obj_id, body)
 
     print("\nAll saved objects created/updated.")
 

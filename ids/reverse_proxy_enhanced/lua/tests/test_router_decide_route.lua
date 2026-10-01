@@ -275,5 +275,20 @@ do
 end
 
 print()
+print("Decision trace for the access log")
+do
+    local d = route({ uri = "/?id=1" }, { score = 30, patterns_matched = { "union select" } },
+        { id = "s1", created_at = NOW - 60, request_count = 3, threat_score = 20, offenses = 1,
+          last_threat_time = NOW - 10 })
+    check("trace is attached to the decision", type(d.trace) == "table")
+    check("trace keeps this request's own score", d.trace.request_score == "30")
+    check("trace keeps the carried-over score", d.trace.decayed_score == "20")
+    check("trace marks the URI as an attack pattern", d.trace.uri_class == "attack_pattern")
+    local clean = route({ uri = "/shop/" }, nil)
+    check("clean request is traced as safe", clean.trace and clean.trace.uri_class == "safe")
+    local static = route({ uri = "/x.css" }, nil)
+    check("static fast path carries no trace", static.trace == nil)
+end
+
 print(string.format("%d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

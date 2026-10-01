@@ -65,6 +65,36 @@ function _M.database_for_pool(pool_num)
     return "honeypot_database_" .. pool_num
 end
 
+--- Human-readable label for an nginx upstream name, for log lines.
+---
+--- honeypot_backend_N is only an nginx upstream block; there is no container
+--- or compose service by that name, so a log line like "Backend
+--- honeypot_backend_2 marked as UNHEALTHY" pointed people at something they
+--- could not find in `docker compose ps` or the dashboard. This names the
+--- containers the upstream actually reaches instead, keeping the upstream
+--- name in brackets for anyone grepping nginx.conf.
+---
+---   honeypot_backend_2  -> "honeypot pool 2 (honeypot_eshop_2 + honeypot_database_2) [honeypot_backend_2]"
+---   production_backend  -> "production_eshop [production_backend]"
+---   anything else       -> returned unchanged
+---
+--- @param  upstream  string  nginx upstream name.
+--- @return string
+function _M.describe_upstream(upstream)
+    if type(upstream) ~= "string" then
+        return tostring(upstream)
+    end
+    local n = upstream:match("^honeypot_backend_(%d+)$")
+    if n then
+        return "honeypot pool " .. n .. " (" .. _M.service_for_pool(n) .. " + "
+            .. _M.database_for_pool(n) .. ") [" .. upstream .. "]"
+    end
+    if upstream == "production_backend" then
+        return "production_eshop [production_backend]"
+    end
+    return upstream
+end
+
 --- Starting from `preferred_pool`, search all pools in order and return the
 --- first one `is_healthy(candidate)` reports as healthy. Falls back to
 --- `preferred_pool` itself if none report healthy, so callers can let the
