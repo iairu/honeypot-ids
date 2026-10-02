@@ -40,3 +40,8 @@ ids/production_eshop_files/wp-config.php
 # Dashboard PDF exports (exploit / services / implementation reports) --
 # generated artifacts, not source content.
 dashboard/*.pdf
+
+# WordPress media-library images (product photos and every generated
+# thumbnail size) -- regenerated automatically, not source content.
+ids/production_eshop_files/wp-content/uploads/**/*.jpg
+ids/production_eshop_files/wp-content/uploads/**/*.jpeg
