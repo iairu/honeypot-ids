@@ -285,6 +285,12 @@ services:
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
       - POOL_SPARES=${POOL_SPARES:-1}
       - POOL_MAX=${POOL_MAX:-10}
+      # Host limits for building another pool; below them the router reuses the
+      # existing pools round-robin. Empty = the built-in default.
+      - POOL_MIN_FREE_MEM_MB=${POOL_MIN_FREE_MEM_MB:-1024}
+      - POOL_MAX_LOAD_PER_CPU=${POOL_MAX_LOAD_PER_CPU:-1.5}
+      - POOL_MIN_FREE_DISK_GB=${POOL_MIN_FREE_DISK_GB:-5}
+      - POOL_RECYCLE_IDLE=${POOL_RECYCLE_IDLE:-1}
     restart: unless-stopped
     networks:
       - session_network

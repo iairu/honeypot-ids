@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import shutil
 import socket
 import sys
 import threading
@@ -54,6 +55,15 @@ SPARES = int(os.environ.get("POOL_SPARES", "1"))
 MAX_POOLS = int(os.environ.get("POOL_MAX", "10"))
 READY_TIMEOUT_S = int(os.environ.get("POOL_READY_TIMEOUT_SECONDS", "900"))
 RETRY_BACKOFF_S = int(os.environ.get("POOL_RETRY_BACKOFF_SECONDS", "60"))
+# Host limits for starting another pool. A WordPress pool reserves ~1.5 GB (eshop
+# 1 GB + database 512 MB limits), a database-only pool 512 MB.
+MIN_FREE_MEM_MB = float(os.environ.get(
+    "POOL_MIN_FREE_MEM_MB", "2560" if MODE == "wordpress" else "1024"))
+MAX_LOAD_PER_CPU = float(os.environ.get("POOL_MAX_LOAD_PER_CPU", "1.5"))
+MIN_FREE_DISK_GB = float(os.environ.get("POOL_MIN_FREE_DISK_GB", "5"))
+# Rebuild a clean pool when an attacker's assignment expires (if the host has
+# room); 0 = always hand the used pool to the next attacker as it is.
+RECYCLE_IDLE = os.environ.get("POOL_RECYCLE_IDLE", "1") != "0"
 
 MYSQL_IMAGE = "mysql:5.7"
 WORDPRESS_IMAGE = "wordpress:6.8.3-php8.1"
@@ -164,8 +174,59 @@ class Manager:
 
     # ---- capacity --------------------------------------------------------
 
+    @staticmethod
+    def host_stats() -> tuple[float, float, int, float]:
+        """(MemAvailable MB, 1-minute load, CPU count, free disk GB). Read from
+        /proc, which shows the host's (or the WSL VM's) figures, not this
+        container's cgroup."""
+        mem_kb = 0
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    mem_kb = int(line.split()[1])
+                    break
+        load1 = os.getloadavg()[0]
+        disk = shutil.disk_usage("/")
+        return mem_kb / 1024.0, load1, os.cpu_count() or 1, disk.free / 1024 ** 3
+
     def can_grow(self) -> tuple[bool, str]:
-        return True, ""
+        """Whether the host can take another pool. When it can't, the router
+        reuses existing pools round-robin instead (see CAPPED_KEY)."""
+        mem, load1, cpus, disk = self.host_stats()
+        reason = pl.host_pressure(mem, load1, cpus, disk, MIN_FREE_MEM_MB,
+                                  MAX_LOAD_PER_CPU, MIN_FREE_DISK_GB)
+        return (not reason), reason
+
+    # ---- idle pools ------------------------------------------------------
+
+    def release_idle_pools(self) -> None:
+        """Drop owners whose assignment expired. A pool left with no owner is
+        either recycled (destroyed; a clean spare is rebuilt) when the host has
+        room, or put back in the free set to be reused as it is."""
+        for n in sorted(int(x) for x in self.redis.smembers(READY_KEY)):
+            key = OWNER_PREFIX + str(n)
+            owners = self.redis.smembers(key)
+            if not owners:
+                continue
+            current = {}
+            for ip in owners:
+                v = self.redis.get(IP_KEY_PREFIX + ip)
+                current[ip] = int(v) if v is not None and v.isdigit() else None
+            stale = pl.stale_owners(owners, current, n)
+            if not stale:
+                continue
+            self.redis.srem(key, *stale)
+            if self.redis.scard(key):
+                continue
+            ready = self.redis.scard(READY_KEY)
+            action = pl.idle_action(
+                n > STATIC_COUNT and RECYCLE_IDLE, self.can_grow()[0], ready >= MAX_POOLS)
+            if action == "recycle":
+                log(f"pool {n}: all attackers gone, recycling")
+                self.destroy(n)   # the spare logic rebuilds a clean one
+            else:
+                self.redis.zadd(FREE_KEY, {str(n): n}, nx=True)
+                log(f"pool {n}: all attackers gone, reusing as it is")
 
     # ---- provisioning ----------------------------------------------------
 
@@ -373,6 +434,7 @@ class Manager:
     def reconcile(self) -> None:
         self.adopt_static_pools()
         self.adopt_runtime_pools()
+        self.release_idle_pools()
         self.drain_wakeups()
 
         ready = {int(x) for x in self.redis.smembers(READY_KEY)}

@@ -51,6 +51,9 @@ class Reconcile(unittest.TestCase):
             self.mgr.register_ready(n)
             self.mgr.in_flight = None
         self.mgr._provision_thread = fake_thread
+        self.mgr.can_grow = lambda: (True, "")
+        self.mgr.destroyed = []
+        self.mgr.destroy = lambda n: (self.mgr.destroyed.append(n), self.mgr.unregister(n))
 
     def run_reconcile(self):
         self.mgr.reconcile()
@@ -69,8 +72,7 @@ class Reconcile(unittest.TestCase):
     def test_assignment_wakeup_builds_exactly_one_spare(self):
         self.run_reconcile()
         for n in self.static_ids():                 # every static pool owned
-            self.r.zrem(self.m.FREE_KEY, n)
-            self.r.sadd(self.m.OWNER_PREFIX + n, f"10.0.0.{n}")
+            self.own(n, f"10.0.0.{n}")
         self.r.rpush(self.m.PROVISION_KEY, "10.0.0.9")
         self.run_reconcile()
         first = str(self.STATIC + 1)
@@ -84,9 +86,59 @@ class Reconcile(unittest.TestCase):
         self.m.MAX_POOLS = self.STATIC
         self.run_reconcile()
         for n in self.static_ids():
-            self.r.zrem(self.m.FREE_KEY, n)
+            self.own(n, f"10.6.0.{n}")
         self.run_reconcile()
         self.assertEqual(self.started, [])
+
+    def own(self, pool, ip, live=True):
+        self.r.zrem(self.m.FREE_KEY, str(pool))
+        self.r.sadd(self.m.OWNER_PREFIX + str(pool), ip)
+        if live:
+            self.r.set(self.m.IP_KEY_PREFIX + ip, str(pool))
+
+    def test_low_host_resources_cap_growth(self):
+        self.run_reconcile()
+        for n in self.static_ids():
+            self.own(n, f"10.1.0.{n}")
+        self.mgr.can_grow = lambda: (False, "low memory: 100 MB available")
+        self.r.rpush(self.m.PROVISION_KEY, "10.1.0.9")
+        self.run_reconcile()
+        self.assertEqual(self.started, [])
+        self.assertIn("low memory", self.r.get(self.m.CAPPED_KEY))
+
+    def test_idle_static_pool_is_reused_not_destroyed(self):
+        self.run_reconcile()
+        self.own(1, "10.2.0.1", live=False)            # assignment expired
+        self.run_reconcile()
+        self.assertEqual(self.mgr.destroyed, [])
+        self.assertIn("1", self.r.zrange(self.m.FREE_KEY, 0, -1))
+        self.assertEqual(self.r.scard(self.m.OWNER_PREFIX + "1"), 0)
+
+    def test_live_owner_keeps_the_pool(self):
+        self.run_reconcile()
+        self.own(1, "10.3.0.1")
+        self.run_reconcile()
+        self.assertNotIn("1", self.r.zrange(self.m.FREE_KEY, 0, -1))
+
+    def test_idle_runtime_pool_recycled_when_host_has_room(self):
+        self.run_reconcile()
+        n = self.STATIC + 1
+        self.m.RECYCLE_IDLE = True
+        self.mgr.register_ready(n, owned=True)
+        self.own(n, "10.4.0.1", live=False)
+        self.run_reconcile()
+        self.assertEqual(self.mgr.destroyed, [n])
+
+    def test_idle_runtime_pool_reused_when_host_is_loaded(self):
+        self.run_reconcile()
+        n = self.STATIC + 1
+        self.m.RECYCLE_IDLE = True
+        self.mgr.register_ready(n, owned=True)
+        self.own(n, "10.5.0.1", live=False)
+        self.mgr.can_grow = lambda: (False, "high load")
+        self.run_reconcile()
+        self.assertEqual(self.mgr.destroyed, [])
+        self.assertIn(str(n), self.r.zrange(self.m.FREE_KEY, 0, -1))
 
 
 class ReconcileDatabaseLayer(Reconcile):

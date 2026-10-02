@@ -42,5 +42,41 @@ class StaleOwners(unittest.TestCase):
         self.assertEqual(pl.stale_owners({"a"}, {"a": 4}, 4), set())
 
 
+class HostPressure(unittest.TestCase):
+    LIMITS = dict(min_free_mem_mb=2560, max_load_per_cpu=1.5, min_free_disk_gb=5)
+
+    def check(self, mem=4000, load=1.0, cpus=4, disk=50):
+        return pl.host_pressure(mem, load, cpus, disk, **self.LIMITS)
+
+    def test_healthy_host(self):
+        self.assertEqual(self.check(), "")
+
+    def test_low_memory(self):
+        self.assertIn("low memory", self.check(mem=1800))
+
+    def test_high_load(self):
+        self.assertIn("high load", self.check(load=7.0, cpus=4))
+
+    def test_low_disk(self):
+        self.assertIn("low disk", self.check(disk=2))
+
+    def test_memory_reported_first(self):
+        self.assertIn("low memory", self.check(mem=100, load=99, disk=0))
+
+
+class IdleAction(unittest.TestCase):
+    def test_recycles_runtime_pool_when_there_is_room(self):
+        self.assertEqual(pl.idle_action(True, True, False), "recycle")
+
+    def test_reuses_when_host_is_loaded(self):
+        self.assertEqual(pl.idle_action(True, False, False), "reuse")
+
+    def test_reuses_at_the_pool_ceiling(self):
+        self.assertEqual(pl.idle_action(True, True, True), "reuse")
+
+    def test_never_recycles_compose_pools(self):
+        self.assertEqual(pl.idle_action(False, True, False), "reuse")
+
+
 if __name__ == "__main__":
     unittest.main()

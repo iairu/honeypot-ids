@@ -55,6 +55,8 @@ Each attacker IP gets a honeypot pool (`honeypot_eshop_N` + `honeypot_database_N
 2. Every assignment also queues a wake-up on `honeypot_pool:provision`. The `pool_manager` service then builds one more pair (pool 4, 5, …) through the Docker API, so a spare is waiting for the next attacker (`POOL_SPARES`, capped by `POOL_MAX`). Pools 1-3 come from `docker-compose.yml`; `pool_manager` only adopts them.
 3. If no pool is free (all owned, or the spare is still being built) the new IP **reuses a ready pool round-robin** and shares it. This is the only case where two attackers share a pool.
 
+**Low host resources.** `pool_manager` builds a spare only while the host has room: free memory above `POOL_MIN_FREE_MEM_MB` (a WordPress pool reserves about 1.5 GB), load per CPU below `POOL_MAX_LOAD_PER_CPU`, and disk above `POOL_MIN_FREE_DISK_GB`. Otherwise it sets `honeypot_pool:capped` and builds nothing, and new attackers reuse existing pools round-robin (reuse is exclusive when a pool has gone idle, shared otherwise). When a pool's attackers have all expired, `pool_manager` destroys it and builds a clean spare if the host has room (`POOL_RECYCLE_IDLE`), or hands it to the next attacker as it is.
+
 Before this change the router did `INCR counter % 3`, so the 4th attacker already shared pool 1. `lua/tests/test_pool_assignment.lua` runs the real assignment script against an in-memory Redis and checks the exclusive, spare and reuse paths. `pool_manager` mounts the Docker socket, so it sits only on `session_network` and publishes no ports.
 
 ## Running for real (two hosts)
