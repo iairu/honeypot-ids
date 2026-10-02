@@ -119,7 +119,7 @@ FORCE_RESEED=1 docker compose up production_db_seed && docker compose restart ho
 The ids stack can deceive attackers at one of two layers. Pick the layer on the
 dashboard's Services page ("Honeypot layer"), or choose the compose file:
 
-- **Reverse proxy level** (default, recommended): `docker-compose.yml`. Suspicious
+- **WordPress proxy level** (default, recommended): `docker-compose.yml`. Suspicious
   sessions are routed to separate honeypot WordPress containers.
 - **Database proxy level**: `docker-compose.db-proxy.yml`. One eshop serves
   everything, and `wp-content/db.php` switches it between the production and honeypot

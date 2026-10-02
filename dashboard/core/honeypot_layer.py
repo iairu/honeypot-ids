@@ -1,4 +1,4 @@
-"""Which honeypot layer the edge (ids/) stack runs: the default reverse proxy
+"""Which honeypot layer the edge (ids/) stack runs: the default WordPress proxy
 level, or the alternative database proxy level.
 
 Both layers are the same compose project in ids/. They differ only in which
@@ -36,8 +36,8 @@ class HoneypotLayer:
 
 REVERSE_PROXY = HoneypotLayer(
     id="reverse_proxy",
-    label="Reverse proxy level (Default, Recommended)",
-    short_label="reverse proxy level",
+    label="WordPress proxy level (Default, Recommended)",
+    short_label="WordPress proxy level",
     compose_file="docker-compose.yml",
 )
 DATABASE = HoneypotLayer(

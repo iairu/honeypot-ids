@@ -5,7 +5,7 @@ the dashboard's Services page ("Honeypot layer"), or with the compose file you p
 
 | Layer | Compose file | What gets switched per suspicious session |
 |---|---|---|
-| Reverse proxy level (default, recommended) | `docker-compose.yml` | The whole backend: the proxy routes to separate honeypot WordPress containers (pools). |
+| WordPress proxy level (default, recommended) | `docker-compose.yml` | The whole backend: the proxy routes to separate honeypot WordPress containers (pools). |
 | Database proxy level | `docker-compose.db-proxy.yml` | Only the database: one `production_eshop` serves everything, and `wp-content/db.php` connects it to the production or the honeypot database. |
 
 ```sh

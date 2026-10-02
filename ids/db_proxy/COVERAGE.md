@@ -8,7 +8,7 @@ developed on the `db-proxy-single-eshop` branch). See [README.md](README.md).
 This layer does not run a separate WordPress + MySQL pool per attacker. It has
 **one** WordPress instance (`production_eshop`) and **two** databases:
 
-| Reverse proxy level (pools, default) | Database proxy level (this layer) |
+| WordPress proxy level (pools, default) | Database proxy level (this layer) |
 |---|---|
 | `production_eshop` + `honeypot_eshop_1/2/3` (4 WordPress containers) | `production_eshop` only (1) |
 | `production_database` + `honeypot_database_1/2/3` (4 MySQL) | `production_database` + `honeypot_database` (2) |
