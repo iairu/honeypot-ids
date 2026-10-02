@@ -10,7 +10,8 @@ from pathlib import Path
 
 from PyQt6.QtGui import QPalette
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QVBoxLayout,
+    QWidget,
     QWizard, QWizardPage,
 )
 
@@ -25,14 +26,6 @@ from ui.dependency_banner import DependencyBanner
 from ui.env_editor import EnvEditorWidget
 from ui.page_certs import CertWorker
 from ui.remote_config_widget import RemoteConfigWidget
-
-EDGE_ENV_DEFAULT_KEYS = [
-    "MYSQL_ROOT_PASSWORD", "MYSQL_PASSWORD", "REDIS_PASSWORD",
-    "SESSION_MANAGER_SECRET", "INTERNAL_TEST_SECRET",
-    "ELK_ENABLED", "VECTOR_HOST", "VECTOR_PORT",
-    "ABUSEIPDB_API_KEY", "ABUSEIPDB_CONFIDENCE_MINIMUM", "ABUSEIPDB_DAILY_CHECK_LIMIT",
-    "COMPOSE_PROJECT_NAME", "ENVIRONMENT",
-]
 
 # Page IDs, module-level (not SetupWizard class attributes) so both the
 # wizard itself and WizardTimeline's step list can reference them without
@@ -172,6 +165,18 @@ class RemotePage(TimelineMixin, QWizardPage):
         self.setTitle("Remote hosts (optional)")
         layout = QVBoxLayout(self)
         self._init_timeline(layout)
+
+        # Scrolls instead of letting the stacked widgets' inputs get
+        # squeezed vertically when the window is short.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        layout.addWidget(scroll, stretch=1)
+        body = QWidget()
+        scroll.setWidget(body)
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 0, 0)
+
         info = QLabel(
             "If either project runs on a separate host (the real two-host "
             "deployment this project is designed for -- see ARCHITECTURE.md), "
@@ -192,6 +197,7 @@ class RemotePage(TimelineMixin, QWizardPage):
         self.siem_widget = RemoteConfigWidget("siem", state.remote_siem)
         layout.addWidget(QLabel("<b>siem</b>"))
         layout.addWidget(self.siem_widget)
+        layout.addStretch(1)
 
     def validatePage(self) -> bool:
         self.state.remote_edge = self.edge_widget.to_config()
@@ -222,14 +228,13 @@ class RemoteAwareEnvPage(TimelineMixin, QWizardPage):
     def __init__(
         self, state: AppState, project: str, title: str,
         local_path: Path, local_example: Path,
-        default_keys: list[str] | None, parent=None,
+        parent=None,
     ):
         super().__init__(parent)
         self.state = state
         self.project = project
         self.local_path = local_path
         self.local_example = local_example
-        self.default_keys = default_keys
         self.setTitle(title)
 
         layout = QVBoxLayout(self)
@@ -305,11 +310,9 @@ class RemoteAwareEnvPage(TimelineMixin, QWizardPage):
                 "the placeholder defaults."
             )
 
-        # The curated key subset (EDGE_ENV_DEFAULT_KEYS) only makes sense
-        # for the known local template -- a remote-fetched file might be
-        # structured differently, so show everything actually found there.
-        keys = self.default_keys if not self._source_is_remote else None
-        self.editor = EnvEditorWidget(self.env_file, keys=keys)
+        # Show every key in the file (.env.example keys already merged in),
+        # same as the Settings .env editor.
+        self.editor = EnvEditorWidget(self.env_file)
         self._editor_slot.addWidget(self.editor)
 
     def validatePage(self) -> bool:
@@ -337,7 +340,7 @@ class EdgeEnvPage(RemoteAwareEnvPage):
     def __init__(self, state: AppState, parent=None):
         super().__init__(
             state, "edge", "ids (edge honeypot) — .env",
-            EDGE_ENV_FILE, EDGE_ENV_EXAMPLE, EDGE_ENV_DEFAULT_KEYS, parent,
+            EDGE_ENV_FILE, EDGE_ENV_EXAMPLE, parent,
         )
 
 
@@ -345,7 +348,7 @@ class SiemEnvPage(RemoteAwareEnvPage):
     def __init__(self, state: AppState, parent=None):
         super().__init__(
             state, "siem", "siem (SIEM) — .env",
-            SIEM_ENV_FILE, SIEM_ENV_EXAMPLE, None, parent,
+            SIEM_ENV_FILE, SIEM_ENV_EXAMPLE, parent,
         )
 
 
