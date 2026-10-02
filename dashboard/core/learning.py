@@ -424,6 +424,101 @@ EXPLOIT_LESSONS: dict[str, ExploitLesson] = {
         "slipping past login rate limits. system.listMethods (this preset) is the usual "
         "first probe.",
         "Disable XML-RPC if unused, or rate-limit it and block system.multicall."),
+    "CVE-2017-1001000": ExploitLesson(
+        "Content injection (defacement)", "A01 Broken Access Control", _T1190,
+        "WordPress 4.7.0 and 4.7.1 checked permissions against the post id before casting it "
+        "to an integer, so posts/1?id=1abc passed the check as a different, unprotected id "
+        "while still editing post 1. Anyone could rewrite pages and posts.",
+        "Update WordPress (fixed in 4.7.2) and monitor for unexpected content changes."),
+    "GENERIC-XSS-001": ExploitLesson(
+        "Cross-site scripting (script tag)", "A03 Injection", "T1189 Drive-by Compromise",
+        "A <script> tag sent in the search parameter. If the page prints the search term "
+        "without escaping it, the script runs in every visitor's browser who opens the link.",
+        "Escape output (esc_html, esc_attr), set a Content-Security-Policy, and filter or "
+        "block script tags in requests."),
+    "GENERIC-XSS-002": ExploitLesson(
+        "Cross-site scripting (event handler)", "A03 Injection", "T1189 Drive-by Compromise",
+        "XSS without a script tag: an <img> with a broken src whose onerror handler runs "
+        "JavaScript. Filters that only look for <script> miss it.",
+        "Escape output by context, use a strict Content-Security-Policy, and match on "
+        "handlers such as onerror= and onload=, not only on <script>."),
+    "GENERIC-SQLI-001": ExploitLesson(
+        "SQL injection (boolean)", "A03 Injection", _T1190,
+        "A quote and OR '1'='1 in a form field. If the value is pasted into an SQL query, "
+        "the condition is always true and the query returns rows it should not.",
+        "Use prepared statements ($wpdb->prepare) and validate input types."),
+    "GENERIC-SQLI-002": ExploitLesson(
+        "SQL injection (time-based blind)", "A03 Injection", _T1190,
+        "No data is returned, so the attacker asks the database to SLEEP and measures how "
+        "long the response takes. A delay proves the query ran, and bits of data can then "
+        "be read one at a time.",
+        "Use prepared statements, and alert on SLEEP/BENCHMARK in requests and on slow queries."),
+    "GENERIC-SQLI-003": ExploitLesson(
+        "SQL injection (form body)", "A03 Injection", _T1190,
+        "The payload is in the POST body of a form, not the URL. Filters that only inspect "
+        "the URL and headers never see it, so this tests whether a body-borne attack is "
+        "detected at all.",
+        "Inspect request bodies too (a WAF), and use prepared statements so injection "
+        "fails regardless of detection."),
+    "GENERIC-ENUM-001": ExploitLesson(
+        "Content discovery (wordlist scan)", "A05 Security Misconfiguration",
+        "T1595.003 Active Scanning: Wordlist Scanning",
+        "A tool tries a long list of common paths (/admin, /.env, /backup.zip, ...) and "
+        "notes which exist. Each single request looks harmless, so the signal is the "
+        "pattern across requests.",
+        "Remove backups and config files from the web root, rate-limit 404 bursts, and "
+        "flag clients that probe many sensitive paths."),
+    "GENERIC-ENUM-002": ExploitLesson(
+        "Plugin and theme discovery", "A06 Vulnerable and Outdated Components",
+        "T1595.002 Active Scanning: Vulnerability Scanning",
+        "Requesting each plugin's readme.txt and each theme's style.css reveals which are "
+        "installed and their versions, which the attacker then matches against known CVEs.",
+        "Block direct access to readme files, keep components updated, and hide version "
+        "strings."),
+    "GENERIC-IDOR-001": ExploitLesson(
+        "Insecure direct object reference (users)", "A01 Broken Access Control",
+        "T1087 Account Discovery",
+        "Changing the id in /wp-json/wp/v2/users/<id> lists accounts one by one. The server "
+        "answers without checking whether the requester may see them.",
+        "Require authentication for user listings and check ownership on every object access."),
+    "GENERIC-IDOR-002": ExploitLesson(
+        "Insecure direct object reference (orders)", "A01 Broken Access Control",
+        "T1213 Data from Information Repositories",
+        "Walking order ids in the WooCommerce REST API reads other customers' orders if "
+        "the endpoint does not verify who owns each one.",
+        "Check ownership on every object, use authenticated API keys, and avoid guessable "
+        "sequential ids where possible."),
+    "GENERIC-TOOL-001": ExploitLesson(
+        "Automated SQL injection tool", "A03 Injection",
+        "T1595.002 Active Scanning: Vulnerability Scanning",
+        "sqlmap announces itself in its User-Agent. Detecting the tool by name is easy to "
+        "evade (attackers change the header) but catches careless automation.",
+        "Do not rely on User-Agent alone: also detect the payloads and request rates."),
+    "GENERIC-TOOL-002": ExploitLesson(
+        "Automated web scanner (Nikto)", "A05 Security Misconfiguration",
+        "T1595.002 Active Scanning: Vulnerability Scanning",
+        "Nikto sends thousands of requests for known-bad files and identifies itself in the "
+        "User-Agent unless told otherwise.",
+        "Detect scanner bursts by behaviour (many 404s, known-bad paths), not just by name."),
+    "GENERIC-TOOL-003": ExploitLesson(
+        "Exploitation framework (Metasploit)", "A06 Vulnerable and Outdated Components",
+        "T1595.002 Active Scanning: Vulnerability Scanning",
+        "Metasploit modules normally send a browser-like User-Agent, so a name match is a "
+        "weak signal. This preset sends an honest agent to show that name-based detection "
+        "works only for the unevasive case.",
+        "Detect the exploit payloads and post-exploitation behaviour, not the framework name."),
+    "GENERIC-TOOL-004": ExploitLesson(
+        "Directory brute-forcer (Gobuster)", "A05 Security Misconfiguration",
+        "T1595.003 Active Scanning: Wordlist Scanning",
+        "Gobuster requests every entry of a wordlist and keeps the paths that exist. Its "
+        "default User-Agent is gobuster/<version>.",
+        "Rate-limit and flag clients with many 404s in a short time."),
+    "GENERIC-TOOL-005": ExploitLesson(
+        "WordPress scanner (WPScan)", "A06 Vulnerable and Outdated Components",
+        "T1595.002 Active Scanning: Vulnerability Scanning",
+        "WPScan enumerates WordPress version, plugins, themes and users, and matches them "
+        "against a vulnerability database. Its default User-Agent names it.",
+        "Hide version information, restrict user enumeration, and flag WPScan-style probing."),
     "CVE-2024-25600": ExploitLesson(
         "Remote code execution (code injection)", "A03 Injection", _T1190,
         "Bricks Builder's render_element endpoint passes attacker-supplied PHP to eval() "

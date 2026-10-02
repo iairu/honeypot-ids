@@ -298,3 +298,49 @@ def flush_all(remote: RemoteConfig | None, timeout: float = 15.0) -> None:
     test. No coming back from this short of the state rebuilding itself
     from live traffic."""
     _run_redis_cli(remote, "FLUSHALL", timeout=timeout)
+
+
+# Deletes every key except the honeypot pool registry (honeypot_pool:ready /
+# :free / :owner:* / :pw:* ...), which pool_manager owns. "honeypot_pool_ip:*"
+# (a different prefix) IS deleted: that is the per-IP assignment, i.e. threat
+# state.
+_FLUSH_THREAT_SCRIPT = """
+local n = 0
+for _, k in ipairs(redis.call('KEYS', '*')) do
+  if string.sub(k, 1, 14) ~= 'honeypot_pool:' then
+    redis.call('DEL', k)
+    n = n + 1
+  end
+end
+return n
+"""
+
+
+def flush_threat_state(remote: RemoteConfig | None, timeout: float = 15.0) -> int:
+    """Like flush_all(), but keeps the honeypot pool registry that pool_manager
+    maintains. flush_all() would make every pool look unregistered until the
+    manager re-adopts them (and lose runtime pools' database passwords).
+    Returns the number of keys deleted."""
+    out = _run_redis_cli(remote, "EVAL", _FLUSH_THREAT_SCRIPT, "0", timeout=timeout).strip()
+    try:
+        return int(out)
+    except ValueError:
+        raise RedisInspectError(f"Unexpected response from flush script: {out!r}")
+
+
+def pool_state(remote: RemoteConfig | None, timeout: float = 15.0) -> dict:
+    """Snapshot of the honeypot pool registry: ready pools, free (unowned)
+    pools, per-pool owner counts, and why pool_manager is not growing the pool
+    (the `capped` reason), if it is not."""
+    def ints(text: str) -> list[int]:
+        return sorted(int(x) for x in text.split() if x.strip().isdigit())
+    ready = ints(_run_redis_cli(remote, "SMEMBERS", "honeypot_pool:ready", timeout=timeout))
+    free = ints(_run_redis_cli(remote, "ZRANGE", "honeypot_pool:free", "0", "-1", timeout=timeout))
+    owners = {}
+    for n in ready:
+        owners[n] = int(_run_redis_cli(remote, "SCARD", f"honeypot_pool:owner:{n}",
+                                       timeout=timeout).strip() or 0)
+    capped = _run_redis_cli(remote, "GET", "honeypot_pool:capped", timeout=timeout).strip()
+    reused = _run_redis_cli(remote, "GET", "honeypot_pool:counter", timeout=timeout).strip()
+    return {"ready": ready, "free": free, "owners": owners, "capped": capped,
+            "reused_assignments": int(reused) if reused.isdigit() else 0}
