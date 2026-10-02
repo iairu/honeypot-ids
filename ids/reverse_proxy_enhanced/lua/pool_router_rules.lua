@@ -211,14 +211,21 @@ function _M.find_healthy_pool(preferred_pool, pool_count, is_healthy)
         ids = {}
         for i = 1, pool_count do ids[i] = i end
     end
-    local start = 1
+    -- The preferred pool is always tried first, even when it is not in `ids`
+    -- yet (a pool pool_manager registered moments ago, before the shared-dict
+    -- list was refreshed): falling through to ids[1] would silently put the
+    -- attacker on someone else's pool.
+    if is_healthy(preferred_pool) then
+        return preferred_pool, false
+    end
+    local start = 0
     for i, id in ipairs(ids) do
         if id == preferred_pool then start = i break end
     end
-    for offset = 0, #ids - 1 do
-        local candidate = ids[((start - 1 + offset) % #ids) + 1]
-        if is_healthy(candidate) then
-            return candidate, candidate ~= preferred_pool
+    for offset = 1, #ids do
+        local candidate = ids[((start + offset - 1) % #ids) + 1]
+        if candidate ~= preferred_pool and is_healthy(candidate) then
+            return candidate, true
         end
     end
     return preferred_pool, false

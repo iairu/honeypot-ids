@@ -170,6 +170,8 @@ do
     local healthy = { [5] = true }
     local c, fb = rules.find_healthy_pool(1, {1, 3, 5}, function(n) return healthy[n] end)
     check("find_healthy_pool walks a non-contiguous list", c == 5 and fb == true)
+    local c2, fb2 = rules.find_healthy_pool(4, {1, 2, 3}, function() return true end)
+    check("a just-registered pool missing from the cached list is still used", c2 == 4 and fb2 == false)
 end
 
 print(string.format("%d passed, %d failed", passed, failed))
