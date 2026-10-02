@@ -163,6 +163,26 @@ class Manager:
             if self.static_pool_up(n):
                 self.register_ready(n, owned=bool(self.redis.scard(OWNER_PREFIX + str(n))))
 
+    def restore_passwords(self) -> None:
+        """Put each runtime pool's database password back in Redis if it was
+        lost (a FLUSHALL from the dashboard wipes it). The WordPress container
+        still has it in its environment. Content replication reads it from
+        Redis. Not needed in the database layer, where every database uses
+        production's credentials."""
+        if MODE != "wordpress":
+            return
+        for n in self.runtime_pools():
+            if self.in_flight == n or self.redis.exists(PW_PREFIX + str(n)):
+                continue
+            try:
+                env = self.docker.containers.get(f"honeypot_eshop_{n}").attrs["Config"]["Env"]
+            except docker.errors.NotFound:
+                continue
+            for item in env:
+                if item.startswith("WORDPRESS_DB_PASSWORD="):
+                    self.redis.set(PW_PREFIX + str(n), item.split("=", 1)[1])
+                    log(f"pool {n}: restored database password in Redis")
+
     def adopt_runtime_pools(self) -> None:
         """After a manager restart: re-register pools created earlier that are
         still healthy (Redis may have been wiped, which loses ready/free)."""
@@ -253,7 +273,7 @@ class Manager:
         self._run_helper(
             MYSQL_IMAGE, ["bash", "-c", CLONE_SCRIPT],
             binds={self.host_paths["/migrations"]: ("/migrations", "ro"),
-                   self.host_paths["/migrations_override"] + "/01_clean-honeypot-data.sql":
+                   self.host_paths["/migrations_override/01_clean-honeypot-data.sql"]:
                        ("/migrations/01_clean-honeypot-data.sql", "ro")},
             labels=labels, what="clone + scrub", network=self._net("honeypot_network"),
             extra_networks=[self._net("production_network")],
@@ -434,6 +454,7 @@ class Manager:
     def reconcile(self) -> None:
         self.adopt_static_pools()
         self.adopt_runtime_pools()
+        self.restore_passwords()
         self.release_idle_pools()
         self.drain_wakeups()
 

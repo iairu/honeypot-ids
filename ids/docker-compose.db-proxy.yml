@@ -275,7 +275,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./honeypot_database_migrations:/migrations:ro
-      - ./db_proxy/honeypot_database_migrations:/migrations_override:ro
+      - ./db_proxy/honeypot_database_migrations/01_clean-honeypot-data.sql:/migrations_override/01_clean-honeypot-data.sql:ro
     environment:
       - COMPOSE_PROJECT=honeypot-ids-system-v1
       - POOL_MODE=database
