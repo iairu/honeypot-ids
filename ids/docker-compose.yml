@@ -435,6 +435,55 @@ services:
       - honeypot_network
       - session_network
 
+  # ---------------------------------------------------------------------------
+  # Honeypot pool manager (one attacker per pool, spare pool always ready)
+  # ---------------------------------------------------------------------------
+  # pool_router.lua gives each new attacker IP a free ready pool exclusively and
+  # queues a wake-up on Redis; this service then builds an additional
+  # honeypot_eshop_N + honeypot_database_N pair (N > 3) through the Docker API,
+  # so one is waiting for the next attacker. Pools 1-3 above are only adopted.
+  # Containers it creates carry no compose labels, so `up --remove-orphans`
+  # leaves them alone (they are found by their `honeypot.pool` label).
+  #
+  # SECURITY: mounts the Docker socket, which is root-equivalent on the host.
+  # It publishes no ports and joins only session_network (Redis); it never
+  # handles attacker traffic. Remove this service to run a fixed 3-pool setup
+  # (the router then reuses the 3 pools round-robin).
+  # ---------------------------------------------------------------------------
+  pool_manager:
+    logging: *default-logging
+    build: ./images/pool_manager
+    depends_on:
+      init_setup:
+        condition: service_completed_successfully
+      session_store:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./production_eshop_files:/source_files:ro
+      - ./production_database_data:/source_db:ro
+      - ./honeypot_database_migrations:/migrations:ro
+      - ./scripts:/scripts:ro
+    environment:
+      - COMPOSE_PROJECT=honeypot-ids-system-v1
+      - REDIS_HOST=session_store
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - WP_ADMIN_USER=${WP_ADMIN_USER:-admin}
+      - WP_ADMIN_PASSWORD=${WP_ADMIN_PASSWORD:-change_this_wp_admin_password}
+      - WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-admin@example.com}
+      - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
+      - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
+      - STRIPE_TEST_PUBLISHABLE_KEY=${STRIPE_TEST_PUBLISHABLE_KEY:-}
+      - STRIPE_TEST_SECRET_KEY=${STRIPE_TEST_SECRET_KEY:-}
+      # Unowned pools kept ready, and the hard ceiling on total pools.
+      - POOL_SPARES=${POOL_SPARES:-1}
+      - POOL_MAX=${POOL_MAX:-10}
+    restart: unless-stopped
+    networks:
+      - session_network
+
   # Production WordPress database
   production_database:
     logging: *default-logging

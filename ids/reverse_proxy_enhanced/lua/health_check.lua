@@ -237,10 +237,10 @@ end
 
 -- Get all backend statuses.
 -- Includes production and all honeypot pool instances (honeypot_backend_1..N).
--- The POOL_COUNT constant here must match pool_router.lua and docker-compose.yml.
+-- The pool list comes from pool_router.get_pool_ids() (Redis-backed, so runtime pools appear too).
 function _M.get_all_statuses()
-    -- Number of honeypot pool instances – keep in sync with pool_router.lua POOL_COUNT.
-    local POOL_COUNT = 3
+    local ok_pr, pool_router = pcall(require, "pool_router")
+    local pool_ids = ok_pr and pool_router.get_pool_ids() or { 1, 2, 3 }
 
     local statuses = {
         production = _M.get_backend_status("production_backend"),
@@ -250,9 +250,9 @@ function _M.get_all_statuses()
         pools      = {},
     }
 
-    for i = 1, POOL_COUNT do
+    for _, i in ipairs(pool_ids) do
         local upstream = "honeypot_backend_" .. i
-        statuses.pools[i] = {
+        statuses.pools[#statuses.pools + 1] = {
             pool_id  = i,
             upstream = upstream,
             service  = "honeypot_eshop_" .. i,

@@ -65,7 +65,9 @@ MYSQL_USER="production_user"
 MYSQL_DATABASE="production_database"
 PROD_HOST="production_database"
 
-POOL_HOSTS="honeypot_database_1 honeypot_database_2 honeypot_database_3"
+# Pools 1-3 are fixed in docker-compose.yml; pool_manager adds more at runtime
+# and lists every healthy pool in Redis (honeypot_pool:ready). POOL_NUMS is
+# re-read each cycle by refresh_pool_nums() below; this is the fallback.
 POOL_NUMS="1 2 3"
 
 REDIS_HOST="${REDIS_HOST:-session_store}"
@@ -86,15 +88,24 @@ pool_password() {
         1) echo "$MYSQL_PASSWORD" ;;
         2) echo "$MYSQL_PASSWORD_POOL_2" ;;
         3) echo "$MYSQL_PASSWORD_POOL_3" ;;
+        # Runtime pools get a random password from pool_manager, kept in Redis.
+        *) redis-cli -h "$REDIS_HOST" -a "$REDIS_PASSWORD" GET "honeypot_pool:pw:$1" 2>/dev/null ;;
     esac
 }
 
 pool_host() {
-    case "$1" in
-        1) echo "honeypot_database_1" ;;
-        2) echo "honeypot_database_2" ;;
-        3) echo "honeypot_database_3" ;;
-    esac
+    echo "honeypot_database_$1"
+}
+
+# Replicate to every pool pool_manager reports ready; keep the previous list if
+# Redis can't be reached this cycle.
+refresh_pool_nums() {
+    local nums
+    nums=$(redis-cli -h "$REDIS_HOST" -a "$REDIS_PASSWORD" SMEMBERS honeypot_pool:ready 2>/dev/null \
+           | grep -E '^[0-9]+$' | sort -n | tr '\n' ' ')
+    if [ -n "$nums" ]; then
+        POOL_NUMS="$nums"
+    fi
 }
 
 # Deliberately never fatal (the caller does NOT need `|| true`): losing this
@@ -233,6 +244,7 @@ replicate_to_pool() {
 }
 
 sync_cycle() {
+    refresh_pool_nums
     if ! build_sync_sql; then
         return
     fi

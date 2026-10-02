@@ -23,6 +23,16 @@ local function init_worker()
     -- Initialize random seed for this worker
     math.randomseed(ngx.time() + ngx.worker.pid())
     
+    -- Ready honeypot pool numbers: Redis-backed (honeypot_pool:ready), so pools
+    -- pool_manager creates later are health-checked and replicated to as well.
+    local function current_pool_ids()
+        local ok, pool_router = pcall(require, "pool_router")
+        if ok then
+            return pool_router.get_pool_ids()
+        end
+        return { 1, 2, 3 }
+    end
+
     -- Pre-warm connection pools to prevent 503 on first requests
     local function prewarm_connections()
         if not http or not health_check then
@@ -32,9 +42,9 @@ local function init_worker()
         
         ngx.log(ngx.INFO, "[PREWARM] Starting connection pool pre-warming for worker ", ngx.worker.id())
         
-        -- Number of honeypot pool instances – must match POOL_COUNT in pool_router.lua
-        -- and the number of honeypot_eshop_N services in docker-compose.yml.
-        local POOL_COUNT = 3
+        -- Ready honeypot pools (static ones from docker-compose.yml plus any
+        -- pool_manager has created); see pool_router.get_pool_ids().
+        local pool_ids = current_pool_ids()
 
         -- Wait for production backend first (critical path).
         local production_ready = health_check.wait_for_backend(
@@ -46,7 +56,7 @@ local function init_worker()
         -- Wait for each honeypot pool backend independently so that one slow
         -- instance does not block pre-warming of the others.
         local pool_ready = {}
-        for i = 1, POOL_COUNT do
+        for _, i in ipairs(pool_ids) do
             local svc      = "honeypot_eshop_" .. i
             local upstream = "honeypot_backend_" .. i
             pool_ready[i]  = health_check.wait_for_backend(upstream, "http://" .. svc, 30)
@@ -71,8 +81,8 @@ local function init_worker()
 
         -- Pre-warm each honeypot pool with a smaller connection budget.
         -- Fewer connections per pool are needed because attacker traffic is a
-        -- fraction of total traffic and is spread across POOL_COUNT instances.
-        for i = 1, POOL_COUNT do
+        -- fraction of total traffic and is spread across the pool instances.
+        for _, i in ipairs(pool_ids) do
             if pool_ready[i] then
                 local svc      = "honeypot_eshop_" .. i
                 local upstream = "honeypot_backend_" .. i
@@ -129,9 +139,15 @@ local function init_worker()
         -- guard (matching the AbuseIPDB/session-cleanup/Suricata-log-parser
         -- tasks below, which were already correctly scoped this way) fixes
         -- both the redundant load and the false-positive race.
+        -- Keep the shared-dict copy of the ready-pool list fresh: pool_manager
+        -- adds/removes pools at runtime.
+        local pr_ok, pool_router_mod = pcall(require, "pool_router")
+        if pr_ok then
+            ngx.timer.at(1, function() pcall(pool_router_mod.refresh_pool_list) end)
+            ngx.timer.every(5, function() pcall(pool_router_mod.refresh_pool_list) end)
+        end
+
         if health_check then
-            -- Number of honeypot pool instances (keep in sync with pool_router.lua).
-            local POOL_COUNT_HC = 3
             local interval = health_check.HEALTH_CHECK_INTERVAL or 10
             local ok, err = ngx.timer.every(interval, function()
                 pcall(function()
@@ -140,7 +156,7 @@ local function init_worker()
 
                     -- Each honeypot pool instance checked independently so that a
                     -- single unhealthy pool does not affect the health status of others.
-                    for i = 1, POOL_COUNT_HC do
+                    for _, i in ipairs(current_pool_ids()) do
                         health_check.perform_health_check(
                             "honeypot_backend_" .. i,
                             "http://honeypot_eshop_" .. i)
@@ -508,12 +524,9 @@ local function init_worker()
                 return
             end
 
-            -- Number of honeypot pool instances -- keep in sync with
-            -- pool_router.lua's POOL_COUNT and docker-compose.yml.
-            local POOL_COUNT_REPL = 3
             local threat_intel_shared = ngx.shared.threat_intel
 
-            for i = 1, POOL_COUNT_REPL do
+            for _, i in ipairs(current_pool_ids()) do
                 local replicating = red:get("honeypot_pool_replicating:" .. i)
                 local flag = (replicating and replicating ~= ngx.null) and "1" or "0"
                 if threat_intel_shared then

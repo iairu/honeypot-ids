@@ -24,6 +24,88 @@
 
 local _M = {}
 
+-- ---------------------------------------------------------------------------
+-- Dynamic pool pool: Redis key schema shared with ids/pool_manager
+-- ---------------------------------------------------------------------------
+-- pool_manager (the container that creates/destroys honeypot_eshop_N +
+-- honeypot_database_N pairs) and pool_router.lua agree on these names.
+--   honeypot_pool:ready      SET   pool numbers that are provisioned + healthy
+--   honeypot_pool:free       ZSET  ready pools with no owner yet (score = N)
+--   honeypot_pool:owner:<N>  SET   IPs currently assigned to pool N
+--   honeypot_pool:counter    INT   round-robin counter (reuse path)
+--   honeypot_pool:provision  LIST  "an attacker was just assigned" wake-ups
+--   honeypot_pool:capped     STR   set (with TTL) by pool_manager while the
+--                                  host is too loaded to start another pool
+_M.READY_KEY = "honeypot_pool:ready"
+_M.FREE_KEY = "honeypot_pool:free"
+_M.OWNER_PREFIX = "honeypot_pool:owner:"
+_M.COUNTER_KEY = "honeypot_pool:counter"
+_M.PROVISION_KEY = "honeypot_pool:provision"
+_M.CAPPED_KEY = "honeypot_pool:capped"
+
+-- Pools 1..STATIC_POOL_COUNT are declared in docker-compose.yml with a
+-- matching nginx `upstream honeypot_backend_N` block. Higher numbers are
+-- created at runtime by pool_manager and reached by container DNS name.
+_M.STATIC_POOL_COUNT = 3
+
+-- Hard sanity ceiling for any pool number read back from Redis.
+_M.MAX_POOL_NUMBER = 64
+
+--- Atomic assignment, run in Redis with EVAL so concurrent nginx workers can
+--- never hand one free pool to two attackers.
+---
+--- KEYS[1] = honeypot_pool_ip:<IP>   ARGV[1] = IP
+--- KEYS[2] = free ZSET               ARGV[2] = assignment TTL (seconds)
+--- KEYS[3] = ready SET
+--- KEYS[4] = round-robin counter
+--- KEYS[5] = provision LIST
+---
+--- 1. IP already assigned          -> keep its pool ("existing"), refresh TTL.
+--- 2. A free ready pool exists     -> that pool becomes the IP's alone
+---                                    ("exclusive"), and a wake-up is queued so
+---                                    pool_manager builds the next spare.
+--- 3. No free pool (all owned, or the host is too loaded to build more)
+---                                 -> reuse: round-robin over the ready pools
+---                                    ("shared"); still queues a wake-up.
+--- 4. No ready pool at all         -> returns {0, "none"}.
+---
+--- Returns {pool_number, mode}.
+_M.ASSIGN_SCRIPT = [[
+local ttl = tonumber(ARGV[2])
+local existing = redis.call('GET', KEYS[1])
+if existing then
+  redis.call('EXPIRE', KEYS[1], ttl)
+  return {tonumber(existing), 'existing'}
+end
+local pool, mode
+while true do
+  local popped = redis.call('ZPOPMIN', KEYS[2])
+  if not popped or #popped == 0 then break end
+  if redis.call('SISMEMBER', KEYS[3], popped[1]) == 1 then
+    pool = tonumber(popped[1])
+    mode = 'exclusive'
+    break
+  end
+end
+if not pool then
+  local ready = redis.call('SMEMBERS', KEYS[3])
+  if #ready == 0 then
+    return {0, 'none'}
+  end
+  local nums = {}
+  for i, v in ipairs(ready) do nums[i] = tonumber(v) end
+  table.sort(nums)
+  local c = redis.call('INCR', KEYS[4])
+  pool = nums[((c - 1) % #nums) + 1]
+  mode = 'shared'
+end
+redis.call('SET', KEYS[1], tostring(pool), 'EX', ttl)
+redis.call('SADD', 'honeypot_pool:owner:' .. pool, ARGV[1])
+redis.call('RPUSH', KEYS[5], ARGV[1])
+redis.call('LTRIM', KEYS[5], -100, -1)
+return {pool, mode}
+]]
+
 --- Clamp pool_num to [1..pool_count], defaulting to 1 on invalid input
 --- (nil, non-numeric, out of range).
 ---
@@ -51,6 +133,20 @@ end
 --- @return string  nginx upstream name for a pool, e.g. "honeypot_backend_2".
 function _M.upstream_for_pool(pool_num)
     return "honeypot_backend_" .. pool_num
+end
+
+--- What nginx should proxy_pass to for a pool. Static pools keep their
+--- `honeypot_backend_N` upstream block (keepalive etc.); pools created at
+--- runtime have no upstream block, so they are reached by container DNS name
+--- (nginx resolves it through the `resolver` directive).
+---
+--- @param  pool_num  integer
+--- @return string
+function _M.proxy_target_for_pool(pool_num)
+    if pool_num <= _M.STATIC_POOL_COUNT then
+        return _M.upstream_for_pool(pool_num)
+    end
+    return _M.service_for_pool(pool_num)
 end
 
 --- @return string  docker-compose service name for a pool's WordPress
@@ -84,7 +180,7 @@ function _M.describe_upstream(upstream)
     if type(upstream) ~= "string" then
         return tostring(upstream)
     end
-    local n = upstream:match("^honeypot_backend_(%d+)$")
+    local n = upstream:match("^honeypot_backend_(%d+)$") or upstream:match("^honeypot_eshop_(%d+)$")
     if n then
         return "honeypot pool " .. n .. " (" .. _M.service_for_pool(n) .. " + "
             .. _M.database_for_pool(n) .. ") [" .. upstream .. "]"
@@ -107,13 +203,46 @@ end
 --- @return integer, boolean  The chosen pool number, and whether it differs
 ---                            from preferred_pool (i.e. a fallback occurred).
 function _M.find_healthy_pool(preferred_pool, pool_count, is_healthy)
-    for offset = 0, pool_count - 1 do
-        local candidate = ((preferred_pool - 1 + offset) % pool_count) + 1
+    -- pool_count may also be a list of pool numbers (dynamic pools are not
+    -- necessarily contiguous); the search then walks that list in order,
+    -- starting at preferred_pool's position.
+    local ids = pool_count
+    if type(pool_count) ~= "table" then
+        ids = {}
+        for i = 1, pool_count do ids[i] = i end
+    end
+    local start = 1
+    for i, id in ipairs(ids) do
+        if id == preferred_pool then start = i break end
+    end
+    for offset = 0, #ids - 1 do
+        local candidate = ids[((start - 1 + offset) % #ids) + 1]
         if is_healthy(candidate) then
             return candidate, candidate ~= preferred_pool
         end
     end
     return preferred_pool, false
+end
+
+--- Parse the comma-separated pool list pool_router mirrors into the shared
+--- dict ("1,2,3,5") into a sorted array of valid pool numbers.
+---
+--- @param  csv  string|nil
+--- @return table  Sorted pool numbers; falls back to 1..STATIC_POOL_COUNT.
+function _M.parse_pool_list(csv)
+    local ids, seen = {}, {}
+    for token in tostring(csv or ""):gmatch("%d+") do
+        local n = tonumber(token)
+        if n >= 1 and n <= _M.MAX_POOL_NUMBER and not seen[n] then
+            seen[n] = true
+            ids[#ids + 1] = n
+        end
+    end
+    if #ids == 0 then
+        for i = 1, _M.STATIC_POOL_COUNT do ids[i] = i end
+    end
+    table.sort(ids)
+    return ids
 end
 
 --- Pure decision of whether a recorded health-check status should be

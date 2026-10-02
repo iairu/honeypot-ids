@@ -7,11 +7,25 @@
 --   environment so their actions cannot cross-contaminate other attacker sessions.
 --
 -- ARCHITECTURE:
---   - POOL_COUNT honeypot pool instances run as separate Docker services.
---   - Assignment is determined by a round-robin counter stored atomically in Redis
---     (INCR is atomic, so no race conditions under concurrent workers).
---   - Once assigned, the IP→pool mapping is stored in Redis with a 24-hour TTL so
---     the same attacker always hits the same fake environment across separate sessions.
+--   - Honeypot pools are numbered 1..N. Pools 1-3 are declared in
+--     docker-compose.yml; further pools are created at runtime by the
+--     pool_manager container (ids/pool_manager/) and registered in Redis once
+--     healthy (honeypot_pool:ready). The set of usable pools is therefore read
+--     from Redis, not hard-coded.
+--   - EXCLUSIVE assignment: a new attacker IP is handed a free ready pool that
+--     no other IP owns (atomic Redis EVAL, see pool_router_rules.ASSIGN_SCRIPT,
+--     so concurrent nginx workers cannot give one pool to two attackers).
+--   - SPARE provisioning: every assignment also queues a wake-up on
+--     honeypot_pool:provision; pool_manager then builds an additional
+--     honeypot_eshop_N + honeypot_database_N pair so one is ready for the next
+--     attacker.
+--   - REUSE under resource pressure: if no pool is free (all owned, or
+--     pool_manager has capped growth because the host is low on memory/CPU/
+--     disk), the new IP is assigned to an existing ready pool in strict
+--     round-robin order and shares it. That is the only case in which two
+--     attackers share a pool.
+--   - Once assigned, the IP->pool mapping lives in Redis with a 24-hour TTL so
+--     the same attacker always hits the same fake environment across sessions.
 --   - A fast per-request local cache (ngx.shared.honeypot_routes) avoids Redis
 --     lookups on every request from a known IP.
 --   - If a pool instance is found to be unhealthy (tracked via health_check.lua),
@@ -21,12 +35,15 @@
 --   - If Redis is completely unavailable the module falls back to pool 1 so that
 --     traffic continues to flow rather than returning errors.
 --
--- REDIS KEY SCHEMA:
---   honeypot_pool_ip:<IP>      → pool number (string "1".."N"), TTL POOL_ASSIGNMENT_TTL
---   honeypot_pool:counter      → monotonically increasing integer for round-robin
+-- REDIS KEY SCHEMA: see pool_router_rules.lua (honeypot_pool:ready / :free /
+--   :owner:<N> / :counter / :provision / :capped) plus
+--   honeypot_pool_ip:<IP> -> pool number, TTL POOL_ASSIGNMENT_TTL.
 --
 -- SHARED DICT USAGE:
---   ngx.shared.honeypot_routes  key "pool_ip:<IP>" → pool number, 5-min local cache
+--   ngx.shared.honeypot_routes  key "pool_ip:<IP>" -> pool number, 5-min local cache
+--   ngx.shared.threat_intel     key "pool_list"    -> "1,2,3,5" ready pool numbers,
+--                                                    mirrored from Redis by
+--                                                    refresh_pool_list() on a timer
 --
 -- USAGE (from router.lua):
 --   local pool_router = require "pool_router"
@@ -42,17 +59,17 @@ local _M = {}
 -- Configuration constants
 -- ---------------------------------------------------------------------------
 
--- Total number of honeypot pool instances defined in docker-compose.yml.
--- Pool services are expected to be named: honeypot_eshop_1 … honeypot_eshop_N
--- and their nginx upstreams:            honeypot_backend_1 … honeypot_backend_N
--- If you scale the pool, bump this number and add the matching services/upstreams.
-local POOL_COUNT = 3
+-- Pool services are named honeypot_eshop_N / honeypot_database_N. Pools
+-- 1..rules.STATIC_POOL_COUNT also have an nginx `upstream honeypot_backend_N`
+-- block; runtime pools are reached by container DNS name (see
+-- pool_router_rules.proxy_target_for_pool).
+
+-- Shared-dict key holding the comma-separated list of ready pool numbers.
+local POOL_LIST_KEY = "pool_list"
 
 -- Redis key used to store the per-IP pool assignment.
 local POOL_ASSIGNMENT_KEY_PREFIX = "honeypot_pool_ip:"
 
--- Redis key for the shared round-robin counter across all nginx workers/processes.
-local POOL_COUNTER_KEY = "honeypot_pool:counter"
 
 -- How long (seconds) an IP→pool assignment is retained in Redis.
 -- After expiry the IP can be assigned to any pool again (acceptable for honeypots).
@@ -70,10 +87,17 @@ local LOCAL_CACHE_KEY_PREFIX = "pool_ip:"
 -- Internal helpers
 -- ---------------------------------------------------------------------------
 
--- Clamp pool_num to [1..POOL_COUNT], defaulting to 1 on invalid input.
+-- Clamp pool_num to [1..MAX_POOL_NUMBER], defaulting to 1 on invalid input.
 -- Pure arithmetic lives in pool_router_rules.lua (see tests/test_pool_router_rules.lua).
 local function clamp_pool(pool_num)
-    return rules.clamp_pool(pool_num, POOL_COUNT)
+    return rules.clamp_pool(pool_num, rules.MAX_POOL_NUMBER)
+end
+
+-- Sorted list of ready pool numbers (read from the shared dict; falls back to
+-- the static pools until the first refresh_pool_list() has run).
+local function pool_ids()
+    local dict = ngx.shared.threat_intel
+    return rules.parse_pool_list(dict and dict:get(POOL_LIST_KEY) or nil)
 end
 
 -- Return the cached pool number for ip_address from the local shared dict,
@@ -149,7 +173,8 @@ end
 -- nginx can handle the failure naturally (returns 502 etc.).
 -- Search order/fallback logic is pure in pool_router_rules.find_healthy_pool.
 local function find_healthy_pool(preferred_pool)
-    local candidate, is_fallback = rules.find_healthy_pool(preferred_pool, POOL_COUNT, is_pool_healthy)
+    local ids = pool_ids()
+    local candidate, is_fallback = rules.find_healthy_pool(preferred_pool, ids, is_pool_healthy)
 
     if is_fallback then
         ngx.log(ngx.WARN,
@@ -159,7 +184,7 @@ local function find_healthy_pool(preferred_pool)
         -- All pools report unhealthy – route to the assigned pool and let nginx
         -- return the appropriate error to the attacker.
         ngx.log(ngx.ERR,
-            "[POOL] All ", POOL_COUNT, " honeypot pools appear unhealthy; ",
+            "[POOL] All ", #ids, " honeypot pools appear unhealthy; ",
             "routing to assigned pool ", preferred_pool, " anyway")
     end
 
@@ -172,16 +197,39 @@ end
 
 --- Return the number of pool instances this module manages.
 function _M.get_pool_count()
-    return POOL_COUNT
+    return #pool_ids()
+end
+
+--- Ready pool numbers, sorted (for health checks / pre-warming / monitoring).
+function _M.get_pool_ids()
+    return pool_ids()
+end
+
+--- Mirror honeypot_pool:ready from Redis into the shared dict. Called from a
+--- worker-0 timer in init_worker.lua so request handling never needs Redis just
+--- to learn which pools exist.
+---
+--- @return boolean  true when the list was refreshed.
+function _M.refresh_pool_list()
+    local dict = ngx.shared.threat_intel
+    if not dict then return false end
+    local red = _G.redis_pool.get_connection()
+    if not red then return false end
+    local members = red:smembers(rules.READY_KEY)
+    _G.redis_pool.close_connection(red)
+    if type(members) ~= "table" then return false end
+    dict:set(POOL_LIST_KEY, table.concat(rules.parse_pool_list(table.concat(members, ",")), ","))
+    return true
 end
 
 --- Return the nginx upstream name for a given pool number.
 ---
---- @param  pool_num  integer  Pool number in range [1..POOL_COUNT].
---- @return string  Upstream name, e.g. "honeypot_backend_2".
+--- @param  pool_num  integer  Pool number (a static or runtime pool).
+--- @return string  proxy_pass target: "honeypot_backend_2" for a static pool,
+---                  "honeypot_eshop_5" (container DNS name) for a runtime pool.
 function _M.get_upstream_for_pool(pool_num)
     pool_num = clamp_pool(pool_num)
-    return rules.upstream_for_pool(pool_num)
+    return rules.proxy_target_for_pool(pool_num)
 end
 
 --- Retrieve an existing IP→pool assignment or create a new one via round-robin.
@@ -193,7 +241,7 @@ end
 --- On any Redis error the function degrades gracefully to pool 1.
 ---
 --- @param  ip_address  string  The remote client IP address.
---- @return integer  The assigned pool number in range [1..POOL_COUNT].
+--- @return integer  The assigned pool number.
 function _M.get_or_assign_pool(ip_address)
     if not ip_address or ip_address == "" then
         ngx.log(ngx.WARN, "[POOL] Empty IP address supplied; defaulting to pool 1")
@@ -230,36 +278,37 @@ function _M.get_or_assign_pool(ip_address)
         return find_healthy_pool(pool_num)
     end
 
-    -- 3. Brand-new IP: assign via atomic round-robin counter in Redis.
-    --    INCR is atomic across all nginx workers and processes, ensuring that
-    --    concurrent requests from different workers never produce duplicate assignments.
-    local counter, incr_err = red:incr(POOL_COUNTER_KEY)
-    if not counter then
+    -- 3. Brand-new IP: one atomic EVAL hands out a free ready pool exclusively
+    --    (and queues a spare-pool wake-up for pool_manager), or -- when no pool
+    --    is free -- reuses a ready pool round-robin. See ASSIGN_SCRIPT.
+    local res, eval_err = red:eval(
+        rules.ASSIGN_SCRIPT, 5,
+        redis_key, rules.FREE_KEY, rules.READY_KEY, rules.COUNTER_KEY, rules.PROVISION_KEY,
+        ip_address, POOL_ASSIGNMENT_TTL)
+    _G.redis_pool.close_connection(red)
+
+    local pool_num = type(res) == "table" and tonumber(res[1]) or nil
+    local mode = type(res) == "table" and res[2] or nil
+    if not pool_num or pool_num < 1 then
         ngx.log(ngx.ERR,
-            "[POOL] Redis INCR failed (", incr_err, "); defaulting IP ", ip_address, " to pool 1")
-        _G.redis_pool.close_connection(red)
+            "[POOL] No ready honeypot pool for IP ", ip_address, " (",
+            eval_err or mode or "unknown", "); defaulting to pool 1")
         return 1
     end
-
-    -- Map counter to pool number using modular arithmetic (1-indexed).
-    local pool_num = rules.pool_from_counter(counter, POOL_COUNT)
-
-    -- Persist the assignment with TTL so the same IP always hits the same pool.
-    local set_ok, set_err = red:setex(redis_key, POOL_ASSIGNMENT_TTL, tostring(pool_num))
-    if not set_ok then
-        ngx.log(ngx.WARN,
-            "[POOL] Could not persist assignment for IP ", ip_address, " (", set_err, "); ",
-            "pool ", pool_num, " will be used for this request only")
-    end
-
-    _G.redis_pool.close_connection(red)
+    pool_num = clamp_pool(pool_num)
 
     -- Populate local cache to avoid Redis on the next request from this IP.
     set_local_cache(ip_address, pool_num)
 
-    ngx.log(ngx.INFO,
-        "[POOL] NEW assignment: IP ", ip_address, " → pool ", pool_num,
-        " (counter=", counter, ", total_pools=", POOL_COUNT, ")")
+    if mode == "shared" then
+        ngx.log(ngx.WARN,
+            "[POOL] NEW assignment (SHARED, no free pool: capped or all owned): IP ",
+            ip_address, " -> pool ", pool_num)
+    else
+        ngx.log(ngx.INFO,
+            "[POOL] NEW assignment (", mode, "): IP ", ip_address, " -> pool ", pool_num,
+            "; spare pool requested")
+    end
 
     return find_healthy_pool(pool_num)
 end
@@ -316,27 +365,33 @@ function _M.get_pool_stats()
         return nil, "Redis unavailable: " .. (err or "unknown")
     end
 
-    -- Total number of IP assignments ever made (monotonic counter).
-    local total_assignments_raw = red:get(POOL_COUNTER_KEY)
-    _G.redis_pool.close_connection(red)
-
-    local total_assignments = tonumber(total_assignments_raw) or 0
-
+    local total_assignments = tonumber(red:get(rules.COUNTER_KEY)) or 0
+    local free = red:zrange(rules.FREE_KEY, 0, -1)
+    local capped = red:get(rules.CAPPED_KEY)
+    local pending = red:llen(rules.PROVISION_KEY)
     local pools = {}
-    for i = 1, POOL_COUNT do
-        pools[i] = {
+    local free_set = {}
+    for _, n in ipairs(type(free) == "table" and free or {}) do free_set[tonumber(n)] = true end
+    for _, i in ipairs(pool_ids()) do
+        local owners = red:scard(rules.OWNER_PREFIX .. i)
+        pools[#pools + 1] = {
             pool_id    = i,
-            upstream   = rules.upstream_for_pool(i),
+            upstream   = rules.proxy_target_for_pool(i),
             service    = rules.service_for_pool(i),
             database   = rules.database_for_pool(i),
             healthy    = is_pool_healthy(i),
+            free       = free_set[i] or false,
+            owners     = tonumber(owners) or 0,
         }
     end
+    _G.redis_pool.close_connection(red)
 
     return {
-        pool_count        = POOL_COUNT,
-        total_assignments = total_assignments,
-        pools             = pools,
+        pool_count          = #pools,
+        reuse_assignments   = total_assignments,
+        spare_requests      = tonumber(pending) or 0,
+        growth_capped       = (capped and capped ~= ngx.null) and capped or false,
+        pools               = pools,
     }
 end
 

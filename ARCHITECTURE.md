@@ -47,6 +47,16 @@ This isn't an accident of two people building unrelated things — it's a delibe
 
 Every log event picked up by the edge shipper is tagged with `log_type` (`docker`, `nginx_access`, `nginx_error`, `nginx_security`, `suricata`, `suricata_fast`, `redis`) before it ever leaves the edge host; the aggregator's Elasticsearch sink uses that field to route each event into its own daily index (`honeypot-nginx_access-2026.08.05`, `honeypot-suricata-2026.08.05`, etc.) — fixed this session; it used to write everything into a single literal `hello-world-index` placeholder that was never replaced with real index logic.
 
+## Honeypot pool assignment (WordPress proxy level)
+
+Each attacker IP gets a honeypot pool (`honeypot_eshop_N` + `honeypot_database_N`) to itself:
+
+1. `pool_router.lua` asks Redis for a **free ready pool** with one atomic `EVAL`; the pool is removed from `honeypot_pool:free` and the IP recorded as its owner, so two attackers can't be handed the same pool. The IP keeps that pool for 24 h (`honeypot_pool_ip:<IP>`).
+2. Every assignment also queues a wake-up on `honeypot_pool:provision`. The `pool_manager` service then builds one more pair (pool 4, 5, …) through the Docker API, so a spare is waiting for the next attacker (`POOL_SPARES`, capped by `POOL_MAX`). Pools 1-3 come from `docker-compose.yml`; `pool_manager` only adopts them.
+3. If no pool is free (all owned, or the spare is still being built) the new IP **reuses a ready pool round-robin** and shares it. This is the only case where two attackers share a pool.
+
+Before this change the router did `INCR counter % 3`, so the 4th attacker already shared pool 1. `lua/tests/test_pool_assignment.lua` runs the real assignment script against an in-memory Redis and checks the exclusive, spare and reuse paths. `pool_manager` mounts the Docker socket, so it sits only on `session_network` and publishes no ports.
+
 ## Running for real (two hosts)
 
 1. **SIEM host**: `cd siem/certs/root-ca && ./gen_elk_certs.sh` (generates a CA + certs for `es01`/`kibana`/`vector` (the cert identity issued to the `vector_inbound` container), and a `vector-agent` client cert bundle under `../../vector/certs/vector-agent/`), then `cd ../../docker && docker compose up -d`.
