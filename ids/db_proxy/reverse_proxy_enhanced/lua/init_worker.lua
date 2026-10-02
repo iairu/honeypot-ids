@@ -131,6 +131,14 @@ local function init_worker()
         -- guard (matching the AbuseIPDB/session-cleanup/Suricata-log-parser
         -- tasks below, which were already correctly scoped this way) fixes
         -- both the redundant load and the false-positive race.
+        -- Keep the shared-dict copy of the ready honeypot-database list fresh:
+        -- pool_manager adds databases at runtime.
+        local pr_ok, pool_router_mod = pcall(require, "pool_router")
+        if pr_ok then
+            ngx.timer.at(1, function() pcall(pool_router_mod.refresh_pool_list) end)
+            ngx.timer.every(5, function() pcall(pool_router_mod.refresh_pool_list) end)
+        end
+
         if health_check then
             -- Single-eshop / two-database topology: there is only
             -- production_eshop now. The honeypot is the SAME backend with a

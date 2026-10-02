@@ -83,6 +83,21 @@ if ( $honeypot_db_active ) {
 	$hp_name = getenv( 'HONEYPOT_DB_NAME' );
 
 	$db_host = ( $hp_host !== false && $hp_host !== '' ) ? $hp_host : DB_HOST;
+
+	/*
+	 * Honeypot database POOL: the proxy gives every attacker IP its own honeypot
+	 * database and names it in X-Honeypot-DB (a pool number). Pool 1 is the
+	 * original HONEYPOT_DB_HOST; pool N > 1 is the container honeypot_database_N,
+	 * created by the pool_manager service. Same trust model as above: the proxy
+	 * overwrites the header on every request, and only a plain positive integer
+	 * is accepted, so it can never name an arbitrary host.
+	 */
+	if ( isset( $_SERVER['HTTP_X_HONEYPOT_DB'] ) ) {
+		$hp_pool = trim( (string) $_SERVER['HTTP_X_HONEYPOT_DB'] );
+		if ( preg_match( '/^[1-9][0-9]{0,2}$/', $hp_pool ) === 1 && (int) $hp_pool > 1 ) {
+			$db_host = 'honeypot_database_' . (int) $hp_pool;
+		}
+	}
 	$db_user = ( $hp_user !== false && $hp_user !== '' ) ? $hp_user : DB_USER;
 	$db_pass = ( $hp_pass !== false ) ? $hp_pass : DB_PASSWORD;
 	$db_name = ( $hp_name !== false && $hp_name !== '' ) ? $hp_name : DB_NAME;

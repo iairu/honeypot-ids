@@ -246,6 +246,49 @@ services:
       - session_network
 
   # Production WordPress database
+  # ---------------------------------------------------------------------------
+  # Honeypot database pool manager
+  # ---------------------------------------------------------------------------
+  # One honeypot database per attacker: pool_router.lua gives each new attacker
+  # IP a free ready database exclusively (the proxy names it in X-Honeypot-DB,
+  # wp-content/db.php connects to it) and queues a wake-up on Redis; this service
+  # then clones another database (honeypot_database_N, N > 1) from production so a
+  # spare is waiting. With no spare (all owned, or POOL_MAX reached) the router
+  # reuses the existing databases round-robin. `honeypot_database` above is pool 1.
+  # Containers it creates carry no compose labels, so `up --remove-orphans`
+  # leaves them alone.
+  #
+  # SECURITY: mounts the Docker socket (root-equivalent on the host); publishes no
+  # ports and joins only session_network (Redis). See docker-compose.yml's
+  # pool_manager for the same note.
+  # ---------------------------------------------------------------------------
+  pool_manager:
+    logging: *default-logging
+    build: ./images/pool_manager
+    depends_on:
+      init_setup:
+        condition: service_completed_successfully
+      session_store:
+        condition: service_healthy
+      honeypot_db_init:
+        condition: service_completed_successfully
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./honeypot_database_migrations:/migrations:ro
+      - ./db_proxy/honeypot_database_migrations:/migrations_override:ro
+    environment:
+      - COMPOSE_PROJECT=honeypot-ids-system-v1
+      - POOL_MODE=database
+      - REDIS_HOST=session_store
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - POOL_SPARES=${POOL_SPARES:-1}
+      - POOL_MAX=${POOL_MAX:-10}
+    restart: unless-stopped
+    networks:
+      - session_network
+
   production_database:
     logging: *default-logging
     image: mysql:5.7

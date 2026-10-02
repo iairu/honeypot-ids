@@ -21,12 +21,16 @@ sys.modules.setdefault("docker", mock.MagicMock())
 
 @unittest.skipUnless(HOST, "REDIS_TEST_HOST not set")
 class Reconcile(unittest.TestCase):
+    STATIC = 3           # compose-declared pools (WordPress layer)
+
     def setUp(self):
         import redis
         os.environ.setdefault("REDIS_PASSWORD", "x")
         os.environ.setdefault("MYSQL_PASSWORD", "x")
         import manager
         self.m = manager
+        manager.STATIC_COUNT = self.STATIC
+        manager.MAX_POOLS = 10
         self.r = redis.Redis(host=HOST, port=int(os.environ.get("REDIS_TEST_PORT", "6379")),
                              decode_responses=True)
         self.r.flushall()
@@ -53,32 +57,41 @@ class Reconcile(unittest.TestCase):
         if self.mgr.worker:
             self.mgr.worker.join(2)
 
+    def static_ids(self):
+        return [str(i) for i in range(1, self.STATIC + 1)]
+
     def test_adopts_static_pools_as_free_then_builds_no_spare(self):
         self.run_reconcile()
-        self.assertEqual(self.r.smembers(self.m.READY_KEY), {"1", "2", "3"})
-        self.assertEqual(self.r.zcard(self.m.FREE_KEY), 3)
+        self.assertEqual(self.r.smembers(self.m.READY_KEY), set(self.static_ids()))
+        self.assertEqual(self.r.zcard(self.m.FREE_KEY), self.STATIC)
         self.assertEqual(self.started, [])          # spares already free
 
     def test_assignment_wakeup_builds_exactly_one_spare(self):
         self.run_reconcile()
-        for n in ("1", "2", "3"):                   # all three owned
+        for n in self.static_ids():                 # every static pool owned
             self.r.zrem(self.m.FREE_KEY, n)
             self.r.sadd(self.m.OWNER_PREFIX + n, f"10.0.0.{n}")
-        self.r.rpush(self.m.PROVISION_KEY, "10.0.0.3")
+        self.r.rpush(self.m.PROVISION_KEY, "10.0.0.9")
         self.run_reconcile()
-        self.assertEqual(self.started, [4])
-        self.assertEqual(self.r.zrange(self.m.FREE_KEY, 0, -1), ["4"])
+        first = str(self.STATIC + 1)
+        self.assertEqual(self.started, [int(first)])
+        self.assertEqual(self.r.zrange(self.m.FREE_KEY, 0, -1), [first])
         self.run_reconcile()                        # spare exists: nothing more
-        self.assertEqual(self.started, [4])
+        self.assertEqual(self.started, [int(first)])
         self.assertEqual(self.r.llen(self.m.PROVISION_KEY), 0)
 
     def test_stops_at_max_pools(self):
-        self.m.MAX_POOLS = 3
+        self.m.MAX_POOLS = self.STATIC
         self.run_reconcile()
-        for n in ("1", "2", "3"):
+        for n in self.static_ids():
             self.r.zrem(self.m.FREE_KEY, n)
         self.run_reconcile()
         self.assertEqual(self.started, [])
+
+
+class ReconcileDatabaseLayer(Reconcile):
+    """Database layer: only `honeypot_database` (pool 1) is compose-declared."""
+    STATIC = 1
 
 
 if __name__ == "__main__":

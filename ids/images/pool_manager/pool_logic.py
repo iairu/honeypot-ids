@@ -6,7 +6,7 @@ pool_manager only ever creates/destroys numbers above that.
 """
 from __future__ import annotations
 
-STATIC_POOL_COUNT = 3
+STATIC_POOL_COUNT = 3  # default; the database layer has 1 compose-declared pool
 
 
 def next_pool_number(existing: set[int], static_count: int = STATIC_POOL_COUNT) -> int:

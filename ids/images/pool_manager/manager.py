@@ -6,9 +6,14 @@ queues a wake-up on honeypot_pool:provision; this service then builds an
 additional pool so one is always waiting. See pool_router_rules.lua for the
 Redis key schema both sides share.
 
-Pools 1-3 are declared in docker-compose.yml and are only adopted here
-(registered in Redis once healthy). Pools above 3 are created and destroyed
-through the Docker API. Their containers deliberately carry no
+Two honeypot layers, chosen with POOL_MODE:
+  wordpress (default)  pool = honeypot_eshop_N + honeypot_database_N. Pools 1-3
+                       come from docker-compose.yml.
+  database             pool = honeypot_database_N only (docker-compose.db-proxy.yml:
+                       one shared WordPress picks the database per request, see
+                       wp-content/db.php). Pool 1 is the compose `honeypot_database`.
+Compose-declared pools are only adopted here (registered in Redis once healthy).
+Pools above them are created and destroyed through the Docker API. Their containers deliberately carry no
 com.docker.compose.* labels, so `docker compose up --remove-orphans` leaves
 them alone; they are found again by the `honeypot.pool` label.
 
@@ -39,6 +44,11 @@ PW_PREFIX = "honeypot_pool:pw:"
 IP_KEY_PREFIX = "honeypot_pool_ip:"
 
 PROJECT = os.environ.get("COMPOSE_PROJECT", "honeypot-ids-system-v1")
+MODE = os.environ.get("POOL_MODE", "wordpress")
+if MODE not in ("wordpress", "database"):
+    sys.exit(f"pool_manager: POOL_MODE must be 'wordpress' or 'database', not {MODE!r}")
+# Pools declared in the compose file (never created/destroyed here).
+STATIC_COUNT = int(os.environ.get("POOL_STATIC_COUNT", "3" if MODE == "wordpress" else "1"))
 POLL_SECONDS = float(os.environ.get("POOL_POLL_SECONDS", "5"))
 SPARES = int(os.environ.get("POOL_SPARES", "1"))
 MAX_POOLS = int(os.environ.get("POOL_MAX", "10"))
@@ -103,17 +113,21 @@ class Manager:
         return out
 
     def static_pool_up(self, n: int) -> bool:
-        """A compose-declared pool counts once its eshop container is healthy."""
+        """A compose-declared pool counts once its serving container (the eshop,
+        or the database in database mode) is healthy."""
+        service = f"honeypot_eshop_{n}" if MODE == "wordpress" else (
+            "honeypot_database" if n == 1 else f"honeypot_database_{n}")
         for c in self.docker.containers.list(filters={
                 "label": [f"com.docker.compose.project={PROJECT}",
-                          f"com.docker.compose.service=honeypot_eshop_{n}"]}):
+                          f"com.docker.compose.service={service}"]}):
             if c.attrs["State"].get("Health", {}).get("Status") == "healthy":
                 return True
         return False
 
     def pool_container_healthy(self, n: int) -> bool:
         try:
-            c = self.docker.containers.get(f"honeypot_eshop_{n}")
+            prefix = "honeypot_eshop_" if MODE == "wordpress" else "honeypot_database_"
+            c = self.docker.containers.get(f"{prefix}{n}")
         except docker.errors.NotFound:
             return False
         c.reload()
@@ -133,7 +147,7 @@ class Manager:
         self.redis.delete(OWNER_PREFIX + str(n))
 
     def adopt_static_pools(self) -> None:
-        for n in range(1, pl.STATIC_POOL_COUNT + 1):
+        for n in range(1, STATIC_COUNT + 1):
             if self.redis.sismember(READY_KEY, n):
                 continue
             if self.static_pool_up(n):
@@ -157,6 +171,55 @@ class Manager:
 
     def provision(self, n: int) -> None:
         """Build pool n end to end. Raises on failure (caller cleans up)."""
+        if MODE == "database":
+            self.provision_database(n)
+        else:
+            self.provision_wordpress(n)
+
+    def provision_database(self, n: int) -> None:
+        """Database layer: one more honeypot database, cloned from production and
+        scrubbed, the same way honeypot_db_init prepares the first one. All
+        honeypot databases share production's credentials (the isolation is the
+        separate database host, see wp-content/db.php)."""
+        db_name = f"honeypot_database_{n}"
+        db_vol = f"{PROJECT}_{db_name}_data"
+        labels = {"honeypot.pool": str(n), "honeypot.pool.managed-by": "pool_manager"}
+        log(f"pool {n}: provisioning database {db_name} (volume {db_vol})")
+        self.docker.volumes.create(name=db_vol, labels=labels)
+        db = self._create_database_container(db_name, db_vol, self.mysql_password, labels)
+        db.start()
+        self._wait_healthy(db, "database")
+        self._run_helper(
+            MYSQL_IMAGE, ["bash", "-c", CLONE_SCRIPT],
+            binds={self.host_paths["/migrations"]: ("/migrations", "ro"),
+                   self.host_paths["/migrations_override"] + "/01_clean-honeypot-data.sql":
+                       ("/migrations/01_clean-honeypot-data.sql", "ro")},
+            labels=labels, what="clone + scrub", network=self._net("honeypot_network"),
+            extra_networks=[self._net("production_network")],
+            environment={"HP": db_name, "PROD": "production_database",
+                         "MYSQL_USER": DB_USER, "MYSQL_PASSWORD": self.mysql_password,
+                         "MYSQL_DATABASE": DB_NAME})
+        self.register_ready(n)
+
+    def _create_database_container(self, name, volume, password, labels):
+        return self.docker.containers.create(
+            MYSQL_IMAGE, name=name, labels=labels, detach=True,
+            command=["bash", "-c", "rm -f /var/lib/mysql/placeholder; docker-entrypoint.sh mysqld"],
+            environment={"MYSQL_DATABASE": DB_NAME, "MYSQL_USER": DB_USER,
+                         "MYSQL_PASSWORD": password,
+                         "MYSQL_ROOT_PASSWORD": env_required("MYSQL_ROOT_PASSWORD")},
+            volumes={volume: {"bind": "/var/lib/mysql", "mode": "rw"}},
+            network=self._net("honeypot_network"),
+            security_opt=["no-new-privileges:true"], cap_drop=["ALL"],
+            cap_add=["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID", "SYS_NICE"],
+            mem_limit="512m", nano_cpus=500_000_000, pids_limit=200,
+            log_config=LOG_CONFIG, restart_policy={"Name": "unless-stopped"},
+            healthcheck={"test": ["CMD", "mysqladmin", "ping", "-h", "localhost"],
+                         "interval": 10 * NS, "timeout": 5 * NS, "retries": 5,
+                         "start_period": 60 * NS})
+
+    def provision_wordpress(self, n: int) -> None:
+        """WordPress layer: a full honeypot_eshop_N + honeypot_database_N pair."""
         project, db_name, wp_name = PROJECT, f"honeypot_database_{n}", f"honeypot_eshop_{n}"
         db_vol, files_vol = f"{project}_{db_name}_data", f"{project}_{wp_name}_files"
         labels = {"honeypot.pool": str(n), "honeypot.pool.managed-by": "pool_manager"}
@@ -182,21 +245,8 @@ class Manager:
             labels=labels, what="seed volumes")
 
         # 2. database container
-        db = self.docker.containers.create(
-            MYSQL_IMAGE, name=db_name, labels=labels, detach=True,
-            command=["bash", "-c", "rm -f /var/lib/mysql/placeholder; docker-entrypoint.sh mysqld"],
-            environment={"MYSQL_DATABASE": DB_NAME, "MYSQL_USER": DB_USER,
-                         "MYSQL_PASSWORD": self.mysql_password,
-                         "MYSQL_ROOT_PASSWORD": env_required("MYSQL_ROOT_PASSWORD")},
-            volumes={db_vol: {"bind": "/var/lib/mysql", "mode": "rw"}},
-            network=self._net("honeypot_network"),
-            security_opt=["no-new-privileges:true"], cap_drop=["ALL"],
-            cap_add=["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID", "SYS_NICE"],
-            mem_limit="512m", nano_cpus=500_000_000, pids_limit=200,
-            log_config=LOG_CONFIG, restart_policy={"Name": "unless-stopped"},
-            healthcheck={"test": ["CMD", "mysqladmin", "ping", "-h", "localhost"],
-                         "interval": 10 * NS, "timeout": 5 * NS, "retries": 5,
-                         "start_period": 60 * NS})
+        db = self._create_database_container(
+            db_name, db_vol, self.mysql_password, labels)
         db.start()
         self._wait_healthy(db, "database")
 
@@ -255,7 +305,8 @@ class Manager:
         self.register_ready(n)
 
     def _run_helper(self, image, command, binds, labels, what, user=None,
-                    environment=None, network=None, caps=None, entrypoint=None):
+                    environment=None, network=None, caps=None, entrypoint=None,
+                    extra_networks=()):
         """Run a short-lived container to completion; raise unless it exits 0."""
         volumes = {src: {"bind": dst, "mode": mode} for src, (dst, mode) in binds.items()}
         c = self.docker.containers.create(
@@ -263,6 +314,8 @@ class Manager:
             environment=environment, network=network, entrypoint=entrypoint,
             cap_drop=["ALL"] if caps else None, cap_add=caps, log_config=LOG_CONFIG)
         try:
+            for extra in extra_networks:
+                self.docker.networks.get(extra).connect(c)
             c.start()
             result = c.wait(timeout=READY_TIMEOUT_S)
             if result.get("StatusCode") != 0:
@@ -286,7 +339,7 @@ class Manager:
 
     def destroy(self, n: int) -> None:
         """Remove pool n's containers and volumes (runtime pools only)."""
-        if n <= pl.STATIC_POOL_COUNT:
+        if n <= STATIC_COUNT:
             raise ValueError("static pools are owned by docker compose")
         self.unregister(n)
         for c in self.docker.containers.list(all=True, filters={"label": f"honeypot.pool={n}"}):
@@ -333,13 +386,13 @@ class Manager:
             self.redis.set(CAPPED_KEY, reason, ex=int(POLL_SECONDS * 6))
             return
         self.redis.delete(CAPPED_KEY)
-        n = pl.next_pool_number(ready | self.runtime_pools())
+        n = pl.next_pool_number(ready | self.runtime_pools(), STATIC_COUNT)
         self.in_flight = n
         self.worker = threading.Thread(target=self._provision_thread, args=(n,), daemon=True)
         self.worker.start()
 
     def run(self) -> None:
-        log(f"started (project {PROJECT}, spares {SPARES}, max pools {MAX_POOLS})")
+        log(f"started (project {PROJECT}, mode {MODE}, spares {SPARES}, max pools {MAX_POOLS})")
         while True:
             try:
                 self.reconcile()
@@ -347,6 +400,29 @@ class Manager:
                 log(f"reconcile error: {e}")
             time.sleep(POLL_SECONDS)
 
+
+# Same steps as honeypot_db_init in docker-compose.db-proxy.yml, for one database.
+CLONE_SCRIPT = r"""
+set -e
+wait_for() {
+  TRIES=0
+  until mysqladmin ping -h"$1" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" 2>/dev/null | grep -q 'mysqld is alive'; do
+    TRIES=$((TRIES+1)); [ "$TRIES" -ge 90 ] && { echo "$1 never became reachable"; exit 1; }
+    sleep 2
+  done
+}
+wait_for "$PROD"; wait_for "$HP"
+HAS_SCHEMA=$(mysql -h"$HP" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='$MYSQL_DATABASE' AND table_name='wp_options'" 2>/dev/null || echo 0)
+if [ "$HAS_SCHEMA" = 0 ]; then
+  mysqldump -h"$PROD" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" --single-transaction --no-tablespaces --skip-add-locks "$MYSQL_DATABASE" \
+    | mysql -h"$HP" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"
+fi
+for m in $(ls /migrations/*.sql 2>/dev/null | sort); do
+  mysql -h"$HP" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" --force "$MYSQL_DATABASE" < "$m" || echo "  (non-zero from $m, continuing)"
+done
+mysql -h"$HP" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" \
+  -e "UPDATE wp_options SET option_value='Demo Honeypot eShop' WHERE option_name='blogname';" || true
+"""
 
 MIGRATE_SCRIPT = r"""
 set -u

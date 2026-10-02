@@ -54,3 +54,8 @@ proxy_set_header X-Original-Request $request_uri;
 # (or to reach production data). $route_decision defaults to "production" and is
 # only raised to "honeypot" by the Lua threat pipeline.
 proxy_set_header X-Honeypot-Backend $route_decision;
+
+# Which honeypot database of the pool this attacker owns (a pool number; empty
+# for production traffic). Overwritten on every request like the header above,
+# so a client cannot pick its own database. Read by wp-content/db.php.
+proxy_set_header X-Honeypot-DB $honeypot_db_pool;

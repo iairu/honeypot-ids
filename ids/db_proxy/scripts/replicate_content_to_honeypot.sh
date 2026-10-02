@@ -65,11 +65,11 @@ MYSQL_USER="production_user"
 MYSQL_DATABASE="production_database"
 PROD_HOST="production_database"
 
-# Single-eshop / two-database topology: one honeypot database, cloned from
-# production by honeypot_db_init and kept content-synced here. (The multi-pool
-# arrays are collapsed to a single entry rather than removed so the cycle logic
-# below stays unchanged.)
-POOL_HOSTS="honeypot_database"
+# Single-eshop / honeypot-database-pool topology: honeypot database 1 is cloned
+# from production by honeypot_db_init; pool_manager clones more (honeypot_database_N)
+# as attackers are assigned and lists every ready one in Redis
+# (honeypot_pool:ready). POOL_NUMS is re-read each cycle by refresh_pool_nums();
+# this is the fallback.
 POOL_NUMS="1"
 
 REDIS_HOST="${REDIS_HOST:-session_store}"
@@ -82,19 +82,27 @@ log() {
     echo "[content-sync $(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"
 }
 
-# Pool number -> that pool's own DB user password (pool 1 shares
-# MYSQL_PASSWORD with production; pools 2/3 were rotated to their own
-# password by honeypot_db_migration -- see docker-compose.yml).
+# Every honeypot database uses production's credentials (the isolation is the
+# separate database host; see wp-content/db.php).
 pool_password() {
-    case "$1" in
-        1) echo "$MYSQL_PASSWORD" ;;
-    esac
+    echo "$MYSQL_PASSWORD"
 }
 
+# Pool 1 is the compose service `honeypot_database`; pool N > 1 is the
+# container honeypot_database_N created by pool_manager.
 pool_host() {
-    case "$1" in
-        1) echo "honeypot_database" ;;
-    esac
+    if [ "$1" = "1" ]; then echo "honeypot_database"; else echo "honeypot_database_$1"; fi
+}
+
+# Replicate to every database pool_manager reports ready; keep the previous list
+# if Redis can't be reached this cycle.
+refresh_pool_nums() {
+    local nums
+    nums=$(redis-cli -h "$REDIS_HOST" -a "$REDIS_PASSWORD" SMEMBERS honeypot_pool:ready 2>/dev/null \
+           | grep -E '^[0-9]+$' | sort -n | tr '\n' ' ')
+    if [ -n "$nums" ]; then
+        POOL_NUMS="$nums"
+    fi
 }
 
 # Deliberately never fatal (the caller does NOT need `|| true`): losing this
@@ -233,6 +241,7 @@ replicate_to_pool() {
 }
 
 sync_cycle() {
+    refresh_pool_nums
     if ! build_sync_sql; then
         return
     fi

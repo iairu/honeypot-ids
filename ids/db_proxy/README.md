@@ -46,6 +46,18 @@ defines, so it has no effect in the default layer.
 When you change one of the shared originals (for example `init_worker.lua`),
 check whether the copy here needs the same change.
 
+## One honeypot database per attacker
+
+The honeypot database is a pool, like the pods of the WordPress proxy level:
+
+- `honeypot_database` is pool 1. Each new attacker IP is given a free ready database exclusively (atomic Redis assignment in `pool_router.lua`).
+- The proxy names the attacker's database in the `X-Honeypot-DB` header (set in `proxy_params`, overwritten on every request). `wp-content/db.php` accepts only a plain positive integer and maps it to `honeypot_database_N`.
+- Every assignment wakes the `pool_manager` service (`POOL_MODE=database`), which clones another database from production, scrubs it, and registers it as the next spare. `POOL_SPARES` unowned databases are kept ready; `POOL_MAX` caps the total.
+- With no spare ready, the router reuses the existing databases round-robin, so two attackers then share one.
+- `honeypot_content_sync` replicates production content into every ready database.
+
+All honeypot databases use production's credentials. The isolation is the separate database host, as before.
+
 ## What this layer cannot isolate
 
 See [COVERAGE.md](COVERAGE.md). In short, file uploads, path traversal,
