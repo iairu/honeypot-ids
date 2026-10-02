@@ -139,6 +139,9 @@ class ServicesReportWorker(QThread):
     health_shot_request = pyqtSignal(str)      # caption/key -> GUI grabs Health page
     finished_ok = pyqtSignal(object)           # ServicesReport
     failed = pyqtSignal(str)
+    # Emitted once the idle "before" shot is taken and sampling is primed; the
+    # Services panel launches the compose command on it, so t=0 is that launch.
+    ready_to_run = pyqtSignal()
 
     def __init__(self, target: Target, operation: str, parent=None):
         super().__init__(parent)
@@ -193,7 +196,6 @@ class ServicesReportWorker(QThread):
                 target_label=self._target.label,
                 operation=self._operation,
             )
-            start = time.time()
             prev_cpu: tuple[int, int] | None = None
             prev_status: dict = {}
             captured_before = captured_mid = captured_end = False
@@ -214,6 +216,12 @@ class ServicesReportWorker(QThread):
             if sampler.available:
                 sampler.sample()  # prime CPU% delta baseline
             last_status_check = -1e9
+
+            # The recording clock starts here, when the operation is launched --
+            # not at thread start, so a slow "before" screenshot or sampler
+            # setup can't push every sample (and event) to a late elapsed time.
+            self.ready_to_run.emit()
+            start = time.time()
 
             def _container_snap() -> dict:
                 if sampler.available:
@@ -347,7 +355,7 @@ def _ts_chart(series: dict, colors: dict, events: list, y_label: str,
 
     all_pts = [pt for pts in series.values() for pt in pts]
     times = [t for t, _ in all_pts] + [t for t, _ in events]
-    t_min = min(times, default=0.0)
+    t_min = 0.0  # elapsed counts from the moment the operation was launched
     t_max = max(times, default=1.0)
     span = (t_max - t_min) or 1.0
     ymax = y_max if y_max is not None else max([v for _, v in all_pts] + [1.0])
@@ -498,16 +506,18 @@ def _container_stats_html(container_samples: list, svcs: list) -> str:
             f'<td>{cpu.p95:.1f}% / {cpu.max:.1f}%</td>'
             f'<td>{st.fmt_pct(st.exceedance(cpu_vals, 50.0), 1)}</td>'
             f'<td>{mem.mean:.0f} &plusmn; {mem.sd:.0f}</td>'
+            f'<td>{mem.max:.0f}</td>'
             '</tr>')
     if not rows:
         return ""
     return ('<table width="100%" cellspacing="0" cellpadding="3" border="1" '
             'style="border-collapse:collapse; font-size:9pt; margin-top:4px; color:#333;">'
-            '<tr style="background-color:#eef3f8;"><th align="left" colspan="5">'
+            '<tr style="background-color:#eef3f8;"><th align="left" colspan="6">'
             'Probability metrics: per container</th></tr>'
             '<tr><th align="left">Container</th><th align="left">CPU mean &plusmn; SD</th>'
             '<th align="left">CPU p95 / peak</th><th align="left">P(CPU &ge; 50%)</th>'
-            '<th align="left">Memory MiB, mean &plusmn; SD</th></tr>' + "".join(rows) + '</table>'
+            '<th align="left">Memory MiB, mean &plusmn; SD</th>'
+            '<th align="left">Memory MiB, peak</th></tr>' + "".join(rows) + '</table>'
             '<p style="color:#666; font-size:9pt;">P(CPU &ge; 50%) is the share of the '
             'recording the container spent at half a core or more, i.e. the chance of '
             'catching it that busy at a random moment. A peak far above the p95 means a '

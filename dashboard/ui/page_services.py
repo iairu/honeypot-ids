@@ -217,10 +217,11 @@ class TargetPanel(QGroupBox):
         self.stop_export_btn.setEnabled(False)
         set_status(self.status_label, f"recording {operation} graphs…", "#e08a00", bold=True)
 
-        # Start sampling, then fire the real compose command alongside it so the
-        # graphs cover the whole transition.
+        # The worker takes its idle "before" shot first, then signals; the real
+        # compose command is launched on that signal so elapsed starts at 0.
+        worker.ready_to_run.connect(
+            lambda: self._run("up", "-d") if operation == "start" else self._run("down"))
         worker.start()
-        self._run("up", "-d") if operation == "start" else self._run("down")
 
     def _on_svc_health_shot(self, key: str) -> None:
         """GUI-thread: grab the Health page and hand the path back to the worker
