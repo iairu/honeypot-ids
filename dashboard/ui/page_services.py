@@ -3,6 +3,8 @@
 live command output below."""
 from __future__ import annotations
 
+import subprocess
+
 import os
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal
@@ -125,6 +127,7 @@ class TargetPanel(QGroupBox):
 
     def _run(self, *compose_args: str, mutating: bool = True) -> None:
         self._mutating_action = mutating
+        self._last_mutating_args = compose_args if mutating else ()
         # A fresh `logs -f` tail replays its own `--tail=50` scrollback --
         # reset this target's error counts so that scrollback isn't
         # double-counted on top of whatever it already contributed the
@@ -151,6 +154,8 @@ class TargetPanel(QGroupBox):
         # here.
         if self._mutating_action:
             self._mutating_action = False
+            if _exit_code == 0 and getattr(self, "_last_mutating_args", ())[:1] == ("up",):
+                self._remove_finished_containers()
             # If a "…with PDF graph export" is recording, let it know the
             # compose command has now exited (with this code) so a stop is
             # recorded right up to the down command finishing, not just until
@@ -158,6 +163,19 @@ class TargetPanel(QGroupBox):
             if self._svc_worker is not None:
                 self._svc_worker.notify_operation_finished(_exit_code)
             self._run("logs", "--tail=50", "-f", mutating=False)
+
+    def _remove_finished_containers(self) -> None:
+        """`up` leaves every one-shot service (init_setup, the db seed and
+        migration jobs, the Kibana/ES setup jobs) behind as an "Exited (0)"
+        container, which clutters `docker container ls -a`. Their work is done and
+        the next `up` re-runs them anyway, so remove the stopped ones. Only
+        stopped containers go: `compose rm` never touches running ones."""
+        argv, cwd = self.target.build("rm", "-f")
+        try:
+            subprocess.Popen(argv, cwd=cwd, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+        except OSError:
+            pass
 
     def _reload_logs(self) -> None:
         self._run("logs", "--tail=50", "-f", mutating=False)
