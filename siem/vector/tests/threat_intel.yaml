@@ -118,6 +118,83 @@ tests:
               assert_eq!(.vulnerability.id, ["CVE-2024-2387"])
               assert!(includes(array!(.threat.technique.id), "T1190"))
 
+  - name: Suricata alert on the proxied hop is blamed on the XFF client
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: suricata
+          event_type: alert
+          src_ip: 172.21.0.10
+          http.xff: 172.18.0.53
+          alert.signature: "CVE-2025-4403 DnD File Upload Exploit"
+          alert.severity: 1
+          http.http_user_agent: "python-requests/2.31.0"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.attacker_ip, "172.18.0.53")
+              assert_eq!(.src_ip, "172.21.0.10")
+              assert!(includes(array!(.threat.technique.id), "T1505.003"))
+
+  - name: stream-level alert on the proxied hop uses alert.xff
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: suricata
+          event_type: alert
+          src_ip: 172.21.0.10
+          alert.xff: 172.18.0.50
+          alert.signature: "SQL Injection - Union Select"
+          alert.severity: 1
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.attacker_ip, "172.18.0.50")
+              assert!(includes(array!(.threat.technique.id), "T1190"))
+
+  - name: the proxy's own backend health probe is nobody's attack
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: suricata
+          event_type: alert
+          src_ip: 172.21.0.10
+          alert.signature: "High Rate HTTP Requests"
+          alert.severity: 2
+          http.http_user_agent: "lua-resty-http/0.17.1 (Lua) ngx_lua/10031"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert!(!exists(.attacker_ip))
+              assert!(!exists(.threat))
+
+  - name: Suricata alert without an HTTP transaction has an unknown tool
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: suricata
+          event_type: alert
+          src_ip: 172.18.0.70
+          alert.signature: "High Rate HTTP Requests"
+          alert.severity: 2
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.attacker_ip, "172.18.0.70")
+              assert_eq!(.attacker_tool, "unknown")
+
   - name: honeytoken reuse maps to valid accounts
     inputs:
       - insert_at: enrich
@@ -151,6 +228,7 @@ tests:
             source: |
               assert_eq!(.attacker_ip, "172.18.0.52")
               assert_eq!(.vulnerability.id, ["CVE-2023-2986"])
+              assert_eq!(.attacker_tool, "unknown")
               assert!(!exists(.threat))
 
   - name: docker logs are left alone

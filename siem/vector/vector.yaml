@@ -190,7 +190,7 @@ transforms:
       #   sensor                 reverse_proxy | suricata
       #   attacker_tool          tool fingerprinted from the User-Agent
       #   attacker_tool_class    offensive_scanner | scripted_client |
-      #                          search_crawler | browser | none
+      #                          search_crawler | browser | unknown
       #   threat_verdict         malicious | suspicious | benign
       #   threat.technique.id/.name, threat.tactic.name   (ECS field names)
       #   attack_technique       "T1190 Exploit Public-Facing Application"
@@ -224,8 +224,18 @@ transforms:
         if is_array(.security_event.cves) { ti_ind = ti_ind + " " + (join(.security_event.cves, " ") ?? "") }
         .sensor = "reverse_proxy"
       } else if .log_type == "suricata" && .event_type == "alert" {
-        ti_ip = to_string(.src_ip) ?? ""
+        # Suricata sees the proxy's hop to the backends too, where src_ip is
+        # the proxy; the xff field (suricata.yaml, eve-log xff extra-data:
+        # http.xff on HTTP alerts, alert.xff on stream-level ones) names the
+        # real client. The proxy's own backend health probes
+        # (lua-resty-http, no X-Forwarded-For) are nobody's attack. A rare
+        # alert on that hop with neither stays on src_ip.
+        xff = to_string(.http.xff) ?? ""
+        if xff == "" { xff = to_string(.alert.xff) ?? "" }
+        if xff == "" { xff = to_string(.xff) ?? "" }
+        ti_ip = if xff != "" { xff } else { to_string(.src_ip) ?? "" }
         ti_ua = to_string(.http.http_user_agent) ?? ""
+        if starts_with(ti_ua, "lua-resty-http") && xff == "" { ti_ip = "" }
         ti_ind = to_string(.alert.signature) ?? ""
         ti_map = true
         .sensor = "suricata"
@@ -241,7 +251,12 @@ transforms:
         # "python" in their default User-Agent.
         tool = "none"
         tool_class = "none"
-        if ua == "" || ua == "-" {
+        if ua == "" && .log_type != "nginx_security" {
+          # Not every alert or security event records the User-Agent; only
+          # the access log's "-" means the client really sent none.
+          tool = "unknown"
+          tool_class = "unknown"
+        } else if ua == "" || ua == "-" {
           tool = "no user-agent"
           tool_class = "scripted_client"
         } else if match(ua, r'sqlmap') { tool = "sqlmap"; tool_class = "offensive_scanner"

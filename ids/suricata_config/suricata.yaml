@@ -101,6 +101,21 @@ outputs:
       types:
         - alert:
             tagged-packets: yes
+            # Suricata also sees the reverse proxy's own hop to the eshop
+            # backends, where the source address is the proxy itself, so
+            # every attack it forwards used to be attributed to the proxy.
+            # extra-data adds the client from the X-Forwarded-For header the
+            # proxy sets (proxy_params) as separate http.xff / alert.xff fields, leaving
+            # src_ip alone, so init_worker's reputation feed is unchanged;
+            # the SIEM's Vector uses xff as attacker_ip when present.
+            # deployment: reverse takes the LAST address in the header, the
+            # one nginx's $proxy_add_x_forwarded_for appended itself, which
+            # a client can't forge.
+            xff:
+              enabled: yes
+              mode: extra-data
+              deployment: reverse
+              header: X-Forwarded-For
         - anomaly:
             enabled: yes
             types:

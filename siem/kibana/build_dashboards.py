@@ -477,7 +477,7 @@ VISUALIZATIONS = [
          [_metric_agg("cardinality", "attacker_ip.keyword", "1", "Malicious IPs"),
           _metric_agg("cardinality", "attack_technique.keyword", "2", "ATT&CK techniques"),
           _metric_agg("cardinality", "vulnerability.id.keyword", "3", "CVEs targeted"),
-          _metric_agg("cardinality", "attacker_tool.keyword", "4", "Tools seen")],
+          _metric_agg("cardinality", "attacker_tool.keyword", "4", "Tool fingerprints")],
          query=_TI_MAL_Q),
     _viz("viz-ti-indicators", "Attacker Indicators (IOC list)", "table",
          [_count_metric_agg("Malicious events"),
@@ -521,7 +521,10 @@ VISUALIZATIONS = [
          [_count_metric_agg(),
           _terms_agg("attacker_tool_class.keyword", size=5, label="Tool class"),
           _terms_agg("attacker_tool.keyword", agg_id="3", size=10, label="Tool")],
-         query=f'{_TI_Q} and not threat_verdict:"benign"', params_extra=_PIE),
+         # "unknown" = the event didn't record a User-Agent (most Suricata
+         # alerts, the proxy's own security events), not a tool.
+         query=f'{_TI_Q} and not threat_verdict:"benign" and not attacker_tool:"unknown"',
+         params_extra=_PIE),
     _viz("viz-ti-cves", "CVEs Targeted (all sensors)", "table",
          [_count_metric_agg("Events"),
           _metric_agg("cardinality", "attacker_ip.keyword", "3", "Attackers"),
