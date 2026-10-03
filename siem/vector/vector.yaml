@@ -177,6 +177,206 @@ transforms:
         }
       }
 
+      ###########################################################
+      ###### THREAT INTELLIGENCE: ATTACKER, TOOL, ATT&CK, CVE ######
+      ###########################################################
+
+      # Gives every attacker-facing event (proxy-scored requests, the
+      # proxy's own security events, Suricata alerts) the same indicator
+      # fields, so the "Threat Intelligence" Kibana dashboard can pivot on
+      # one attacker across both sensors and say WHAT they did in MITRE
+      # ATT&CK terms rather than in this project's internal pattern names:
+      #   attacker_ip            the client (nginx remote_addr / Suricata src_ip)
+      #   sensor                 reverse_proxy | suricata
+      #   attacker_tool          tool fingerprinted from the User-Agent
+      #   attacker_tool_class    offensive_scanner | scripted_client |
+      #                          search_crawler | browser | none
+      #   threat_verdict         malicious | suspicious | benign
+      #   threat.technique.id/.name, threat.tactic.name   (ECS field names)
+      #   attack_technique       "T1190 Exploit Public-Facing Application"
+      #   attack_tactic          "03 Initial Access" (sorts in kill-chain order)
+      #   threat.stage           furthest ATT&CK tactic as its column number
+      #                          in the Enterprise matrix (1 Reconnaissance ..
+      #                          14 Impact), so max() per attacker says how
+      #                          far along the kill chain they got
+      #   vulnerability.id       CVE ids named by any sensor
+      # Only the request-level events are mapped to techniques: the proxy's
+      # cve_pattern_detected / high_threat_request / routing_to_honeypot
+      # events restate a request nginx_security already logged, so mapping
+      # them too would count each technique twice. honeytoken_used and
+      # session_compromised add something the request log can't show.
+      ti_ind = ""
+      ti_ua = ""
+      ti_ip = ""
+      ti_map = false
+      if .log_type == "nginx_security" {
+        ti_ip = to_string(.remote_addr) ?? ""
+        ti_ua = to_string(.user_agent) ?? ""
+        if is_array(.patterns) { ti_ind = join(.patterns, " ") ?? "" }
+        ti_map = true
+        .sensor = "reverse_proxy"
+      } else if .log_type == "nginx_error" && exists(.security_event_type) {
+        ti_ip = to_string(.remote_addr) ?? ""
+        ti_ua = to_string(.security_event.user_agent) ?? ""
+        ti_ind = to_string(.security_event_type) ?? ""
+        ti_map = ti_ind == "honeytoken_used" || ti_ind == "session_compromised"
+        if exists(.security_event.cve) { ti_ind = ti_ind + " " + (to_string(.security_event.cve) ?? "") }
+        if is_array(.security_event.cves) { ti_ind = ti_ind + " " + (join(.security_event.cves, " ") ?? "") }
+        .sensor = "reverse_proxy"
+      } else if .log_type == "suricata" && .event_type == "alert" {
+        ti_ip = to_string(.src_ip) ?? ""
+        ti_ua = to_string(.http.http_user_agent) ?? ""
+        ti_ind = to_string(.alert.signature) ?? ""
+        ti_map = true
+        .sensor = "suricata"
+      }
+
+      if ti_ip != "" {
+        .attacker_ip = ti_ip
+        ti_ind = downcase(ti_ind)
+        ua = downcase(ti_ua)
+
+        # -- Tool fingerprint (User-Agent) ------------------------------
+        # Offensive tools first: several of them also say "Mozilla" or
+        # "python" in their default User-Agent.
+        tool = "none"
+        tool_class = "none"
+        if ua == "" || ua == "-" {
+          tool = "no user-agent"
+          tool_class = "scripted_client"
+        } else if match(ua, r'sqlmap') { tool = "sqlmap"; tool_class = "offensive_scanner"
+        } else if match(ua, r'nikto') { tool = "nikto"; tool_class = "offensive_scanner"
+        } else if match(ua, r'wpscan') { tool = "wpscan"; tool_class = "offensive_scanner"
+        } else if match(ua, r'nuclei') { tool = "nuclei"; tool_class = "offensive_scanner"
+        } else if match(ua, r'nmap') { tool = "nmap"; tool_class = "offensive_scanner"
+        } else if match(ua, r'masscan|zgrab') { tool = "masscan/zgrab"; tool_class = "offensive_scanner"
+        } else if match(ua, r'gobuster|dirbuster|\bdirb\b|ffuf|feroxbuster|wfuzz') { tool = "directory brute-forcer"; tool_class = "offensive_scanner"
+        } else if match(ua, r'hydra|medusa') { tool = "hydra"; tool_class = "offensive_scanner"
+        } else if match(ua, r'acunetix|nessus|openvas|qualys|netsparker|zap|burp') { tool = "commercial scanner"; tool_class = "offensive_scanner"
+        } else if match(ua, r'whatweb|wappalyzer') { tool = "whatweb"; tool_class = "offensive_scanner"
+        } else if match(ua, r'havij|pangolin|metasploit|msf') { tool = "exploit framework"; tool_class = "offensive_scanner"
+        } else if match(ua, r'^curl/') { tool = "curl"; tool_class = "scripted_client"
+        } else if match(ua, r'^wget/') { tool = "wget"; tool_class = "scripted_client"
+        } else if match(ua, r'python-requests|python-urllib|aiohttp|httpx|scrapy') { tool = "python"; tool_class = "scripted_client"
+        } else if match(ua, r'go-http-client') { tool = "go"; tool_class = "scripted_client"
+        } else if match(ua, r'okhttp|apache-httpclient|java/') { tool = "java"; tool_class = "scripted_client"
+        } else if match(ua, r'libwww-perl|powershell|node-fetch|axios') { tool = "other script"; tool_class = "scripted_client"
+        } else if match(ua, r'headlesschrome|phantomjs|selenium|playwright|puppeteer') { tool = "headless browser"; tool_class = "scripted_client"
+        } else if match(ua, r'googlebot|bingbot|yandex|baiduspider|duckduckbot|ahrefs|semrush') { tool = "search crawler"; tool_class = "search_crawler"
+        } else if match(ua, r'bot|crawler|spider|scanner') { tool = "other bot"; tool_class = "scripted_client"
+        } else if match(ua, r'^mozilla/') { tool = "browser"; tool_class = "browser"
+        } else { tool = "other"; tool_class = "scripted_client" }
+        .attacker_tool = tool
+        .attacker_tool_class = tool_class
+
+        # -- MITRE ATT&CK techniques -------------------------------------
+        # Matched against this project's pattern names (threat_rules.lua),
+        # the proxy's security event types and Suricata signature text
+        # (ids/suricata_rules/local.rules). "id|name|tactic|stage".
+        techs = []
+        if ti_map {
+          if match(ti_ind, r'sql_|sql injection|cve-|wp_install_access|install_php|admin_post|directory_traversal|directory traversal|_wrapper|wrapper usage|uri scheme|exploit|unauthorized|options update') {
+            techs = push(techs, "T1190|Exploit Public-Facing Application|Initial Access|3")
+          }
+          if match(ti_ind, r'cmd_|command injection') {
+            techs = push(techs, "T1059.004|Command and Scripting Interpreter: Unix Shell|Execution|4")
+          }
+          if match(ti_ind, r'xss|enc_script') {
+            techs = push(techs, "T1059.007|Command and Scripting Interpreter: JavaScript|Execution|4")
+          }
+          if match(ti_ind, r'upload|rce') {
+            techs = push(techs, "T1505.003|Server Software Component: Web Shell|Persistence|5")
+          }
+          if match(ti_ind, r'wp_user_creation|user creation|role assignment') {
+            techs = push(techs, "T1136|Create Account|Persistence|5")
+          }
+          if match(ti_ind, r'session_compromised') {
+            techs = push(techs, "T1550.004|Use Alternate Authentication Material: Web Session Cookie|Defense Evasion|7")
+          }
+          if match(ti_ind, r'honeytoken_used') {
+            techs = push(techs, "T1078|Valid Accounts|Defense Evasion|7")
+          }
+          if match(ti_ind, r'wp_config|env_file|htaccess|config file|encryption key') {
+            techs = push(techs, "T1552.001|Unsecured Credentials: Credentials In Files|Credential Access|8")
+          }
+          if match(ti_ind, r'etc_passwd|system file') {
+            techs = push(techs, "T1003.008|OS Credential Dumping: /etc/passwd and /etc/shadow|Credential Access|8")
+          }
+          if match(ti_ind, r'brute force|xmlrpc_multicall') || tool == "hydra" {
+            techs = push(techs, "T1110|Brute Force|Credential Access|8")
+          }
+          if match(ti_ind, r'bak_file|old_file|backup_zip|wp_backup|backup file|sensitive file') {
+            techs = push(techs, "T1005|Data from Local System|Collection|11")
+          }
+          if match(ti_ind, r'author_enum|user_enumeration|user enumeration') {
+            techs = push(techs, "T1589|Gather Victim Identity Information|Reconnaissance|1")
+          }
+          if match(ti_ind, r'phpinfo|version detection|theme detection|plugin enumeration|plugin access|xmlrpc|whatweb') {
+            techs = push(techs, "T1592.002|Gather Victim Host Information: Software|Reconnaissance|1")
+          }
+          if match(ti_ind, r'admin_scan|administrator_scan|phpmyadmin_scan|backup_scan|direct_admin_access|admin panel discovery|dirb|gobuster') || tool == "directory brute-forcer" {
+            techs = push(techs, "T1595.003|Active Scanning: Wordlist Scanning|Reconnaissance|1")
+          }
+          if match(ti_ind, r'high_request_frequency|high rate|rapid vulnerability|multiple vulnerability|automated tool|malicious user agent') || (tool_class == "offensive_scanner" && tool != "directory brute-forcer" && tool != "hydra") {
+            techs = push(techs, "T1595.002|Active Scanning: Vulnerability Scanning|Reconnaissance|1")
+          }
+        }
+
+        if length(techs) > 0 {
+          ids = []
+          names = []
+          tactics = []
+          tech_labels = []
+          tactic_labels = []
+          stage = 0
+          for_each(techs) -> |_i, t| {
+            parts = split(string!(t), "|")
+            ids = push(ids, parts[0])
+            names = push(names, parts[1])
+            tactics = push(tactics, parts[2])
+            tech_labels = push(tech_labels, string!(parts[0]) + " " + string!(parts[1]))
+            s = to_int(parts[3]) ?? 0
+            # Zero-padded so a Kibana terms agg sorted by key lists the
+            # tactics in kill-chain order ("01 Reconnaissance" first).
+            pad = if s < 10 { "0" } else { "" }
+            tactic_labels = push(tactic_labels, pad + to_string(s) + " " + string!(parts[2]))
+            if s > stage { stage = s }
+          }
+          .threat.framework = "MITRE ATT&CK"
+          .threat.technique.id = unique(ids)
+          .threat.technique.name = unique(names)
+          .threat.tactic.name = unique(tactics)
+          .threat.stage = stage
+          # One field each holding id+name / stage+tactic together: the
+          # ECS fields above are parallel arrays, and a terms agg on one
+          # with a sub-agg on the other would pair every id with every name.
+          .attack_technique = unique(tech_labels)
+          .attack_tactic = unique(tactic_labels)
+        }
+
+        # -- CVEs named by any sensor -------------------------------------
+        cves = []
+        for_each(parse_regex_all(ti_ind, r'cve[-_](?P<y>\d{4})[-_](?P<n>\d{4,7})') ?? []) -> |_i, m| {
+          cves = push(cves, "CVE-" + string!(m.y) + "-" + string!(m.n))
+        }
+        if length(cves) > 0 {
+          .vulnerability.id = unique(cves)
+        }
+
+        # -- Verdict --------------------------------------------------------
+        if .sensor == "suricata" {
+          .threat_verdict = if (to_int(.alert.severity) ?? 3) <= 2 { "malicious" } else { "suspicious" }
+        } else if .log_type == "nginx_error" {
+          .threat_verdict = "malicious"
+        } else if .route == "honeypot" || .uri_class == "attack_pattern" || length(techs) > 0 || tool_class == "offensive_scanner" {
+          .threat_verdict = "malicious"
+        } else if (to_int(.threat_score) ?? 0) > 0 {
+          .threat_verdict = "suspicious"
+        } else {
+          .threat_verdict = "benign"
+        }
+      }
+
       ###############################################
       ###### FLATTEN DOCKER LABEL KEYS (DOTTED) ######
       ###############################################

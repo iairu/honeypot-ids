@@ -65,6 +65,7 @@ _BOOKMARKS = [
     ("Threat Decisions & Decay", "/app/dashboards#/view/dashboard-threat-decisions"),
     ("Session Analysis", "/app/dashboards#/view/dashboard-session-analysis"),
     ("Attack Patterns", "/app/dashboards#/view/dashboard-attack-patterns"),
+    ("Threat Intelligence", "/app/dashboards#/view/dashboard-threat-intel"),
     ("Discover", "/app/discover"),
 ]
 

@@ -76,6 +76,19 @@ PAGE_NOTES: dict[str, str] = {
         "Type</b>, <b>Top CVEs Detected</b>, <b>Top Attacking IPs</b> and <b>Honeytoken Hits "
         "by Type</b> (which planted honeytokens were reused)."
     ),
+    "/app/dashboards#/view/dashboard-threat-intel": (
+        "The same events turned into threat intelligence. Every proxy request, proxy "
+        "security event and Suricata alert carries the attacker's IP, the tool its "
+        "User-Agent gives away and the MITRE ATT&amp;CK techniques it stands for. "
+        "<b>Attacker Indicators</b> is the IOC list: one row per IP with first and last "
+        "seen, how many sensors saw it and the furthest ATT&amp;CK stage it reached; "
+        "<b>Kill Chain</b> and <b>How Far Each Attacker Got</b> place that activity on the "
+        "ATT&amp;CK tactics in order; <b>MITRE ATT&amp;CK Techniques Observed</b>, <b>Attack "
+        "Tools Fingerprinted</b> and <b>CVEs Targeted</b> say what was used against the shop; "
+        "<b>Verdict per Sensor</b> compares the proxy's and Suricata's judgement, and the "
+        "<b>Malicious Event Feed</b> lists the events behind it all, exportable from Discover "
+        "as CSV."
+    ),
     "/app/discover": (
         "Raw log search over the <code>honeypot-*</code> data view: every event Vector "
         "shipped into Elasticsearch, newest first, with a histogram of event volume over "
