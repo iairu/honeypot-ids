@@ -432,6 +432,46 @@ def health_check_times(target: Target, svc_to_cid: dict[str, str],
     return parse_health_inspect(text, cid_to_svc)
 
 
+def parse_health_schedule(text: str, cid_to_svc: dict[str, str]) -> list[tuple[str, float, float]]:
+    """(service, epoch_end_of_last_check, interval_s) per container in the
+    output of `docker inspect --format '{{.Id}}|{{json (index .Config "Healthcheck")}}|{{json .State}}'`.
+    Docker starts the next check one interval after the previous one ENDS,
+    so the next run is at last_end + interval."""
+    out: list[tuple[str, float, float]] = []
+    for line in text.splitlines():
+        parts = line.split("|", 2)
+        if len(parts) != 3:
+            continue
+        cid, hc_js, state_js = parts
+        svc = next((s for c, s in cid_to_svc.items() if c and cid.startswith(c)), None)
+        if not svc:
+            continue
+        try:
+            interval = ((json.loads(hc_js) or {}).get("Interval") or 0) / 1e9
+            log = ((json.loads(state_js) or {}).get("Health") or {}).get("Log") or []
+        except (ValueError, AttributeError):
+            continue
+        ends = [t for t in (parse_docker_time(e.get("End", "")) for e in log) if t is not None]
+        if interval > 0 and ends:
+            out.append((svc, max(ends), interval))
+    return out
+
+
+def health_schedule(target: Target, svc_to_cid: dict[str, str],
+                    timeout: float = 10.0) -> list[tuple[str, float, float]]:
+    """parse_health_schedule() for the given containers; [] on failure."""
+    cid_to_svc = {cid: svc for svc, cid in svc_to_cid.items() if cid}
+    if not cid_to_svc:
+        return []
+    ids = " ".join(shlex.quote(c) for c in cid_to_svc)
+    # index, not .Config.Healthcheck: a container without a health check has
+    # no such key, and that would fail the whole command.
+    text = _run(target, "docker inspect --format "
+                "'{{.Id}}|{{json (index .Config \"Healthcheck\")}}|{{json .State}}' " + ids,
+                timeout=timeout)
+    return parse_health_schedule(text, cid_to_svc)
+
+
 _REQUEST_LINE_RE = re.compile(r'"([A-Z]+ \S+) HTTP/[\d.]+"')
 
 
