@@ -28,7 +28,7 @@ from core import honeypot_layer
 from core.paths import REPO_ROOT, EDGE_COMPOSE_FILE, SIEM_COMPOSE_FILE
 # Reuse the exact Baskerville registration/selection the exploit report uses.
 from core.exploit_report_pdf import _report_font_family, _FONT_CSS_STACK, _esc
-from core import diagrams
+from core import diagrams, vector_figures
 
 
 @dataclass
@@ -751,6 +751,7 @@ def _finish_pdf(doc: QTextDocument, out_path: str) -> None:
     printer.setOutputFileName(out_path)
     printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
     printer.setPageMargins(QMarginsF(15, 15, 15, 15), QPageLayout.Unit.Millimeter)
+    vector_figures.embed_figures(doc)
     doc.setPageSize(QSizeF(printer.pageRect(QPrinter.Unit.DevicePixel).size()))
     doc.print(printer)
 

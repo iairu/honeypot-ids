@@ -29,14 +29,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from PyQt6.QtCore import QMarginsF, QSizeF, Qt, QThread, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QImage, QPainter, QPen, QTextDocument
+from PyQt6.QtGui import QColor, QFont, QImage, QPen, QTextDocument
 from PyQt6.QtPrintSupport import QPrinter
 
 from core import resource_stats as rs
 from core.container_status import classify, start_settled
 from core.docker_ctl import Target
 from core.exploit_report_pdf import _report_font_family, _FONT_CSS_STACK, _esc, _resource_series_color
-from core import diagrams
+from core import diagrams, vector_figures
+from core.vector_figures import VectorFigure
 from core import report_stats as st
 
 SAMPLE_INTERVAL_S = 2.0
@@ -342,15 +343,12 @@ class ServicesReportWorker(QThread):
 # ---- rendering ----
 
 def _ts_chart(series: dict, colors: dict, events: list, y_label: str,
-              family: str, y_max: float | None = None, annotate_peak: bool = False) -> QImage:
+              family: str, y_max: float | None = None, annotate_peak: bool = False) -> VectorFigure:
     """A multi-series time-series chart with a dashed vertical line per event.
     ``series`` maps name -> [(t, value), ...]; ``colors`` name -> QColor."""
     W, H = 900, 320
     ml, mr, mt, mb = 64, 20, 40, 52
-    img = QImage(W, H, QImage.Format.Format_ARGB32)
-    img.fill(QColor("#ffffff"))
-    p = QPainter(img)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    img, p = vector_figures.new_figure(W, H)
     plot_w, plot_h = W - ml - mr, H - mt - mb
 
     all_pts = [pt for pts in series.values() for pt in pts]
@@ -567,7 +565,7 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
         colors = {"CPU %": QColor(_SYS_CPU_COLOR), "RAM %": QColor(_SYS_RAM_COLOR)}
         img = _ts_chart(sys_series, colors, data.events, "host CPU % / RAM %",
                         family, y_max=100.0, annotate_peak=True)
-        doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl("svc://sys"), img)
+        vector_figures.add_figure(doc, "svc://sys", img)
         parts.append('<img src="svc://sys" width="640"/><br/>')
         parts.append(f'<span style="color:#444; font-size:10px;">'
                      f'<span style="color:{_SYS_CPU_COLOR};">&#9632;</span> host CPU % &nbsp; '
@@ -588,8 +586,8 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
         mem_series = {s: [(t, snap[s][1] / 1048576.0) for t, snap in data.container_samples if s in snap] for s in svcs}
         cpu_img = _ts_chart(cpu_series, cmap, data.events, "container CPU %", family)
         mem_img = _ts_chart(mem_series, cmap, data.events, "container memory (MiB)", family)
-        doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl("svc://cpu"), cpu_img)
-        doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl("svc://mem"), mem_img)
+        vector_figures.add_figure(doc, "svc://cpu", cpu_img)
+        vector_figures.add_figure(doc, "svc://mem", mem_img)
         parts.append('<img src="svc://cpu" width="640"/><br/>')
         parts.append('<img src="svc://mem" width="640"/><br/>')
         legend = " &nbsp; ".join(
@@ -624,6 +622,7 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
 
     parts.append('</div>')
     doc.setHtml("<body>" + "".join(parts) + "</body>")
+    vector_figures.embed_figures(doc)
 
     from PyQt6.QtGui import QPageSize, QPageLayout
     printer = QPrinter(QPrinter.PrinterMode.ScreenResolution)

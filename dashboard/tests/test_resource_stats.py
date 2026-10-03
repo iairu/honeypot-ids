@@ -88,5 +88,32 @@ class FastSamplerForeignPidTests(unittest.TestCase):
         self.assertFalse(s.foreign)
 
 
+class HealthCheckTimesTests(unittest.TestCase):
+    def test_parse_docker_time(self):
+        self.assertAlmostEqual(rs.parse_docker_time("1970-01-01T00:00:10.5Z"), 10.5)
+        # Nanoseconds and an explicit offset.
+        self.assertAlmostEqual(rs.parse_docker_time("1970-01-01T01:00:01.123456789+01:00"), 1.123456789)
+        self.assertIsNone(rs.parse_docker_time("not a time"))
+
+    def test_parse_health_inspect(self):
+        text = (
+            CID + ' {"Status":"running","Health":{"Status":"healthy","Log":['
+            '{"Start":"1970-01-01T00:00:30Z"},{"Start":"1970-01-01T00:01:00Z"}]}}\n'
+            "ffff" + "0" * 60 + ' {"Status":"running"}\n'  # no health check
+        )
+        got = rs.parse_health_inspect(text, {CID[:12]: "production_eshop", "ffff00000000": "redis"})
+        self.assertEqual(got, [(30.0, "production_eshop"), (60.0, "production_eshop")])
+
+
+    def test_parse_access_log(self):
+        text = (
+            '1970-01-01T00:00:05.5Z 127.0.0.1 - - [x] "GET / HTTP/1.1" 200 512 "-" "curl"\n'
+            '1970-01-01T00:00:06Z 172.21.0.11 - - [x] "HEAD /robots.txt HTTP/1.1" 200 0\n'
+            "1970-01-01T00:00:07Z [php:notice] not an access line\n"
+        )
+        self.assertEqual(rs.parse_access_log(text),
+                         [(5.5, "GET /"), (6.0, "HEAD /robots.txt")])
+
+
 if __name__ == "__main__":
     unittest.main()

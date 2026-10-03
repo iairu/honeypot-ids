@@ -5,19 +5,20 @@ can embed and cross-reference: a system-architecture map, a request-routing
 flow, and the threat-scoring pipeline. Kept deliberately simple and high
 contrast so they stay legible when the PDF downscales them to page width.
 
-Each figure returns a QImage; callers add a "Figure N" caption and reference the
-others by number.
+Each figure returns a VectorFigure (core/vector_figures.py), so it stays vector
+in the PDF; callers add a "Figure N" caption and reference the others by number.
 """
 from __future__ import annotations
 
 import html as _html
 import math
 
-from PyQt6.QtCore import QPointF, QRect, QRectF, Qt, QUrl
-from PyQt6.QtGui import (QColor, QFont, QFontMetrics, QImage, QPainter, QPen,
+from PyQt6.QtCore import QPointF, QRect, QRectF, Qt
+from PyQt6.QtGui import (QColor, QFont, QFontMetrics, QPainter, QPen,
                          QPolygonF, QTextDocument)
 
 from core import honeypot_layer
+from core.vector_figures import VectorFigure, add_figure, new_figure
 
 # Shared palette (kept close to the report's own band colours).
 _BLUE = "#1565c0"
@@ -32,12 +33,8 @@ _INK = "#1a1a1a"
 _SUBTITLE_GAP = 7
 
 
-def _new(w: int, h: int) -> tuple[QImage, QPainter]:
-    img = QImage(w, h, QImage.Format.Format_ARGB32)
-    img.fill(QColor("#ffffff"))
-    p = QPainter(img)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    return img, p
+def _new(w: int, h: int) -> tuple[VectorFigure, QPainter]:
+    return new_figure(w, h)
 
 
 def _box(p: QPainter, x, y, w, h, title, subtitle="", *, fill="#ffffff",
@@ -124,7 +121,7 @@ def _label(p: QPainter, x, y, text, *, color=_INK, family="Serif") -> None:
 
 # ---- figures ----
 
-def architecture_diagram(family: str = "Serif") -> QImage:
+def architecture_diagram(family: str = "Serif") -> VectorFigure:
     """The service topology: clients -> reverse proxy -> production/honeypot
     eshops + their databases, with Redis, Suricata and the SIEM alongside.
     In the database proxy honeypot layer (core/honeypot_layer.py) the middle
@@ -181,7 +178,7 @@ def architecture_diagram(family: str = "Serif") -> QImage:
     return img
 
 
-def _db_proxy_architecture_diagram(family: str) -> QImage:
+def _db_proxy_architecture_diagram(family: str) -> VectorFigure:
     """architecture_diagram() for the database proxy layer: the proxy forwards
     everything to ONE eshop, whose db.php drop-in connects to the production
     or the honeypot database per request (X-Honeypot-Backend header)."""
@@ -232,7 +229,7 @@ def _db_proxy_architecture_diagram(family: str) -> QImage:
     return img
 
 
-def request_flow_diagram(family: str = "Serif") -> QImage:
+def request_flow_diagram(family: str = "Serif") -> VectorFigure:
     """How one request is classified and routed. In the database proxy layer
     the two outcomes are the same shop on different databases."""
     db_layer = honeypot_layer.is_database()
@@ -268,7 +265,7 @@ def request_flow_diagram(family: str = "Serif") -> QImage:
     return img
 
 
-def scoring_pipeline_diagram(family: str = "Serif") -> QImage:
+def scoring_pipeline_diagram(family: str = "Serif") -> VectorFigure:
     """The threat-score accumulation pipeline."""
     img, p = _new(920, 260)
     p.setFont(QFont(family, 12, QFont.Weight.Bold))
@@ -315,7 +312,7 @@ def scoring_pipeline_diagram(family: str = "Serif") -> QImage:
     return img
 
 
-def db_proxy_bypass_diagram(family: str = "Serif") -> QImage:
+def db_proxy_bypass_diagram(family: str = "Serif") -> VectorFigure:
     """Why some CVEs get past the database proxy honeypot: the reverse proxy
     catches them, but their effect lands in the one shared WordPress instance
     (files / PHP runtime), and the honeypot split only happens below that, at
@@ -380,11 +377,11 @@ def db_proxy_bypass_diagram(family: str = "Serif") -> QImage:
     return img
 
 
-def figure_html(doc: QTextDocument, img: QImage, key: str, number: int,
+def figure_html(doc: QTextDocument, img: VectorFigure, key: str, number: int,
                 caption: str, width: int = 620) -> str:
     """Embed a figure into `doc` and return the <img> + numbered caption HTML.
     Callers reference it elsewhere as "Figure {number}"."""
-    doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl(f"diagram://{key}"), img)
+    add_figure(doc, f"diagram://{key}", img)
     cap = _html.escape(caption)
     return (f'<div><img src="diagram://{key}" width="{width}"/><br/>'
             f'<span style="color:#666; font-size:9pt;"><b>Figure {number}.</b> {cap}</span>'
