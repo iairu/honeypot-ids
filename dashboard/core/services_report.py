@@ -28,8 +28,8 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from PyQt6.QtCore import QMarginsF, QSizeF, Qt, QThread, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QImage, QPen, QTextDocument
+from PyQt6.QtCore import QMarginsF, QRectF, QSizeF, Qt, QThread, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QImage, QPen, QTextDocument
 from PyQt6.QtPrintSupport import QPrinter
 
 from core import resource_stats as rs
@@ -182,9 +182,20 @@ class ServicesReportWorker(QThread):
         self._shot_event.wait(timeout=15)
         return self._shot_result.get(key, "")
 
-    def _status_map(self) -> dict:
+    def _status_map(self, expect_some: bool = False) -> dict:
+        """{service: state} from `docker compose ps`. ps() returns [] on any
+        failure too, and during a `down` it can fail transiently, which used
+        to log every container as stopped and then started again. So when
+        containers were there last time (``expect_some``), an empty answer is
+        re-checked before it is believed."""
+        containers = self._target.ps()
+        for _ in range(2):
+            if containers or not expect_some or self._cancel:
+                break
+            time.sleep(0.5)
+            containers = self._target.ps()
         status = {}
-        for c in self._target.ps():
+        for c in containers:
             svc = c.get("Service") or c.get("Name") or ""
             if svc:
                 status[svc] = classify(c)
@@ -217,6 +228,10 @@ class ServicesReportWorker(QThread):
             if sampler.available:
                 sampler.sample()  # prime CPU% delta baseline
             last_status_check = -1e9
+            # Baseline status before the operation, so the first check only
+            # logs real changes (a stop used to open with a "started" event
+            # for every container that was already running).
+            prev_status = self._status_map()
 
             # The recording clock starts here, when the operation is launched --
             # not at thread start, so a slow "before" screenshot or sampler
@@ -265,7 +280,7 @@ class ServicesReportWorker(QThread):
                 # ~0.5s, so it must not run every sub-second tick) ---
                 if time.time() - last_status_check >= STATUS_CHECK_INTERVAL_S:
                     last_status_check = time.time()
-                    status = self._status_map()
+                    status = self._status_map(expect_some=bool(prev_status))
                     _detect_events(prev_status, status, elapsed, data.events)
                     was_status = prev_status
                     prev_status = status
@@ -342,14 +357,54 @@ class ServicesReportWorker(QThread):
 
 # ---- rendering ----
 
+# Events closer together than this share one numbered marker (containers
+# brought up by the same compose step change state within a second or so).
+_MARKER_GAP_S = 1.5
+
+
+def _event_markers(events: list) -> list[tuple[int, float, float, list[str]]]:
+    """Group ``events`` ((elapsed, label), ...) into numbered markers:
+    ``(number, first_t, last_t, labels)``. Each marker is drawn on the graphs
+    as one short numbered tag, and the event key spells out what it covers,
+    so labels never sit on top of the data lines."""
+    out: list[tuple[int, float, float, list[str]]] = []
+    for t, label in sorted(events, key=lambda e: e[0]):
+        if out and t - out[-1][2] <= _MARKER_GAP_S:
+            n, t0, _t1, labels = out[-1]
+            out[-1] = (n, t0, t, labels + [label])
+        else:
+            out.append((len(out) + 1, t, t, [label]))
+    return out
+
+
+# How _detect_events words each state, so a marker's events can be grouped
+# by what happened ("healthy: a, b, c") instead of repeating the verb.
+_EVENT_STATES = ("running, health pending", "exited (error)", "started", "healthy",
+                 "unhealthy", "stopped")
+
+
+def _summarize_events(labels: list[str]) -> str:
+    """'a healthy', 'b healthy', 'c started' -> 'healthy: a, b; started: c'."""
+    groups: dict[str, list[str]] = {}
+    for label in labels:
+        state = next((st for st in _EVENT_STATES if label.endswith(" " + st)), "")
+        svc = label[: -len(state) - 1] if state else label
+        groups.setdefault(state, []).append(svc)
+    return "; ".join(f"{state}: {', '.join(svcs)}" if state else ", ".join(svcs)
+                     for state, svcs in groups.items())
+
+
 def _ts_chart(series: dict, colors: dict, events: list, y_label: str,
               family: str, y_max: float | None = None, annotate_peak: bool = False) -> VectorFigure:
-    """A multi-series time-series chart with a dashed vertical line per event.
+    """A multi-series time-series chart with a dashed red vertical line per
+    event marker (see _event_markers). Each marker's number sits on white in a
+    band above the plot, on its own row when tags would overlap -- the same
+    layout the exploit report uses -- and the event key below the host chart
+    says what each number means.
     ``series`` maps name -> [(t, value), ...]; ``colors`` name -> QColor."""
-    W, H = 900, 320
-    ml, mr, mt, mb = 64, 20, 40, 52
-    img, p = vector_figures.new_figure(W, H)
-    plot_w, plot_h = W - ml - mr, H - mt - mb
+    W = 900
+    ml, mr, mb = 64, 20, 52
+    plot_w = W - ml - mr
 
     all_pts = [pt for pts in series.values() for pt in pts]
     times = [t for t, _ in all_pts] + [t for t, _ in events]
@@ -361,6 +416,29 @@ def _ts_chart(series: dict, colors: dict, events: list, y_label: str,
 
     def X(t):
         return ml + ((t - t_min) / span) * plot_w
+
+    markers = [m for m in _event_markers(events) if t_min <= m[1] <= t_max]
+    tag_font = QFont(family, 8)
+    fm = QFontMetrics(tag_font)
+    row_h = fm.height() + 3
+    rows_end: list[float] = []
+    placed = []  # (x, left, width, row, number)
+    for n, t0, _t1, _labels in markers:
+        x = X(t0)
+        w = fm.horizontalAdvance(str(n)) + 8
+        left = min(max(x - w / 2, 2), W - 2 - w)
+        row = next((r for r, end in enumerate(rows_end) if left > end + 2), None)
+        if row is None:
+            rows_end.append(left + w)
+            row = len(rows_end) - 1
+        else:
+            rows_end[row] = left + w
+        placed.append((x, left, w, row, n))
+    band_top = 22
+    mt = band_top + len(rows_end) * row_h + 6
+    H = mt + 228 + mb
+    plot_h = H - mt - mb
+    img, p = vector_figures.new_figure(W, H)
 
     def Y(v):
         return mt + (1 - min(v, ymax) / ymax) * plot_h
@@ -381,44 +459,14 @@ def _ts_chart(series: dict, colors: dict, events: list, y_label: str,
         p.setPen(QColor("#333333"))
         p.drawText(int(X(t)) - 10, mt + plot_h + 18, f"{t:.0f}s")
     p.setPen(QColor("#111111"))
-    p.drawText(ml, mt - 12, y_label)
+    p.drawText(6, 14, y_label)
 
-    # Event markers: draw every dashed vertical line first, then place the
-    # labels into stacked "lanes" so they never overlap horizontally -- each
-    # label goes in the topmost lane whose previous label has already ended
-    # (by estimated pixel width) before this one starts.
-    vis_events = sorted((e for e in events if t_min <= e[0] <= t_max), key=lambda e: e[0])
-    for t, _label in vis_events:
-        x = int(X(t))
+    # Marker lines go under the data; their numbered tags are drawn last.
+    for x, _left, _w, row, _n in placed:
         pen = QPen(QColor("#c62828"), 1)
         pen.setStyle(Qt.PenStyle.DashLine)
         p.setPen(pen)
-        p.drawLine(x, mt, x, mt + plot_h)
-
-    p.setFont(QFont(family, 7))
-    label_h = 11
-    char_w = 4.1
-    max_lanes = max(1, int((plot_h - 16) // label_h))
-    lane_right: list[float] = []  # current right edge x per lane
-    for t, label in vis_events:
-        x = int(X(t))
-        text = label if len(label) <= 22 else label[:21] + "…"
-        tw = len(text) * char_w + 6
-        tx = max(ml + 1, min(x + 2, W - mr - tw))
-        lane = next((li for li, edge in enumerate(lane_right) if tx > edge + 4), None)
-        if lane is None:
-            if len(lane_right) < max_lanes:
-                lane_right.append(0.0)
-                lane = len(lane_right) - 1
-            else:  # all lanes busy -- reuse the one that frees up earliest
-                lane = min(range(len(lane_right)), key=lambda li: lane_right[li])
-        lane_right[lane] = tx + tw
-        ly = mt + 9 + lane * label_h
-        p.setPen(QColor("#999999"))
-        p.drawLine(x, mt, int(tx), ly - 3)  # thin leader to its line
-        p.setPen(QColor("#c62828"))
-        p.drawText(int(tx), ly, text)
-    p.setFont(QFont(family, 9))
+        p.drawLine(int(x), band_top + row * row_h + row_h, int(x), mt + plot_h)
 
     for name, pts in series.items():
         if not pts:
@@ -436,22 +484,54 @@ def _ts_chart(series: dict, colors: dict, events: list, y_label: str,
     if annotate_peak and all_pts:
         pt_max = max(all_pts, key=lambda tv: tv[1])
         tp, vp = pt_max
-        near = None
-        for te, lab in events:
-            if abs(te - tp) <= 8.0 and (near is None or abs(te - tp) < abs(near[0] - tp)):
-                near = (te, lab)
+        near = None  # nearest marker within 8s: (distance, number)
+        for n, t0, t1, _labels in markers:
+            d = 0.0 if t0 <= tp <= t1 else min(abs(t0 - tp), abs(t1 - tp))
+            if d <= 8.0 and (near is None or d < near[0]):
+                near = (d, n)
         x, y = int(X(tp)), int(Y(vp))
         p.setBrush(QColor("#111111"))
         p.setPen(QPen(QColor("#111111"), 2))
         p.drawEllipse(x - 4, y - 4, 8, 8)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         note = (f"peak {vp:.0f}% @ {tp:.0f}s "
-                + (f"(around: {near[1]})" if near else "(transient, no logged event)"))
+                + (f"(near marker {near[1]})" if near else "(transient, no logged event)"))
         p.setFont(QFont(family, 8))
-        tx = min(x + 6, W - 260)
-        p.drawText(tx, max(mt + 12, y - 8), note)
+        nfm = QFontMetrics(QFont(family, 8))
+        nw = nfm.horizontalAdvance(note) + 8
+        box = QRectF(min(x + 8, W - mr - nw), max(mt + 2, y - nfm.height() - 6), nw, nfm.height() + 2)
+        p.fillRect(box, QColor("#ffffff"))
+        p.setPen(QColor("#111111"))
+        p.drawText(box, int(Qt.AlignmentFlag.AlignCenter), note)
+
+    # Marker tags last, on white, above everything else.
+    p.setFont(tag_font)
+    for _x, left, w, row, n in placed:
+        box = QRectF(left, band_top + row * row_h, w, row_h - 1)
+        p.fillRect(box, QColor("#ffffff"))
+        p.setPen(QPen(QColor("#c62828"), 1))
+        p.drawRect(box)
+        p.setPen(QColor("#c62828"))
+        p.drawText(box, int(Qt.AlignmentFlag.AlignCenter), str(n))
 
     p.end()
     return img
+
+
+def _event_key_html(events: list) -> str:
+    """Key for the numbered event markers on every graph in the report."""
+    markers = _event_markers(events)
+    if not markers:
+        return ""
+    rows = "".join(
+        f'<tr><td align="center" style="color:#c62828;"><b>{n}</b></td>'
+        f'<td>{t0:.0f}s' + (f'&ndash;{t1:.0f}s' if round(t1) != round(t0) else '') + '</td>'
+        f'<td>{_esc(_summarize_events(labels))}</td></tr>'
+        for n, t0, t1, labels in markers)
+    return ('<p style="color:#222;"><b>Event key</b> (marker numbers on all graphs)</p>'
+            '<table width="100%" cellspacing="0" cellpadding="3" border="1" '
+            'style="border-collapse:collapse; color:#444; font-size:10px;">'
+            '<tr><th>Marker</th><th>Elapsed</th><th>What happened</th></tr>' + rows + '</table>')
 
 
 # Load levels whose share of the recording the host table reports.
@@ -546,8 +626,10 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
     parts.append('<p style="color:#555;">Resource usage recorded while the stack was '
                  f'{"brought up" if data.operation == "start" else "taken down"}. Each dashed '
                  'red vertical line marks a major event (a container starting, going healthy or '
-                 'unhealthy, or stopping); the largest CPU peak is called out with the event it '
-                 'lines up with. <b>Figure 1</b> shows how these services fit together &ndash; '
+                 'unhealthy, or stopping), numbered in a band above the graph; events within '
+                 f'{_MARKER_GAP_S:g}s of each other share one number, and the event key under the '
+                 'host graph says what each number covers. The largest CPU peak is called out '
+                 'with the marker it lines up with. <b>Figure 1</b> shows how these services fit together &ndash; '
                  'the per-container graphs below track each box in it.</p>')
     parts.append(st.GLOSSARY_HTML)
     parts.append(diagrams.figure_html(
@@ -570,6 +652,7 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
         parts.append(f'<span style="color:#444; font-size:10px;">'
                      f'<span style="color:{_SYS_CPU_COLOR};">&#9632;</span> host CPU % &nbsp; '
                      f'<span style="color:{_SYS_RAM_COLOR};">&#9632;</span> host RAM % used</span>')
+        parts.append(_event_key_html(data.events))
         parts.append(_host_stats_html(data.sys_samples))
     else:
         parts.append('<p style="color:#c62828;">Host CPU/RAM was not available on this target.</p>')
@@ -613,10 +696,14 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
     # 4. event log
     parts.append('<h2 style="color:#222;">4. Event log</h2>')
     if data.events:
-        rows = "".join(f'<tr><td>{t:.0f}s</td><td>{_esc(lab)}</td></tr>' for t, lab in data.events)
+        markers = _event_markers(data.events)
+        rows = "".join(
+            f'<tr><td>{next(n for n, t0, t1, _l in markers if t0 <= t <= t1)}</td>'
+            f'<td>{t:.0f}s</td><td>{_esc(lab)}</td></tr>'
+            for t, lab in sorted(data.events, key=lambda e: e[0]))
         parts.append('<table cellspacing="0" cellpadding="3" border="1" '
                      'style="border-collapse:collapse; color:#444;">'
-                     '<tr><th>Elapsed</th><th>Event</th></tr>' + rows + '</table>')
+                     '<tr><th>Marker</th><th>Elapsed</th><th>Event</th></tr>' + rows + '</table>')
     else:
         parts.append('<p style="color:#666;">No container transitions were observed.</p>')
 

@@ -26,6 +26,12 @@ services:
     # alpine + rsync/openssl, built once (see images/init_setup/Dockerfile)
     # rather than `apk add`ed at the top of the command on every boot.
     build: ./images/init_setup
+    # Its memory is almost all page cache: on a first boot rsync writes the
+    # ~550 MB WordPress tree into all three pools, and the kernel charged all
+    # of it to this container (measured 1.8-2.3 GB peak). A cap makes the
+    # kernel write it back and reclaim it as it goes; measured the same
+    # ~19 s copy time at 256m, and rsync's own memory is a few MB.
+    mem_limit: 256m
     volumes:
       - ./production_eshop_files:/source_files:ro
       - ./production_database_data:/source_db:ro
