@@ -41,11 +41,14 @@ class KibanaDashboardTests(unittest.TestCase):
                 "`python3 siem/kibana/build_dashboards.py --ndjson`")
 
     def test_every_panel_references_a_defined_visualization(self):
-        viz_ids = {vid for vid, _ in self.bd.VISUALIZATIONS}
+        defined = {"visualization": {vid for vid, _ in self.bd.VISUALIZATIONS},
+                   "search": {sid for sid, _ in self.bd.SEARCHES}}
         for dash_id, body in self.bd.DASHBOARDS:
-            for ref in body["references"]:
+            panels = json.loads(body["attributes"]["panelsJSON"])
+            for panel, ref in zip(panels, body["references"]):
                 with self.subTest(dashboard=dash_id, viz=ref["id"]):
-                    self.assertIn(ref["id"], viz_ids)
+                    self.assertIn(ref["id"], defined[ref["type"]])
+                    self.assertEqual(panel["type"], ref["type"])
 
     def test_no_visualization_is_orphaned(self):
         used = {ref["id"] for _, body in self.bd.DASHBOARDS for ref in body["references"]}
@@ -83,6 +86,53 @@ class KibanaDashboardTests(unittest.TestCase):
             with self.subTest(dashboard=dash_id):
                 self.assertIn(path, page)
                 self.assertIn(path, notes)
+
+
+class ThreatIntelTests(unittest.TestCase):
+    """The Threat Intelligence dashboard is built on fields only the enrich
+    transform's threat-intelligence block in vector.yaml creates."""
+
+    FIELDS = ("attacker_ip", "sensor", "attacker_tool", "attacker_tool_class",
+              "threat_verdict", "attack_technique", "attack_tactic", "threat.stage",
+              "threat.technique.id", "vulnerability.id")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bd = _load_builder()
+        cls.vector = (REPO_ROOT / "siem/vector/vector.yaml").read_text(encoding="utf-8")
+
+    def test_dashboard_exists(self):
+        self.assertIn("dashboard-threat-intel", self.bd.DASHBOARD_IDS)
+
+    def test_vector_sets_every_field(self):
+        for field in self.FIELDS:
+            with self.subTest(field=field):
+                self.assertIn(f"  .{field} = ", self.vector)
+
+    def test_panels_only_use_fields_vector_sets(self):
+        # Every *.keyword / numeric field a TI panel aggregates on must be one
+        # vector.yaml writes, or one an existing parse already provides.
+        known = set(self.FIELDS) | {"timestamp", "threat_score", "session_id"}
+        for vid, body in self.bd.VISUALIZATIONS:
+            if not vid.startswith("viz-ti-"):
+                continue
+            for agg in json.loads(body["attributes"]["visState"])["aggs"]:
+                field = agg["params"].get("field")
+                if field:
+                    with self.subTest(viz=vid, field=field):
+                        self.assertIn(field.removesuffix(".keyword"), known)
+
+    def test_ioc_list_is_one_row_per_attacker(self):
+        body = dict(self.bd.VISUALIZATIONS)["viz-ti-indicators"]
+        buckets = [a for a in json.loads(body["attributes"]["visState"])["aggs"]
+                   if a["schema"] == "bucket"]
+        self.assertEqual([a["params"]["field"] for a in buckets], ["attacker_ip.keyword"])
+
+    def test_vector_unit_tests_cover_the_block(self):
+        tests = (REPO_ROOT / "siem/vector/tests/threat_intel.yaml").read_text(encoding="utf-8")
+        for field in ("attacker_tool", "threat.technique.id", "vulnerability.id", "threat_verdict"):
+            with self.subTest(field=field):
+                self.assertIn(f".{field}", tests)
 
 
 class DecisionLogFieldTests(unittest.TestCase):

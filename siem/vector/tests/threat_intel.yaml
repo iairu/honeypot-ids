@@ -1,0 +1,247 @@
+# Unit tests for the enrich transform in ../vector.yaml, mainly its threat
+# intelligence block (attacker_ip, attacker_tool, ATT&CK techniques, CVEs,
+# verdict). Run from the repo root:
+#
+#   siem/vector/tests/run.sh
+#
+# (Vector expands environment variables everywhere in its config files,
+# comments included, so no shell variables are written out here.)
+#
+# The log lines are in the exact shape nginx.conf's log_format security
+# writes and init.lua's log_security_event() logs.
+tests:
+  - name: sqlmap request diverted to the honeypot
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: nginx_security
+          message: >-
+            172.18.0.50 - - [03/Oct/2026:09:30:01 +0000] "GET /?id=1%20union%20select%201,2 HTTP/1.1" 200 512 "-" "sqlmap/1.8.4#stable (https://sqlmap.org)" "-" session_id="abc123" route="honeypot" threat_score="105" suspicious="true" request_score="75" decayed_score="30" offenses="2" decay_state="decaying" uri_class="attack_pattern" patterns="sql_union|sql_select" reason="high_threat_score"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.attacker_ip, "172.18.0.50")
+              assert_eq!(.sensor, "reverse_proxy")
+              assert_eq!(.attacker_tool, "sqlmap")
+              assert_eq!(.attacker_tool_class, "offensive_scanner")
+              assert_eq!(.threat_verdict, "malicious")
+              assert_eq!(.threat.framework, "MITRE ATT&CK")
+              assert!(includes(array!(.threat.technique.id), "T1190"))
+              assert!(includes(array!(.threat.technique.id), "T1595.002"))
+              assert!(includes(array!(.threat.tactic.name), "Initial Access"))
+              assert_eq!(.threat.stage, 3)
+              assert!(includes(array!(.attack_technique), "T1190 Exploit Public-Facing Application"))
+              assert!(includes(array!(.attack_tactic), "01 Reconnaissance"))
+              assert!(includes(array!(.attack_tactic), "03 Initial Access"))
+              assert_eq!(.carried_score, 30)
+
+  - name: wp-config read via curl maps to credentials in files
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: nginx_security
+          message: >-
+            172.18.0.51 - - [03/Oct/2026:09:30:02 +0000] "GET /wp-config.php.bak HTTP/1.1" 404 0 "-" "curl/8.5.0" "-" session_id="-" route="production" threat_score="35" suspicious="false" request_score="35" decayed_score="0" offenses="0" decay_state="clean" uri_class="attack_pattern" patterns="wp_config_access|wp_config_bak|bak_file" reason="-"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.attacker_tool, "curl")
+              assert_eq!(.attacker_tool_class, "scripted_client")
+              assert!(includes(array!(.threat.technique.id), "T1552.001"))
+              assert!(includes(array!(.threat.technique.id), "T1005"))
+              assert_eq!(.threat.stage, 11)
+              assert!(includes(array!(.attack_tactic), "11 Collection"))
+              assert_eq!(.threat_verdict, "malicious")
+              assert!(!exists(.session_id))
+
+  - name: CVE pattern in the request names the CVE
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: nginx_security
+          message: >-
+            172.18.0.52 - - [03/Oct/2026:09:30:03 +0000] "GET /?wcal_action=checkout_link HTTP/1.1" 200 100 "-" "python-requests/2.31.0" "-" session_id="s2" route="honeypot" threat_score="90" suspicious="true" request_score="50" decayed_score="40" offenses="1" decay_state="decaying" uri_class="attack_pattern" patterns="CVE-2023-2986" reason="cve_pattern_match"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.vulnerability.id, ["CVE-2023-2986"])
+              assert_eq!(.attacker_tool, "python")
+              assert!(includes(array!(.threat.technique.id), "T1190"))
+
+  - name: browser on a safe page is benign and gets no technique
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: nginx_security
+          message: >-
+            10.0.0.7 - - [03/Oct/2026:09:30:04 +0000] "GET /shop/ HTTP/1.1" 200 9000 "-" "Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0" "-" session_id="s3" route="production" threat_score="0" suspicious="false" request_score="0" decayed_score="0" offenses="0" decay_state="clean" uri_class="safe" patterns="-" reason="-"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.attacker_tool, "browser")
+              assert_eq!(.threat_verdict, "benign")
+              assert!(!exists(.threat))
+              assert!(!exists(.vulnerability))
+
+  - name: Suricata alert gets the same indicator fields
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: suricata
+          event_type: alert
+          src_ip: 172.18.0.50
+          alert.signature: "HONEYPOT CVE-2024-2387 AFI SQL Injection Attempt"
+          alert.severity: 1
+          http.http_user_agent: "sqlmap/1.8.4#stable"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.attacker_ip, "172.18.0.50")
+              assert_eq!(.sensor, "suricata")
+              assert_eq!(.attacker_tool, "sqlmap")
+              assert_eq!(.threat_verdict, "malicious")
+              assert_eq!(.vulnerability.id, ["CVE-2024-2387"])
+              assert!(includes(array!(.threat.technique.id), "T1190"))
+
+  - name: Suricata alert on the proxied hop is blamed on the XFF client
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: suricata
+          event_type: alert
+          src_ip: 172.21.0.10
+          http.xff: 172.18.0.53
+          alert.signature: "CVE-2025-4403 DnD File Upload Exploit"
+          alert.severity: 1
+          http.http_user_agent: "python-requests/2.31.0"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.attacker_ip, "172.18.0.53")
+              assert_eq!(.src_ip, "172.21.0.10")
+              assert!(includes(array!(.threat.technique.id), "T1505.003"))
+
+  - name: stream-level alert on the proxied hop uses alert.xff
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: suricata
+          event_type: alert
+          src_ip: 172.21.0.10
+          alert.xff: 172.18.0.50
+          alert.signature: "SQL Injection - Union Select"
+          alert.severity: 1
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.attacker_ip, "172.18.0.50")
+              assert!(includes(array!(.threat.technique.id), "T1190"))
+
+  - name: the proxy's own backend health probe is nobody's attack
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: suricata
+          event_type: alert
+          src_ip: 172.21.0.10
+          alert.signature: "High Rate HTTP Requests"
+          alert.severity: 2
+          http.http_user_agent: "lua-resty-http/0.17.1 (Lua) ngx_lua/10031"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert!(!exists(.attacker_ip))
+              assert!(!exists(.threat))
+
+  - name: Suricata alert without an HTTP transaction has an unknown tool
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: suricata
+          event_type: alert
+          src_ip: 172.18.0.70
+          alert.signature: "High Rate HTTP Requests"
+          alert.severity: 2
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.attacker_ip, "172.18.0.70")
+              assert_eq!(.attacker_tool, "unknown")
+
+  - name: honeytoken reuse maps to valid accounts
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: nginx_error
+          message: >-
+            2026/10/03 09:30:05 [warn] 7#7: *42 [lua] init.lua:523: log_security_event(): SECURITY_EVENT: {"event_type":"honeytoken_used","details":{"token_id":"t1","token_type":"admin_password","ip":"172.18.0.53","user_agent":"Mozilla/5.0","session_id":"s9"}}, client: 172.18.0.53, server: localhost, request: "POST /wp-login.php HTTP/1.1", host: "localhost"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.attacker_ip, "172.18.0.53")
+              assert_eq!(.security_event_type, "honeytoken_used")
+              assert_eq!(.threat.technique.id, ["T1078"])
+              assert_eq!(.threat_verdict, "malicious")
+
+  - name: restated proxy events are not mapped twice
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: nginx_error
+          message: >-
+            2026/10/03 09:30:06 [warn] 7#7: *43 [lua] init.lua:523: log_security_event(): SECURITY_EVENT: {"event_type":"cve_pattern_detected","details":{"cve":"CVE-2023-2986","uri":"/?wcal_action=checkout_link","ip":"172.18.0.52"}}, client: 172.18.0.52, server: localhost, request: "GET /?wcal_action=checkout_link HTTP/1.1", host: "localhost"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.attacker_ip, "172.18.0.52")
+              assert_eq!(.vulnerability.id, ["CVE-2023-2986"])
+              assert_eq!(.attacker_tool, "unknown")
+              assert!(!exists(.threat))
+
+  - name: docker logs are left alone
+    inputs:
+      - insert_at: enrich
+        type: log
+        log_fields:
+          log_type: docker
+          message: "plain container log line"
+    outputs:
+      - extract_from: enrich
+        conditions:
+          - type: vrl
+            source: |
+              assert!(!exists(.attacker_ip))
+              assert!(!exists(.threat_verdict))

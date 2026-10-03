@@ -45,6 +45,7 @@ jobs:
             siem/docker/.env.example
             siem/kibana
             siem/vector/vector.yaml
+            siem/vector/tests
           sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5
         with:
@@ -53,3 +54,21 @@ jobs:
       - name: Run tests
         working-directory: dashboard
         run: python -m unittest discover -s tests -v
+
+  vector:
+    name: Vector enrich unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          sparse-checkout: |
+            siem/vector/vector.yaml
+            siem/vector/tests
+            siem/docker/.env.example
+          sparse-checkout-cone-mode: false
+      # Same Vector release the SIEM stack runs (siem/docker/.env.example).
+      - name: Run vector test
+        run: |
+          VECTOR_VERSION=$(sed -n 's/^VECTOR_VERSION=//p' siem/docker/.env.example) \
+            siem/vector/tests/run.sh

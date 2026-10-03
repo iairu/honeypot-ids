@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Defines the five Honeypot Kibana dashboards (IDS Alerts, Web Traffic,
-Threat Decisions & Decay, Session Analysis, Attack Patterns), their
-visualizations and the honeypot-* data view, and either pushes them to a
-live Kibana or writes the committed NDJSON.
+"""Defines the six Honeypot Kibana dashboards (IDS Alerts, Web Traffic,
+Threat Decisions & Decay, Session Analysis, Attack Patterns, Threat
+Intelligence), their visualizations, saved searches and the honeypot-* data
+view, and either pushes them to a live Kibana or writes the committed NDJSON.
 
     python3 build_dashboards.py --ndjson [PATH]
         Writes saved_objects/honeypot-dashboards.ndjson (or PATH) offline --
@@ -93,6 +93,32 @@ def _markdown(vis_id: str, title: str, text: str) -> tuple[str, dict]:
     return vis_id, body
 
 
+def _search(search_id: str, title: str, columns: list[str], query: str,
+            description: str = "") -> tuple[str, dict]:
+    """A Discover saved search: a filtered, column-picked event list. Opens in
+    Discover (where Share > CSV export turns it into a file) and can also sit
+    on a dashboard as a table panel."""
+    body = {
+        "attributes": {
+            "title": title,
+            "description": description,
+            "columns": columns,
+            "sort": [["timestamp", "desc"]],
+            "kibanaSavedObjectMeta": {
+                "searchSourceJSON": json.dumps({
+                    "query": {"query": query, "language": "kuery"},
+                    "filter": [],
+                    "indexRefName": "kibanaSavedObjectMeta.searchSourceJSON.index",
+                })
+            },
+        },
+        "references": [
+            {"id": DATA_VIEW_ID, "name": "kibanaSavedObjectMeta.searchSourceJSON.index", "type": "index-pattern"}
+        ],
+    }
+    return search_id, body
+
+
 def _xy_params(chart: str, series: list[tuple[str, str]], *, mode: str = "normal",
                y_title: str = "", threshold: float | None = None,
                horizontal: bool = False) -> dict:
@@ -149,8 +175,9 @@ def _date_histogram_agg(agg_id: str = "2") -> dict:
 
 
 def _terms_agg(field: str, agg_id: str = "2", size: int = 10, schema: str = "segment",
-                order_by: str = "1", label: str = "") -> dict:
-    params = {"field": field, "orderBy": order_by, "order": "desc", "size": size,
+                order_by: str = "1", label: str = "", order: str = "desc") -> dict:
+    """``order_by`` is a metric agg id, or "_key" to sort buckets by value."""
+    params = {"field": field, "orderBy": order_by, "order": order, "size": size,
               "otherBucket": False, "otherBucketLabel": "Other", "missingBucket": False}
     if label:
         params["customLabel"] = label
@@ -221,6 +248,16 @@ _ATTACK_Q = 'log_type:"nginx_error" and security_event_type:*'
 # reference line on the score charts.
 HONEYPOT_THRESHOLD = 80
 
+# Threat-intelligence fields, added by the enrich transform's THREAT
+# INTELLIGENCE block in siem/vector/vector.yaml to every proxy-scored
+# request, proxy security event and Suricata alert: attacker_ip, sensor,
+# attacker_tool(_class), threat_verdict, threat.technique.*/threat.tactic.*
+# (MITRE ATT&CK, ECS names), attack_technique/attack_tactic (id+name and
+# stage+tactic in one value each), threat.stage, vulnerability.id (CVEs).
+_TI_Q = 'attacker_ip:*'
+_TI_MAL_Q = 'threat_verdict:"malicious"'
+_TI_TECH_Q = 'attack_technique:*'
+
 # Each dashboard answers a different question and uses different panel
 # types, so they no longer read as copies of each other (the old four were
 # all "count metric + count-over-time + pies + top-N tables"):
@@ -235,6 +272,11 @@ HONEYPOT_THRESHOLD = 80
 #                        offenses and sophistication class
 #   Attack Patterns   -- what the attacks were: matched patterns, CVEs,
 #                        honeytokens, security events over time
+#   Threat            -- the same events turned into intelligence: one
+#     Intelligence       indicator list per attacker IP across both sensors,
+#                        MITRE ATT&CK techniques and kill-chain stage reached,
+#                        tools fingerprinted, CVEs targeted, and an exportable
+#                        malicious-event feed
 VISUALIZATIONS = [
     # -- IDS Alerts (Suricata) --------------------------------------------
     _markdown("viz-ids-guide", "About: IDS Alerts",
@@ -420,26 +462,121 @@ VISUALIZATIONS = [
     _viz("viz-attack-honeytoken-types", "Honeytoken Hits by Type", "pie",
          [_count_metric_agg(), _terms_agg("security_event.token_type.keyword", size=10, label="Token type")],
          query=f'{_ATTACK_Q} and security_event_type:"honeytoken_used"', params_extra=_PIE),
+
+    # -- Threat Intelligence --------------------------------------------------
+    _markdown("viz-ti-guide", "About: Threat Intelligence",
+              "**Who attacked, with what, and how far they got.** Every proxy request, proxy "
+              "security event and Suricata alert is tagged with the attacker's IP, the tool its "
+              "User-Agent gives away, and the **MITRE ATT&CK** techniques its patterns or "
+              "signature stand for. **Attacker Indicators** is the IOC list: one row per IP, "
+              "first/last seen, how many *sensors* (proxy, Suricata) saw it, and the furthest "
+              "ATT&CK stage it reached (1 Reconnaissance, 3 Initial Access, 4 Execution, "
+              "5 Persistence, 7 Defense Evasion, 8 Credential Access, 11 Collection). "
+              "**Malicious Event Feed** opens in Discover, where *Share > CSV* exports it."),
+    _viz("viz-ti-headline", "Threat Intelligence Summary", "metric",
+         [_metric_agg("cardinality", "attacker_ip.keyword", "1", "Malicious IPs"),
+          _metric_agg("cardinality", "attack_technique.keyword", "2", "ATT&CK techniques"),
+          _metric_agg("cardinality", "vulnerability.id.keyword", "3", "CVEs targeted"),
+          _metric_agg("cardinality", "attacker_tool.keyword", "4", "Tool fingerprints")],
+         query=_TI_MAL_Q),
+    _viz("viz-ti-indicators", "Attacker Indicators (IOC list)", "table",
+         [_count_metric_agg("Malicious events"),
+          _metric_agg("min", "timestamp", "3", "First seen"),
+          _metric_agg("max", "timestamp", "4", "Last seen"),
+          _metric_agg("cardinality", "sensor.keyword", "5", "Sensors"),
+          _metric_agg("max", "threat.stage", "6", "Furthest ATT&CK stage"),
+          _metric_agg("cardinality", "attack_technique.keyword", "7", "Techniques"),
+          _metric_agg("max", "threat_score", "8", "Peak threat score"),
+          _metric_agg("cardinality", "session_id.keyword", "9", "Sessions"),
+          _terms_agg("attacker_ip.keyword", agg_id="2", size=25, schema="bucket", label="Attacker IP")],
+         query=_TI_MAL_Q, params_extra=_TABLE),
+    _viz("viz-ti-kill-chain", "Kill Chain: Attackers per ATT&CK Tactic", "horizontal_bar",
+         [_metric_agg("cardinality", "attacker_ip.keyword", "1", "Attackers"),
+          _terms_agg("attack_tactic.keyword", size=14, order_by="_key", order="asc", label="Tactic"),
+          _terms_agg("sensor.keyword", agg_id="3", size=2, schema="group", label="Sensor")],
+         query=_TI_TECH_Q,
+         params_extra=_xy_params("horizontal_bar", [("1", "Attackers")], horizontal=True)),
+    _viz("viz-ti-attacker-progression", "How Far Each Attacker Got (events per tactic)", "horizontal_bar",
+         [_count_metric_agg(),
+          _terms_agg("attacker_ip.keyword", size=10, label="Attacker IP"),
+          _terms_agg("attack_tactic.keyword", agg_id="3", size=14, schema="group",
+                     order_by="_key", order="asc", label="Tactic")],
+         query=_TI_TECH_Q,
+         params_extra=_xy_params("horizontal_bar", [("1", "Events")], horizontal=True)),
+    _viz("viz-ti-techniques", "MITRE ATT&CK Techniques Observed", "table",
+         [_count_metric_agg("Events"),
+          _metric_agg("cardinality", "attacker_ip.keyword", "3", "Attackers"),
+          _metric_agg("cardinality", "sensor.keyword", "4", "Sensors"),
+          _metric_agg("min", "timestamp", "5", "First seen"),
+          _metric_agg("max", "timestamp", "6", "Last seen"),
+          _terms_agg("attack_technique.keyword", agg_id="2", size=20, schema="bucket", label="Technique")],
+         query=_TI_TECH_Q, params_extra=_TABLE),
+    _viz("viz-ti-tactics-over-time", "ATT&CK Tactics Over Time", "area",
+         [_count_metric_agg(), _date_histogram_agg(),
+          _terms_agg("attack_tactic.keyword", agg_id="3", size=14, schema="group",
+                     order_by="_key", order="asc", label="Tactic")],
+         query=_TI_TECH_Q,
+         params_extra=_xy_params("area", [("1", "Events")], mode="stacked", y_title="Events")),
+    _viz("viz-ti-tools", "Attack Tools Fingerprinted (User-Agent)", "pie",
+         [_count_metric_agg(),
+          _terms_agg("attacker_tool_class.keyword", size=5, label="Tool class"),
+          _terms_agg("attacker_tool.keyword", agg_id="3", size=10, label="Tool")],
+         # "unknown" = the event didn't record a User-Agent (most Suricata
+         # alerts, the proxy's own security events), not a tool.
+         query=f'{_TI_Q} and not threat_verdict:"benign" and not attacker_tool:"unknown"',
+         params_extra=_PIE),
+    _viz("viz-ti-cves", "CVEs Targeted (all sensors)", "table",
+         [_count_metric_agg("Events"),
+          _metric_agg("cardinality", "attacker_ip.keyword", "3", "Attackers"),
+          _metric_agg("cardinality", "sensor.keyword", "4", "Sensors"),
+          _metric_agg("max", "timestamp", "5", "Last seen"),
+          _terms_agg("vulnerability.id.keyword", agg_id="2", size=15, schema="bucket", label="CVE")],
+         query=f'{_TI_Q} and vulnerability.id:*', params_extra=_TABLE),
+    _viz("viz-ti-verdicts", "Verdict per Sensor", "histogram",
+         [_count_metric_agg(), _terms_agg("sensor.keyword", size=2, label="Sensor"),
+          _terms_agg("threat_verdict.keyword", agg_id="3", size=3, schema="group", label="Verdict")],
+         query=_TI_Q,
+         params_extra=_xy_params("histogram", [("1", "Events")], mode="stacked", y_title="Events")),
+]
+
+# Discover saved searches: event lists with the indicator columns already
+# picked, for drilling into one attacker or exporting a feed as CSV.
+SEARCHES = [
+    _search("search-ti-malicious-feed", "Threat Intel: Malicious Event Feed",
+            ["attacker_ip", "sensor", "attacker_tool", "attack_technique", "vulnerability.id",
+             "uri", "alert.signature", "route", "threat_score"],
+            _TI_MAL_Q,
+            "Every event judged malicious by either sensor, newest first, with its indicators. "
+            "Share > CSV in Discover exports it as an IOC feed."),
+    _search("search-ti-credential-abuse", "Threat Intel: Credential & Session Abuse",
+            ["attacker_ip", "security_event_type", "security_event.token_type",
+             "security_event.session_id", "request_line", "attack_technique"],
+            'security_event_type:("honeytoken_used" or "session_compromised")',
+            "Planted honeytokens being reused and hijacked sessions: proof an attacker took "
+            "something from the honeypot and tried to use it."),
 ]
 
 
-def _panel(panel_index: str, x: int, y: int, w: int, h: int, ref_name: str) -> dict:
+def _panel(panel_index: str, x: int, y: int, w: int, h: int, ref_name: str,
+           obj_type: str = "visualization") -> dict:
     return {
-        "version": "8.17.3", "type": "visualization",
+        "version": "8.17.3", "type": obj_type,
         "gridData": {"x": x, "y": y, "w": w, "h": h, "i": panel_index},
         "panelIndex": panel_index, "embeddableConfig": {}, "panelRefName": ref_name,
     }
 
 
 def _dashboard(dash_id: str, title: str, description: str, layout: list[tuple[str, int, int, int, int]]) -> tuple[str, dict]:
-    """layout: list of (viz_id, x, y, w, h) in panel order."""
+    """layout: list of (viz_id, x, y, w, h) in panel order. An id starting
+    with "search-" embeds that saved search instead of a visualization."""
     panels = []
     references = []
     for idx, (viz_id, x, y, w, h) in enumerate(layout, start=1):
         panel_index = str(idx)
         ref_name = f"panel_{panel_index}"
-        panels.append(_panel(panel_index, x, y, w, h, ref_name))
-        references.append({"id": viz_id, "name": ref_name, "type": "visualization"})
+        obj_type = "search" if viz_id.startswith("search-") else "visualization"
+        panels.append(_panel(panel_index, x, y, w, h, ref_name, obj_type))
+        references.append({"id": viz_id, "name": ref_name, "type": obj_type})
 
     body = {
         "attributes": {
@@ -533,6 +670,23 @@ DASHBOARDS = [
             ("viz-attack-honeytoken-types", 36, 24, 12, 14),
         ],
     ),
+    _dashboard(
+        "dashboard-threat-intel", "Honeypot: Threat Intelligence",
+        "Attacker indicators across the proxy and Suricata: IOC list per IP, MITRE ATT&CK techniques and kill-chain stage reached, attack tools, CVEs targeted, and an exportable malicious-event feed.",
+        [
+            ("viz-ti-guide", 0, 0, 24, 9),
+            ("viz-ti-headline", 24, 0, 24, 9),
+            ("viz-ti-indicators", 0, 9, 48, 16),
+            ("viz-ti-kill-chain", 0, 25, 20, 15),
+            ("viz-ti-attacker-progression", 20, 25, 28, 15),
+            ("viz-ti-techniques", 0, 40, 30, 16),
+            ("viz-ti-tools", 30, 40, 18, 16),
+            ("viz-ti-tactics-over-time", 0, 56, 30, 13),
+            ("viz-ti-verdicts", 30, 56, 18, 13),
+            ("viz-ti-cves", 0, 69, 20, 14),
+            ("search-ti-malicious-feed", 20, 69, 28, 14),
+        ],
+    ),
 ]
 
 DASHBOARD_IDS = [dash_id for dash_id, _ in DASHBOARDS]
@@ -543,6 +697,7 @@ def saved_objects() -> list[tuple[str, str, dict]]:
     objs = [("index-pattern", DATA_VIEW_ID,
              {"attributes": {"title": "honeypot-*", "timeFieldName": "timestamp"}, "references": []})]
     objs += [("visualization", vid, body) for vid, body in VISUALIZATIONS]
+    objs += [("search", sid, body) for sid, body in SEARCHES]
     objs += [("dashboard", did, body) for did, body in DASHBOARDS]
     return objs
 
