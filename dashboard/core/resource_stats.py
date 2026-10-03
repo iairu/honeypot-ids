@@ -372,6 +372,96 @@ def describe_sampling(sampler: "FastSampler", interval: float) -> str:
     return "read with docker stats (~2 s per sample)"
 
 
+_DOCKER_TS_RE = re.compile(
+    r"^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)$")
+
+
+def parse_docker_time(ts: str) -> float | None:
+    """Epoch seconds for a docker timestamp ("2026-10-03T05:08:18.791234567Z",
+    nanoseconds and a +hh:mm offset allowed), None if it doesn't parse."""
+    import calendar
+    m = _DOCKER_TS_RE.match(ts.strip())
+    if not m:
+        return None
+    y, mo, d, h, mi, se, frac, tz = m.groups()
+    t = calendar.timegm((int(y), int(mo), int(d), int(h), int(mi), int(se), 0, 0, 0))
+    if frac:
+        t += float("0." + frac[:9])
+    if tz != "Z":
+        sign = 1 if tz[0] == "+" else -1
+        t -= sign * (int(tz[1:3]) * 3600 + int(tz[4:6]) * 60)
+    return t
+
+
+def parse_health_inspect(text: str, cid_to_svc: dict[str, str]) -> list[tuple[float, str]]:
+    """(epoch_start, service) for every health-check run in the output of
+    `docker inspect --format '{{.Id}} {{json .State}}' <ids>`. Docker
+    keeps the last five runs per container. (The whole .State is asked for
+    because a container without a health check has no .State.Health key, and
+    naming it in the template fails the entire inspect.)"""
+    out: list[tuple[float, str]] = []
+    for line in text.splitlines():
+        cid, _, js = line.partition(" ")
+        svc = next((s for c, s in cid_to_svc.items() if c and cid.startswith(c)), None)
+        if not svc or not js.strip() or js.strip() == "null":
+            continue
+        try:
+            health = (json.loads(js) or {}).get("Health") or {}
+        except (ValueError, AttributeError):
+            continue
+        for entry in health.get("Log") or []:
+            t = parse_docker_time(entry.get("Start", ""))
+            if t is not None:
+                out.append((t, svc))
+    return sorted(out)
+
+
+def health_check_times(target: Target, svc_to_cid: dict[str, str],
+                       timeout: float = 10.0) -> list[tuple[float, str]]:
+    """When each container's Docker health check last ran (its last five runs),
+    as (epoch_start, service). A health check is real work inside the
+    container (each eshop's check fetches its whole homepage every 30s), so it
+    shows up as a CPU spike unrelated to whatever is being measured. []
+    on failure."""
+    cid_to_svc = {cid: svc for svc, cid in svc_to_cid.items() if cid}
+    if not cid_to_svc:
+        return []
+    ids = " ".join(shlex.quote(c) for c in cid_to_svc)
+    text = _run(target, "docker inspect --format '{{.Id}} {{json .State}}' " + ids,
+                timeout=timeout)
+    return parse_health_inspect(text, cid_to_svc)
+
+
+_REQUEST_LINE_RE = re.compile(r'"([A-Z]+ \S+) HTTP/[\d.]+"')
+
+
+def parse_access_log(text: str) -> list[tuple[float, str]]:
+    """(epoch, "METHOD /target") for each Apache access-log line in
+    `docker logs --timestamps` output; other lines are skipped."""
+    out: list[tuple[float, str]] = []
+    for line in text.splitlines():
+        ts, _, rest = line.partition(" ")
+        m = _REQUEST_LINE_RE.search(rest)
+        t = parse_docker_time(ts) if m else None
+        if t is not None:
+            out.append((t, m.group(1)))
+    return out
+
+
+def eshop_requests(target: Target, svc_to_cid: dict[str, str], since: float,
+                   timeout: float = 10.0) -> list[tuple[float, str, str]]:
+    """(epoch, service, "METHOD /target") for every request each eshop
+    container (production and honeypot) logged since ``since`` (epoch)."""
+    out: list[tuple[float, str, str]] = []
+    for svc, cid in svc_to_cid.items():
+        if "eshop" not in svc or not cid:
+            continue
+        text = _run(target, f"docker logs --since {int(since)} --timestamps {shlex.quote(cid)} 2>&1",
+                    timeout=timeout)
+        out.extend((t, svc, req) for t, req in parse_access_log(text))
+    return sorted(out)
+
+
 def sizes_by_service(log_sizes: dict[str, int], svc_to_cid: dict[str, str]) -> dict[str, int]:
     """Map {full_or_short_id: bytes} onto {service: bytes} using a service->id map."""
     out: dict[str, int] = {}
