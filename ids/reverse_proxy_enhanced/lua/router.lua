@@ -38,10 +38,11 @@
 --     → session_handler.update_session()    (state persist)
 --   nginx.conf sets $backend_upstream from routing_decision.upstream
 --
--- BOTNET / SLOWDOWN:
---   The apply_routing_decision() function injects a Tarpit-style delay for
---   sessions flagged as automated scanners.  This wastes attacker resources
---   and extends the observation window without raising suspicion.
+-- NO TARPIT:
+--   The proxy never holds a request back. An earlier tarpit
+--   (apply_botnet_slowdown) slept 0.5-3 s for hostile or automated clients,
+--   which let an attacker tell the honeypot from production by latency.
+--   Every visitor, on either route, gets the same proxy latency.
 --
 -- DEPENDENCIES:
 --   pool_router    – pool assignment and health-aware selection
@@ -711,86 +712,6 @@ end
 -- Behavioral analysis for routing decisions
 function _M.analyze_behavior_patterns(session_data)
     return router_rules.analyze_behavior_patterns(session_data, ngx.time(), ngx.var.request_uri)
-end
-
--- ---------------------------------------------------------------------------
--- apply_botnet_slowdown(session_data, threat_result)
---
--- Implements a Tarpit-style response delay for sessions that are confirmed as
--- automated scanners or botnets.  The delay wastes attacker compute/time and
--- extends the observation window without raising suspicion (real servers
--- occasionally respond slowly under load).
---
--- STRATEGY:
---   - Confirmed scanner UA  → 1.5 s delay  (tool detected, polite but noticeable)
---   - Rapid automation      → 2.0 s delay  (burst detected, stronger slowdown)
---   - Honeypot-bound + high score → 3.0 s delay (actively being exploited)
---   - All other honeypot traffic  → 0.5 s delay (mild friction)
---
--- The delay is applied via ngx.sleep() which suspends the coroutine without
--- blocking the Nginx event loop, so other workers and connections continue
--- serving requests normally.  The function is a no-op for production-bound
--- requests or whitelisted IPs.
---
--- BOTNET IDENTIFICATION signals (item 9 in general checklist):
---   - session_data.honeypot_bound = true (any prior diversion trigger)
---   - threat_result.details containing "automation_detected"
---   - threat_result.score ≥ honeypot_threshold on a fresh session
---
--- @param session_data  table   Current session (may be nil for new visitors).
--- @param threat_result table   Output from threat_analyzer.analyze_request().
--- ---------------------------------------------------------------------------
-function _M.apply_botnet_slowdown(session_data, threat_result)
-    -- Never delay whitelisted IPs (admin, monitoring, trusted partners).
-    if _G.utils.is_ip_whitelisted(ngx.var.remote_addr) then
-        return
-    end
-
-    local delay = 0
-
-    -- Determine delay tier based on confirmed signals.
-    local is_automation = false
-    if threat_result and threat_result.details then
-        for _, detail in ipairs(threat_result.details) do
-            if string.find(detail, "automation_detected") then
-                is_automation = true
-                break
-            end
-        end
-    end
-
-    if session_data and session_data.honeypot_bound then
-        -- Already confirmed hostile session.
-        if threat_result and threat_result.score >= 90 then
-            delay = 3.0  -- Actively exploiting; maximum slowdown.
-        else
-            delay = 0.5  -- General honeypot traffic; mild friction.
-        end
-    elseif is_automation then
-        if session_data and session_data.request_count and session_data.created_at then
-            local age = ngx.time() - session_data.created_at
-            local rps = age > 0 and (session_data.request_count / age) or 0
-            if rps > 20 then
-                delay = 2.0  -- Burst-rate scanner.
-            else
-                delay = 1.5  -- Confirmed scanner UA but moderate rate.
-            end
-        else
-            delay = 1.5
-        end
-    elseif threat_result and threat_result.score >= _G.config.threat.honeypot_threshold then
-        -- High-score fresh request that will be diverted on this pass.
-        delay = 1.0
-    end
-
-    if delay > 0 then
-        ngx.log(ngx.INFO,
-            "[SLOWDOWN] Applying tarpit delay of ", delay, "s | IP: ", ngx.var.remote_addr,
-            " | score=", (threat_result and threat_result.score or "n/a"),
-            " | automation=", tostring(is_automation),
-            " | honeypot_bound=", tostring(session_data and session_data.honeypot_bound or false))
-        ngx.sleep(delay)
-    end
 end
 
 return _M

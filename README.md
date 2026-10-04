@@ -186,7 +186,7 @@ Every non-static request goes through `nginx.conf`'s `access_by_lua_block`, whic
 5. **`sophistication_analyzer.classify_session()`** — labels the session `scripted`/`manual`/`ai_assisted`/`unknown` from timing regularity, UA fingerprint, header completeness, and payload precision. Persisted to the session (and thus to ELK) only for already-suspicious/honeypot-bound traffic.
 6. Session update, security-event logging, response headers.
 
-`router.apply_botnet_slowdown()` (tarpit-style delay for confirmed scanners) runs just before the sophistication step.
+The proxy has no tarpit: it never holds a request back, so production and honeypot routes have the same proxy latency and an attacker cannot tell them apart by response time. (An earlier `router.apply_botnet_slowdown()` slept 0.5–3 s for hostile or automated clients; it was removed for exactly that reason.)
 
 ### 3.2 The Lua module map — pure cores vs. I/O adapters
 
@@ -440,7 +440,7 @@ Two other real duplication/overlap findings, not (yet) fixed at the code level:
 - OWASP WSTG vulnerability integration with Suricata + Nginx Lua
 - API-level + attempted SQL-level honeypot integration (SQL-level: scaffolded, never completed — see §9)
 - Honeytokens
-- Botnet slowdown (tarpit delays)
+- Botnet slowdown (tarpit delays) — later removed: per-route delays revealed the honeypot by latency
 - AbuseIPDB, sophistication scoring, prompt injection filter, blind pentest evaluation (this session)
 - Pure/adapter Lua refactor + unit tests (484 Lua tests now, plus dashboard core tests, all in CI — see §5.3)
 - Production hardening: XML-RPC, hotlink protection, version obfuscation, backup automation, container containment, `scripts/hardening_audit.sh` (this session — see §9.3)
