@@ -440,6 +440,84 @@ add_action( 'woocommerce_before_cart_table', static function () {
         . '</p><i><b style="width:' . (int) $pct . '%"></b></i></div>';
 } );
 
+/* ------------------------------------------------- cart follows the visitor */
+
+/**
+ * WooCommerce keeps a cart in its session table, which lives in ONE database and
+ * is not replicated. A visitor diverted from production to a honeypot pool would
+ * arrive with a cart cookie the pool has never heard of and find the cart empty,
+ * which is both a bad experience and an obvious tell. So the cart's contents ride
+ * along in a cookie too: any instance that finds an empty cart plus that cookie
+ * rebuilds the cart from it. Prices are never taken from the cookie, only product,
+ * variation, quantity and variation attributes, each re-validated on restore.
+ */
+const FH_CART_COOKIE = 'fh_cart';
+
+function fh_cart_snapshot() {
+    $out = array();
+    if ( ! function_exists( 'WC' ) || ! WC()->cart ) {
+        return $out;
+    }
+    foreach ( WC()->cart->get_cart() as $item ) {
+        $out[] = array(
+            'p' => (int) $item['product_id'],
+            'v' => (int) $item['variation_id'],
+            'q' => (int) $item['quantity'],
+            'a' => isset( $item['variation'] ) && is_array( $item['variation'] ) ? $item['variation'] : array(),
+        );
+    }
+    return $out;
+}
+
+function fh_cart_cookie_write() {
+    static $last = null;
+    if ( headers_sent() || ! function_exists( 'WC' ) || ! WC()->cart ) {
+        return;
+    }
+    $snap = fh_cart_snapshot();
+    $val  = $snap ? rawurlencode( base64_encode( wp_json_encode( $snap ) ) ) : '';
+    if ( $val === $last ) {
+        return;
+    }
+    $last = $val;
+    setcookie( FH_CART_COOKIE, $val, array(
+        'expires'  => $snap ? time() + 30 * DAY_IN_SECONDS : time() - 3600,
+        'path'     => '/',
+        'secure'   => is_ssl(),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ) );
+}
+foreach ( array( 'woocommerce_cart_updated', 'woocommerce_add_to_cart', 'woocommerce_cart_item_removed',
+                 'woocommerce_cart_item_restored', 'woocommerce_after_cart_item_quantity_update', 'woocommerce_cart_emptied' ) as $hook ) {
+    add_action( $hook, 'fh_cart_cookie_write', 99 );
+}
+
+add_action( 'woocommerce_cart_loaded_from_session', static function () {
+    static $busy = false;
+    if ( $busy || ! WC()->cart || ! WC()->cart->is_empty() || empty( $_COOKIE[ FH_CART_COOKIE ] ) ) {
+        return;
+    }
+    $snap = json_decode( base64_decode( rawurldecode( wp_unslash( $_COOKIE[ FH_CART_COOKIE ] ) ), true ), true ); // phpcs:ignore
+    if ( ! is_array( $snap ) ) {
+        return;
+    }
+    $busy = true;
+    foreach ( array_slice( $snap, 0, 40 ) as $item ) {
+        $pid = (int) ( $item['p'] ?? 0 );
+        $vid = (int) ( $item['v'] ?? 0 );
+        $qty = max( 1, min( 99, (int) ( $item['q'] ?? 1 ) ) );
+        $att = is_array( $item['a'] ?? null ) ? array_map( 'sanitize_text_field', $item['a'] ) : array();
+        if ( $pid > 0 && 'product' === get_post_type( $pid ) && 'publish' === get_post_status( $pid ) ) {
+            WC()->cart->add_to_cart( $pid, $qty, $vid, $att );
+        }
+    }
+    $busy = false;
+    if ( WC()->session ) {
+        WC()->session->set_customer_session_cookie( true );
+    }
+}, 20 );
+
 /* -------------------------------------------------------- misc front-end */
 
 add_filter( 'excerpt_length', static fn() => 24, 999 );

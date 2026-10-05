@@ -29,12 +29,19 @@ FALLBACK_EXPLOITS = ["CVE-2024-27956", "CVE-2022-0739", "CVE-2024-2879", "CVE-20
                      "GENERIC-WP-001"]
 MAX_ATTEMPTS = 3
 
+# What each window puts in its cart before anything is attacked: (product slug,
+# quantity). Simple products only, so a plain ?add-to-cart= request is enough.
+CART_PLAN = [[("ceramic-pour-over-dripper", 1), ("paper-filters-size-02", 2)],
+             [("hand-burr-coffee-grinder", 1), ("stainless-milk-pitcher", 1)],
+             [("enamel-camp-mug", 2), ("fernhill-canvas-tote", 1)]]
+
 EXCLUSIVE = "exclusive"
 SHARED_EXPECTED = "shared_expected"
 SHARED_UNEXPECTED = "shared_unexpected"
 MERGED = "merged"
 INCOMPLETE = "incomplete"
 UNSTABLE = "unstable"
+CART_LOST = "cart_lost"
 
 
 @dataclass
@@ -93,6 +100,57 @@ def parse_decision(session_id: str, session_json: str, pool_text: str) -> Decisi
 
 
 @dataclass
+class CartState:
+    """A window's cart as the shop reports it (WooCommerce Store API)."""
+    items: list[tuple[str, int]] = field(default_factory=list)   # (product name, quantity)
+    total: str = ""
+
+    def signature(self) -> tuple:
+        return tuple(sorted(self.items))
+
+    def text(self) -> str:
+        if not self.items:
+            return "Cart empty"
+        n = sum(q for _n, q in self.items)
+        return f"Cart: {n} item{'s' if n != 1 else ''}" + (f" \u2022 {self.total}" if self.total else "")
+
+
+def parse_cart(store_api_json: str) -> CartState | None:
+    """CartState from a /wp-json/wc/store/v1/cart response; None if unreadable."""
+    try:
+        d = json.loads(store_api_json)
+        minor = int(d["totals"].get("currency_minor_unit", 2))
+        cents = int(d["totals"]["total_price"])
+        sym = d["totals"].get("currency_prefix", "$")
+        return CartState([(i["name"], int(i["quantity"])) for i in d["items"]],
+                         f"{sym}{cents / 10 ** minor:,.{minor}f}")
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def cart_violations(steps: list["StepResult"]) -> list[str]:
+    """Carts must stay exactly as filled, however the session is routed. The
+    baseline is each window's cart in the first step that has one."""
+    out = []
+    base: dict[int, tuple[CartState, str]] = {}
+    for step in steps:
+        for i, c in enumerate(step.carts):
+            if c is None:
+                if i in base:
+                    out.append(f"Window {i + 1}: cart could not be read in '{step.title}'.")
+                continue
+            if i not in base:
+                if c.items:
+                    base[i] = (c, step.title)
+                continue
+            if c.signature() != base[i][0].signature():
+                now = c.text() if c.items else "empty"
+                out.append(f"Window {i + 1}: cart changed in '{step.title}' ({now}) "
+                           f"from what it held in '{base[i][1]}' ({base[i][0].text()}).")
+    return out
+
+
+@dataclass
 class StepResult:
     """One scripted step: what each window did, and each session's decision after."""
     title: str
@@ -100,6 +158,7 @@ class StepResult:
     actions: list[str]            # per frame: what that window did this step
     decisions: list[Decision]     # per frame, read after the step settled
     shots: list[Any] = field(default_factory=list)   # per frame QImage
+    carts: list[CartState | None] = field(default_factory=list)   # per frame, read after the step
 
 
 def sticky_violations(steps: list[StepResult]) -> list[str]:
@@ -203,7 +262,12 @@ def analyze(frames: list[FrameResult], state: dict, steps: list[StepResult] | No
         moved.append("Some windows were already diverted before attacking (step 1): the host "
                      "IP carries bad reputation from earlier tests. Use 'Unpoison host IP' on "
                      "the Exploits page and run the report again.")
+    cart_issues = cart_violations(steps or [])
     shared = {n: labels for n, labels in by_pool.items() if len(labels) > 1}
+    if not shared and cart_issues:
+        pools = ", ".join(f"{f.label} \u2192 pool {f.pool}" for f in frames)
+        return Verdict(CART_LOST, "A cart changed when its session was routed to a honeypot",
+                       [pools + "."] + cart_issues + moved, by_pool)
     if not shared:
         pools = ", ".join(f"{f.label} → pool {f.pool}" for f in frames)
         if unstable:
@@ -218,11 +282,11 @@ def analyze(frames: list[FrameResult], state: dict, steps: list[StepResult] | No
                   else "no free pool was left, so new attackers were assigned to the "
                        "ready pools round-robin")
         return Verdict(SHARED_EXPECTED, "Pools are shared, as expected under resource pressure",
-                       findings + [f"This is the designed fallback: {reason}."] + moved, by_pool)
+                       findings + [f"This is the designed fallback: {reason}."] + moved + cart_issues, by_pool)
     free = state.get("free", []) if state else []
     findings.append(
         "Sharing is only the designed fallback when no pool is free or growth is capped, "
         + (f"but spare pool(s) {', '.join(map(str, free))} were free and growth is not capped."
            if free else "but the registry shows no reason for it (state unavailable or pools missing)."))
     return Verdict(SHARED_UNEXPECTED, "Pools are shared although free pools exist",
-                   findings + moved, by_pool)
+                   findings + moved + cart_issues, by_pool)

@@ -106,3 +106,39 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(pe.db_delta({"Questions": 1}, {"Questions": 4})["Questions"], 3)
         self.assertIsNone(pe.db_delta(None, {"Questions": 4}))
         self.assertEqual(pe.filter_files(["/var/www/html/x.php", "/tmp/a", "/run/b"]), ["/var/www/html/x.php"])
+
+
+class CartTests(unittest.TestCase):
+    def _step(self, title, *carts):
+        from core.pool_test_report import StepResult
+        return StepResult(title, "", [], [], carts=list(carts))
+
+    def test_parse_cart(self):
+        from core.pool_test_report import parse_cart
+        c = parse_cart('{"items":[{"name":"Mug","quantity":2}],"totals":{"total_price":"4400","currency_minor_unit":2,"currency_prefix":"$"}}')
+        self.assertEqual(c.items, [("Mug", 2)])
+        self.assertEqual(c.total, "$44.00")
+        self.assertIn("2 items", c.text())
+        self.assertIsNone(parse_cart("not json"))
+
+    def test_cart_must_survive_routing(self):
+        from core.pool_test_report import CART_LOST, CartState, cart_violations
+        full, empty = CartState([("Mug", 2)], "$44"), CartState([], "$0")
+        ok = [self._step("open", empty), self._step("fill", full), self._step("attack", full)]
+        self.assertEqual(cart_violations(ok), [])
+        bad = ok + [self._step("again", empty)]
+        self.assertEqual(len(cart_violations(bad)), 1)
+        v = analyze(frames(1, 2, 3), state(free=[4]), [self._step("fill", full, full, full), self._step("attack", full, empty, full)])
+        self.assertEqual(v.status, CART_LOST)
+        self.assertIn("Window 2", " ".join(v.findings))
+
+    def test_plan_products_exist_and_are_simple(self):
+        from core.pool_test_report import CART_PLAN
+        import json, os
+        cat = json.load(open(os.path.join(os.path.dirname(__file__), "..", "..", "ids", "eshop_seed", "catalog.json")))
+        by = {p["slug"]: p for p in cat["products"]}
+        for window in CART_PLAN:
+            for slug, qty in window:
+                self.assertEqual(by[slug]["type"], "simple", slug)
+                self.assertGreater(qty, 0)
+        self.assertEqual(len({s for w in CART_PLAN for s, _ in w}), sum(len(w) for w in CART_PLAN))

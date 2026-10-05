@@ -15,10 +15,11 @@ from core import diagrams, pool_evidence, vector_figures
 from core.diagrams import _arrow, _box, _new
 from core.exploit_report_pdf import (_FONT_CSS_STACK, _GREEN, _GREY, _ORANGE, _RED, _badge, _esc,
                                      _pool_state_html, _report_font_family)
-from core.pool_test_report import (EXCLUSIVE, INCOMPLETE, MERGED, SHARED_EXPECTED, PoolTestData,
-                                   Verdict, analyze)
+from core.pool_test_report import (CART_LOST, EXCLUSIVE, INCOMPLETE, MERGED, SHARED_EXPECTED,
+                                   UNSTABLE, PoolTestData, Verdict, analyze, cart_violations)
 
-_STATUS_COLOR = {EXCLUSIVE: _GREEN, SHARED_EXPECTED: _ORANGE, INCOMPLETE: _GREY, MERGED: _RED}
+_STATUS_COLOR = {EXCLUSIVE: _GREEN, SHARED_EXPECTED: _ORANGE, INCOMPLETE: _GREY, MERGED: _RED,
+                 CART_LOST: _RED, UNSTABLE: _ORANGE}
 
 
 def _short(session_id: str) -> str:
@@ -93,6 +94,55 @@ def _decision_cell(d) -> str:
             f'{_esc(" \u2022 score " + str(d.score)) if d.score is not None else ""}</span>')
 
 
+def _cart_cell(c) -> str:
+    if c is None:
+        return '<span style="color:#c62828;">cart unreadable</span>'
+    if not c.items:
+        return '<span style="color:#777;">cart empty</span>'
+    lines = "<br/>".join(f"{_esc(n)} &times; {q}" for n, q in c.items)
+    return f"<b>{_esc(c.total)}</b><br/>{lines}"
+
+
+def _cart_section_html(data: PoolTestData) -> str:
+    """Each window's cart across the run: filled on production, then it must be
+    identical wherever the session is routed."""
+    if not data.steps or not any(st.carts for st in data.steps):
+        return ""
+    base: dict[int, object] = {}
+    rows = []
+    for step in data.steps:
+        cells = []
+        for i, c in enumerate(step.carts):
+            if c is not None and c.items and i not in base:
+                base[i] = c
+            ref = base.get(i)
+            d = step.decisions[i] if i < len(step.decisions) else None
+            where = (f"pool {d.pool}" if d is not None and d.pool is not None else "production")
+            if c is None:
+                mark = _badge("unreadable", _GREY)
+            elif ref is None:
+                mark = _badge("no cart yet", _GREY)
+            elif c.signature() == ref.signature():
+                mark = _badge("same cart", _GREEN)
+            else:
+                mark = _badge("CART CHANGED", _RED)
+            cells.append(f'<td>{mark}<br/><span style="font-size:8pt;color:#555;">on {_esc(where)}</span></td>')
+        rows.append(f'<tr><td>{_esc(step.title)}</td>{"".join(cells)}</tr>')
+    head = "".join(f"<th>{_esc(f.label)}</th>" for f in data.frames)
+    issues = cart_violations(data.steps)
+    verdict = ('<p style="color:#2e7d32;"><b>Every cart stayed exactly as filled, on production and in '
+               'every honeypot pool.</b></p>' if not issues else
+               '<ul style="color:#c62828;">' + "".join(f"<li>{_esc(x)}</li>" for x in issues) + "</ul>")
+    return ('<h2 style="color:#222;">Cart persistence</h2>'
+            '<p style="color:#555;">A visitor diverted to a honeypot is served by a different database, so '
+            'WooCommerce\'s own cart session does not exist there. The storefront therefore carries the '
+            'cart in a cookie and rebuilds it on whichever instance serves the next request. Each window '
+            'filled its cart on production; the cart was then read back after every step, through the same '
+            'cookies and routing as the window\'s own traffic.</p>'
+            '<table width="100%" cellspacing="0" cellpadding="4" border="1" style="border-collapse:collapse;">'
+            f'<tr><th>Step</th>{head}</tr>' + "".join(rows) + '</table>' + verdict)
+
+
 def _steps_html(data: PoolTestData, doc: QTextDocument) -> str:
     """Per step: what each window did, the router's decision for its session
     afterwards, and a screenshot of each window at that moment."""
@@ -106,6 +156,7 @@ def _steps_html(data: PoolTestData, doc: QTextDocument) -> str:
         head = "".join(f'<th>{_esc(f.label)}</th>' for f in data.frames)
         acts = "".join(f'<td style="font-size:8pt; color:#555;">{_esc(a)}</td>' for a in step.actions)
         decs = "".join(f'<td>{_decision_cell(d)}</td>' for d in step.decisions)
+        carts = "".join(f'<td style="font-size:8pt;">{_cart_cell(c)}</td>' for c in step.carts) if step.carts else ""
         imgs = ""
         for i, shot in enumerate(step.shots):
             if shot is None or shot.isNull():
@@ -119,7 +170,7 @@ def _steps_html(data: PoolTestData, doc: QTextDocument) -> str:
             f'<p style="color:#555;">{_esc(step.detail)}</p>'
             '<table width="100%" cellspacing="0" cellpadding="4" border="1" '
             'style="border-collapse:collapse;">'
-            f'<tr>{head}</tr><tr>{acts}</tr><tr>{decs}</tr><tr>{imgs}</tr></table>')
+            f'<tr>{head}</tr><tr>{acts}</tr><tr>{decs}</tr>' + (f'<tr>{carts}</tr>' if carts else '') + f'<tr>{imgs}</tr></table>')
     return "".join(out)
 
 
@@ -221,6 +272,7 @@ def render_pdf(data: PoolTestData, out_path: str) -> Verdict:
         width=640))
     parts.append('<h2 style="color:#222;">Windows</h2>')
     parts.append(_frames_table(data))
+    parts.append(_cart_section_html(data))
     parts.append(_runs_html(data))
     parts.append(_steps_html(data, doc))
     parts.append(_evidence_html(data))

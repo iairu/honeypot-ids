@@ -30,9 +30,9 @@ from core import redis_inspect
 from core.docker_ctl import target_for
 from core.exploits import EXPLOIT_PRESETS
 from core import pool_evidence
-from core.pool_test_report import (EXPLOIT_PLAN, FALLBACK_EXPLOITS, MAX_ATTEMPTS, Decision,
-                                    ExploitRun, FrameResult, PoolTestData, StepResult,
-                                    parse_decision)
+from core.pool_test_report import (CART_PLAN, EXPLOIT_PLAN, FALLBACK_EXPLOITS, MAX_ATTEMPTS,
+                                    CartState, Decision, ExploitRun, FrameResult, PoolTestData,
+                                    StepResult, parse_cart, parse_decision)
 from core.state import AppState
 from ui.browser_widget import BrowserWidget
 
@@ -45,6 +45,29 @@ FRAMES = [
     ("Attacker B", "de-DE,de;q=0.9"),
     ("Attacker C", "fr-FR,fr;q=0.9"),
 ]
+
+
+# Reads the shop's own cart (WooCommerce Store API) from inside a window, so the
+# request carries that window's cookies and is routed exactly like its own traffic.
+_CART_JS = ("(function(){try{var x=new XMLHttpRequest();x.open('GET','/wp-json/wc/store/v1/cart',false);"
+            "x.send();return x.responseText;}catch(e){return '';}})()")
+
+
+def product_ids(base_url: str, slugs: list[str]) -> dict[str, int]:
+    """Product IDs by slug, read from each product page's body class (postid-N)."""
+    import re
+    import ssl
+    import urllib.request
+    ctx = ssl.create_default_context()
+    ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE   # the shop's cert is self-signed
+    out = {}
+    for slug in slugs:
+        html = urllib.request.urlopen(f"{base_url}/product/{slug}/", context=ctx, timeout=20).read().decode("utf-8", "replace")
+        m = re.search(r"postid-(\d+)", html)
+        if not m:
+            raise RuntimeError(f"Could not find product '{slug}' on the shop.")
+        out[slug] = int(m.group(1))
+    return out
 
 
 class _Cancelled(Exception):
@@ -157,6 +180,7 @@ class PoolTestPage(QWidget):
         # ("<id>.<mac>"), kept up to date from the profile's cookie store.
         self._session_ids = [""] * len(FRAMES)
         self.decision_labels: list[QLabel] = []
+        self.cart_labels: list[QLabel] = []
         for i, (label, _lang) in enumerate(FRAMES):
             browser = BrowserWidget()
             ua, lang = frame_identity(browser.profile.httpUserAgent(), i)
@@ -181,6 +205,11 @@ class PoolTestPage(QWidget):
             box_layout.addWidget(decision)
             self.decision_labels.append(decision)
             self._style_decision(i, Decision())
+            cart = QLabel("Cart: —")
+            cart.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cart.setStyleSheet("QLabel { color: #cfcfcf; padding: 2px 8px; border: 1px solid #555; border-radius: 4px; }")
+            box_layout.addWidget(cart)
+            self.cart_labels.append(cart)
             splitter.addWidget(box)
         layout.addWidget(splitter, stretch=1)
 
@@ -228,6 +257,49 @@ class PoolTestPage(QWidget):
             f"QLabel {{ background-color: {color}; color: #1e1e1e; padding: 4px 10px; "
             "border-radius: 4px; font-weight: bold; }")
 
+    def _style_cart(self, index: int, cart: CartState | None) -> None:
+        label = self.cart_labels[index]
+        if cart is None:
+            label.setText("Cart: —")
+            label.setStyleSheet("QLabel { color: #cfcfcf; padding: 2px 8px; border: 1px solid #555; border-radius: 4px; }")
+            return
+        label.setText(cart.text())
+        color = "#5cb85c" if cart.items else "#cfcfcf"
+        label.setStyleSheet(f"QLabel {{ color: {color}; padding: 2px 8px; border: 1px solid {color}; border-radius: 4px; }}")
+
+    def _read_cart(self, index: int) -> CartState | None:
+        """The window's cart as the shop (production or its honeypot pool) reports it."""
+        browser = self.browsers[index]
+        if not browser.view.url().toString().startswith("http"):
+            return None
+        loop = QEventLoop()
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(loop.quit)
+        got: list = [None]
+
+        def done(result) -> None:
+            got[0] = result
+            loop.quit()
+        browser.page.runJavaScript(_CART_JS, done)
+        timer.start(6000)
+        loop.exec()
+        timer.stop()
+        return parse_cart(got[0] or "")
+
+    def _read_carts(self) -> list[CartState | None]:
+        carts = [self._read_cart(i) for i in range(len(self.browsers))]
+        for i, c in enumerate(carts):
+            self._style_cart(i, c)
+        return carts
+
+    def _refresh_cart_labels(self) -> None:
+        """Non-blocking cart refresh for the live labels."""
+        for i, browser in enumerate(self.browsers):
+            if browser.view.url().toString().startswith("http"):
+                browser.page.runJavaScript(
+                    _CART_JS, lambda r, n=i: self._style_cart(n, parse_cart(r or "")))
+
     def _remote(self):
         return target_for("edge", self.state).remote
 
@@ -258,6 +330,7 @@ class PoolTestPage(QWidget):
             if job.error is None and not self._exporting:
                 for i, d in enumerate(job.result or []):
                     self._style_decision(i, d)
+                self._refresh_cart_labels()
             job.deleteLater()
         job.finished.connect(done)
         job.start()
@@ -314,8 +387,12 @@ class PoolTestPage(QWidget):
                     loop.quit()
             conns.append((browser, browser.view.loadFinished.connect(finished)))
             browser.navigate(url)
-        QTimer.singleShot(9000, loop.quit)
+        timer = QTimer(self)   # stoppable: a stale single-shot would cut a later wait short
+        timer.setSingleShot(True)
+        timer.timeout.connect(loop.quit)
+        timer.start(9000)
         loop.exec()
+        timer.stop()
         for browser, conn in conns:
             try:
                 browser.view.loadFinished.disconnect(conn)
@@ -479,11 +556,11 @@ class PoolTestPage(QWidget):
         return StepResult(f"{label} attacks with {preset.cve}",
                           f"{preset.name}. The session must be bound to a pool no other "
                           "window has, and the others must stay on production.",
-                          actions, decisions, [self._grab(b) for b in self.browsers])
+                          actions, decisions, [self._grab(b) for b in self.browsers], self._read_carts())
 
     def _run_scenario(self, total_unused, _total, preset) -> PoolTestData | None:
         remote, target = self._remote(), target_for("edge", self.state)
-        total_steps = 6
+        total_steps = 7
         total = total_steps + 3
         self._progress("Resetting test sessions...", 0, total)
         self._blocking(self._reset_threat_state)
@@ -514,15 +591,34 @@ class PoolTestPage(QWidget):
             results.append(StepResult(
                 "All windows open the shop", "Three new sessions, all routed to production.",
                 ["Browses the shop"] * len(self.browsers), decisions,
-                [self._grab(b) for b in self.browsers]))
+                [self._grab(b) for b in self.browsers], self._read_carts()))
+
+            # Step 2: every window fills its own cart, while still on production.
+            self._progress(f"Step 2/{total_steps}: every window fills its cart", 2, total)
+            slugs = sorted({slug for plan in CART_PLAN for slug, _q in plan})
+            ids = self._blocking(lambda: product_ids(self._base_url(), slugs))
+            for k in range(max(len(plan) for plan in CART_PLAN)):
+                urls = [f"{self._base_url()}/?add-to-cart={ids[plan[k][0]]}&quantity={plan[k][1]}"
+                        if k < len(plan) else shop for plan in CART_PLAN]
+                self._load_all(urls)
+                self._spin(500)
+            decisions = self._settled_decisions(need_sessions=True)
+            for i, d in enumerate(decisions):
+                self._style_decision(i, d)
+            results.append(StepResult(
+                "Every window fills its cart",
+                "Each window adds its own products. These carts are the baseline: they must "
+                "look exactly the same after the session is routed to a honeypot pool.",
+                ["Adds " + ", ".join(f"{slug} \u00d7 {q}" for slug, q in plan) for plan in CART_PLAN],
+                decisions, [self._grab(b) for b in self.browsers], self._read_carts()))
 
             queues = [self._exploit_queue(i) for i in range(len(self.browsers))]
             for w in range(len(self.browsers)):
-                results.append(self._attack_step(w + 2, total_steps, w, queues[w], used, runs))
+                results.append(self._attack_step(w + 3, total_steps, w, queues[w], used, runs))
 
             # Final step: every window runs a SECOND, different exploit at once.
-            self._progress(f"Step {total_steps}/{total_steps}: all windows run a second exploit",
-                           total_steps, total)
+            self._progress(f"Step {total_steps - 1}/{total_steps}: all windows run a second exploit",
+                           total_steps - 1, total)
             by_cve = {p.cve: p for p in EXPLOIT_PRESETS}
             second = []
             for w in range(len(self.browsers)):
@@ -544,7 +640,22 @@ class PoolTestPage(QWidget):
                 "Sticky binding: each second exploit must land in the pool the window already "
                 "owns, nobody changes pool, nobody is merged.",
                 [f"Opens {p.cve}" if p else "Browses the shop" for p in second], decisions,
-                [self._grab(b) for b in self.browsers]))
+                [self._grab(b) for b in self.browsers], self._read_carts()))
+
+            # Last step: open the cart page in every window -- what a shopper would see.
+            self._progress(f"Step {total_steps}/{total_steps}: every window opens its cart",
+                           total_steps, total)
+            self._load_all([self._base_url() + "/cart/"] * len(self.browsers))
+            self._spin(2500)   # the block cart renders from the Store API after load
+            decisions = self._settled_decisions(need_sessions=True)
+            for i, d in enumerate(decisions):
+                self._style_decision(i, d)
+            results.append(StepResult(
+                "Every window opens its cart",
+                "The cart page, served by each window's honeypot pool, must show the same "
+                "products and quantities that were added on production.",
+                ["Opens the cart page"] * len(self.browsers), decisions,
+                [self._grab(b) for b in self.browsers], self._read_carts()))
         except _Cancelled:
             return None
 
