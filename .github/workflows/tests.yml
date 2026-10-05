@@ -43,6 +43,7 @@ jobs:
             ids/reverse_proxy_enhanced/lua/health_check.lua
             ids/reverse_proxy_enhanced/lua/init_worker.lua
             ids/scripts/replicate_content_to_honeypot.sh
+            ids/eshop_seed/catalog.json
             ids/honeypot_database_migrations/01_clean-honeypot-data.sql
             ids/production_eshop_files/wp-content/db.php
             ids/production_eshop_files/wp-content/mu-plugins/honeypot-db-backend-header.php

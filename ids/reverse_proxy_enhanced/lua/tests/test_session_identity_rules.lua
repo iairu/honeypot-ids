@@ -167,8 +167,19 @@ for _, dir in ipairs({ "../..", "../../../db_proxy/reverse_proxy_enhanced" }) do
         check(dir .. ": PHPSESSID is never a session id",
               code:find("cookie_PHPSESSID", 1, true) == nil)
         local _, signed = code:gsub('require%("session_handler"%)%.cookie_value%(ngx%.var%.new_session_id%)', "")
-        local _, sets = code:gsub('%["Set%-Cookie"%]', "")
-        check(dir .. ": every Set-Cookie is signed", signed >= 2 and signed == sets)
+        -- Every session cookie the proxy builds embeds a signed value, and the only
+        -- things ever written to the Set-Cookie header are that cookie or the
+        -- upstream's own cookies passed through (the header is appended to, never
+        -- overwritten, so WooCommerce's cart session survives).
+        local _, builds = code:gsub('cookie_name%s*%.%.%s*"="', "")
+        local assignments_ok = true
+        for rhs in code:gmatch('%["Set%-Cookie"%]%s*=%s*([^\n]+)') do
+            if not (rhs:find("sid_cookie", 1, true) or rhs:find("upstream_cookies", 1, true)) then
+                assignments_ok = false
+            end
+        end
+        check(dir .. ": every Set-Cookie is signed",
+              signed >= 2 and signed == builds and assignments_ok)
         check(dir .. ": pools are assigned per session",
               code:find("get_or_assign_pool(ngx.var.remote_addr)", 1, true) == nil)
         check(dir .. ": signing key reaches Lua", conf:find("env SESSION_SIGNING_KEY;", 1, true) ~= nil)
