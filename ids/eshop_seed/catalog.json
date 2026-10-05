@@ -1,0 +1,1633 @@
+{
+ "brand": "Fernhill Coffee Roasters",
+ "tagline": "Small-batch coffee & brewing gear, roasted fresh in Portland, Oregon",
+ "categories": [
+  {
+   "slug": "coffee",
+   "name": "Coffee Beans",
+   "description": "Roasted in small batches every Monday and Thursday, shipped within 24 hours.",
+   "color": "#8a5a3c"
+  },
+  {
+   "slug": "brewing-gear",
+   "name": "Brewing Gear",
+   "description": "The tools we use in our own cafe, tested daily and built to last.",
+   "color": "#2f5d3a"
+  },
+  {
+   "slug": "drinkware",
+   "name": "Drinkware",
+   "description": "Mugs, cups and tumblers that make the first sip of the day better.",
+   "color": "#b4532a"
+  },
+  {
+   "slug": "apparel-merch",
+   "name": "Apparel & Merch",
+   "description": "Wear it, carry it, tie it on. Made with people who make coffee.",
+   "color": "#3d4f6b"
+  },
+  {
+   "slug": "gifts-subscriptions",
+   "name": "Gifts & Subscriptions",
+   "description": "Curated sets and the monthly Coffee Club for anyone who loves a good cup.",
+   "color": "#7a3b4a"
+  }
+ ],
+ "grinds": [
+  "Whole bean",
+  "Drip / auto",
+  "Pour-over",
+  "French press",
+  "Espresso",
+  "Moka pot"
+ ],
+ "products": [
+  {
+   "slug": "ethiopia-guji-natural",
+   "name": "Ethiopia Guji Natural",
+   "category": "coffee",
+   "type": "variable",
+   "sku": "FH-ETH-100",
+   "price": 19.0,
+   "bag_prices": {
+    "12 oz": 19.0,
+    "2 lb": 62.0
+   },
+   "grinds": [
+    "Whole bean",
+    "Drip / auto",
+    "Pour-over",
+    "French press",
+    "Espresso",
+    "Moka pot"
+   ],
+   "short": "<p><strong>Blueberry, Jasmine, Wild honey.</strong> Light roast from Ethiopia \u00b7 Guji. Roasted to order and shipped within 24 hours.</p>",
+   "long": "<p>Ethiopia Guji Natural comes from Guji Zone, Oromia, grown by Shakiso smallholders at 2,100 m. The cherries are natural, dried on raised beds, which is where the blueberry and jasmine in the cup come from.</p><p>We roast it to a <strong>light</strong> profile in 12 kg batches on our Probat drum roaster, cupping every batch before it ships. Expect blueberry, jasmine and a finish of wild honey.</p><p>Each bag is packed in a recyclable, one-way-valve pouch the day it is roasted. For the best cup, brew within four weeks of the roast date printed on the label.</p>",
+   "obj": "bag",
+   "bg": "#efe6d6",
+   "col": "#4b3a7a",
+   "accent": "#2f5d3a",
+   "label": "Ethiopia Guji Natural",
+   "sub": "ETHIOPIA",
+   "attrs": {
+    "Origin": "Ethiopia \u00b7 Guji",
+    "Roast": "Light",
+    "Process": "Natural, dried on raised beds",
+    "Altitude": "2,100 m",
+    "Tasting notes": "Blueberry, Jasmine, Wild honey"
+   },
+   "weight": 0.34,
+   "dims": [
+    9,
+    5,
+    3
+   ],
+   "stock": 40,
+   "tags": [
+    "coffee",
+    "light"
+   ],
+   "featured": true,
+   "badge": "new",
+   "brew": "pour-over: 18 g coffee, 300 g water at 94 \u00b0C, 2:45 total. Espresso: 18 g in, 38 g out, 28 s. French press: 1:15 ratio, 4 minute steep, press slowly.",
+   "reviews": [
+    {
+     "author": "Marcus L.",
+     "city": "Atlanta, GA",
+     "rating": 5,
+     "text": "Fresh roast date was only three days before it landed on my doorstep. Blooms beautifully.",
+     "date": "2026-02-13"
+    },
+    {
+     "author": "Elena V.",
+     "city": "Brooklyn, NY",
+     "rating": 5,
+     "text": "Subscribed after the first bag. The whole house drinks this now.",
+     "date": "2026-04-20"
+    },
+    {
+     "author": "Ben A.",
+     "city": "Portland, OR",
+     "rating": 5,
+     "text": "Fresh roast date was only three days before it landed on my doorstep. Blooms beautifully.",
+     "date": "2026-06-27"
+    }
+   ],
+   "sold": 300,
+   "rating": 5.0
+  },
+  {
+   "slug": "colombia-huila-washed",
+   "name": "Colombia Huila",
+   "category": "coffee",
+   "type": "variable",
+   "sku": "FH-COL-101",
+   "price": 17.5,
+   "bag_prices": {
+    "12 oz": 17.5,
+    "2 lb": 57.0
+   },
+   "grinds": [
+    "Whole bean",
+    "Drip / auto",
+    "Pour-over",
+    "French press",
+    "Espresso",
+    "Moka pot"
+   ],
+   "short": "<p><strong>Caramel, Red apple, Cacao nib.</strong> Medium roast from Colombia \u00b7 Huila. Roasted to order and shipped within 24 hours.</p>",
+   "long": "<p>Colombia Huila comes from Pitalito, Huila, grown by Asociaci\u00f3n Los Pinos at 1,750 m. The cherries are washed, patio dried, which is where the caramel and red apple in the cup come from.</p><p>We roast it to a <strong>medium</strong> profile in 12 kg batches on our Probat drum roaster, cupping every batch before it ships. Expect caramel, red apple and a finish of cacao nib.</p><p>Each bag is packed in a recyclable, one-way-valve pouch the day it is roasted. For the best cup, brew within four weeks of the roast date printed on the label.</p>",
+   "obj": "bag",
+   "bg": "#e8e0d2",
+   "col": "#a5532b",
+   "accent": "#6b3f1d",
+   "label": "Colombia Huila",
+   "sub": "COLOMBIA",
+   "attrs": {
+    "Origin": "Colombia \u00b7 Huila",
+    "Roast": "Medium",
+    "Process": "Washed, patio dried",
+    "Altitude": "1,750 m",
+    "Tasting notes": "Caramel, Red apple, Cacao nib"
+   },
+   "weight": 0.34,
+   "dims": [
+    9,
+    5,
+    3
+   ],
+   "stock": 47,
+   "tags": [
+    "coffee",
+    "medium"
+   ],
+   "featured": true,
+   "badge": "",
+   "brew": "pour-over: 18 g coffee, 300 g water at 94 \u00b0C, 2:45 total. Espresso: 18 g in, 38 g out, 28 s. French press: 1:15 ratio, 4 minute steep, press slowly.",
+   "reviews": [
+    {
+     "author": "Aisha T.",
+     "city": "Philadelphia, PA",
+     "rating": 5,
+     "text": "Better than the local cafe. I'm slightly annoyed at how good it is.",
+     "date": "2026-03-16"
+    },
+    {
+     "author": "Priya S.",
+     "city": "Chicago, IL",
+     "rating": 5,
+     "text": "My go-to for the morning pour-over. Sweet, clean finish, no bitterness.",
+     "date": "2026-05-23"
+    },
+    {
+     "author": "Noah F.",
+     "city": "Salt Lake City, UT",
+     "rating": 4,
+     "text": "Great flavour, packaging is solid and the one-way valve actually works.",
+     "date": "2026-07-12"
+    },
+    {
+     "author": "Ben A.",
+     "city": "Portland, OR",
+     "rating": 5,
+     "text": "Fresh roast date was only three days before it landed on my doorstep. Blooms beautifully.",
+     "date": "2026-09-19"
+    }
+   ],
+   "sold": 278,
+   "rating": 4.75
+  },
+  {
+   "slug": "guatemala-antigua",
+   "name": "Guatemala Antigua",
+   "category": "coffee",
+   "type": "variable",
+   "sku": "FH-GUA-102",
+   "price": 17.0,
+   "bag_prices": {
+    "12 oz": 17.0,
+    "2 lb": 55.0
+   },
+   "grinds": [
+    "Whole bean",
+    "Drip / auto",
+    "Pour-over",
+    "French press",
+    "Espresso",
+    "Moka pot"
+   ],
+   "short": "<p><strong>Dark chocolate, Orange zest, Toasted almond.</strong> Medium-dark roast from Guatemala \u00b7 Antigua. Roasted to order and shipped within 24 hours.</p>",
+   "long": "<p>Guatemala Antigua comes from Antigua Valley, grown by Finca El Injerto cooperative at 1,600 m. The cherries are washed, sun dried, which is where the dark chocolate and orange zest in the cup come from.</p><p>We roast it to a <strong>medium-dark</strong> profile in 12 kg batches on our Probat drum roaster, cupping every batch before it ships. Expect dark chocolate, orange zest and a finish of toasted almond.</p><p>Each bag is packed in a recyclable, one-way-valve pouch the day it is roasted. For the best cup, brew within four weeks of the roast date printed on the label.</p>",
+   "obj": "bag",
+   "bg": "#ece3d3",
+   "col": "#7a3b3b",
+   "accent": "#2f5d3a",
+   "label": "Guatemala Antigua",
+   "sub": "GUATEMALA",
+   "attrs": {
+    "Origin": "Guatemala \u00b7 Antigua",
+    "Roast": "Medium-dark",
+    "Process": "Washed, sun dried",
+    "Altitude": "1,600 m",
+    "Tasting notes": "Dark chocolate, Orange zest, Toasted almond"
+   },
+   "weight": 0.34,
+   "dims": [
+    9,
+    5,
+    3
+   ],
+   "stock": 54,
+   "tags": [
+    "coffee",
+    "medium dark"
+   ],
+   "featured": false,
+   "badge": "",
+   "brew": "pour-over: 18 g coffee, 300 g water at 94 \u00b0C, 2:45 total. Espresso: 18 g in, 38 g out, 28 s. French press: 1:15 ratio, 4 minute steep, press slowly.",
+   "reviews": [
+    {
+     "author": "Daniel K.",
+     "city": "Austin, TX",
+     "rating": 5,
+     "text": "Fresh roast date was only three days before it landed on my doorstep. Blooms beautifully.",
+     "date": "2026-04-19"
+    },
+    {
+     "author": "Tom H.",
+     "city": "Denver, CO",
+     "rating": 5,
+     "text": "Lovely aroma the second I cut the bag open. Easy to brew, forgiving.",
+     "date": "2026-06-26"
+    },
+    {
+     "author": "Priya S.",
+     "city": "Chicago, IL",
+     "rating": 5,
+     "text": "Lovely aroma the second I cut the bag open. Easy to brew, forgiving.",
+     "date": "2026-08-15"
+    }
+   ],
+   "sold": 256,
+   "rating": 5.0
+  },
+  {
+   "slug": "kenya-nyeri-aa",
+   "name": "Kenya Nyeri AA",
+   "category": "coffee",
+   "type": "variable",
+   "sku": "FH-KEN-103",
+   "price": 21.0,
+   "bag_prices": {
+    "12 oz": 21.0,
+    "2 lb": 69.0
+   },
+   "grinds": [
+    "Whole bean",
+    "Drip / auto",
+    "Pour-over",
+    "French press",
+    "Espresso",
+    "Moka pot"
+   ],
+   "short": "<p><strong>Blackcurrant, Grapefruit, Brown sugar.</strong> Light roast from Kenya \u00b7 Nyeri. Roasted to order and shipped within 24 hours.</p>",
+   "long": "<p>Kenya Nyeri AA comes from Nyeri County, grown by Gaikundo factory at 1,850 m. The cherries are washed, double fermented, which is where the blackcurrant and grapefruit in the cup come from.</p><p>We roast it to a <strong>light</strong> profile in 12 kg batches on our Probat drum roaster, cupping every batch before it ships. Expect blackcurrant, grapefruit and a finish of brown sugar.</p><p>Each bag is packed in a recyclable, one-way-valve pouch the day it is roasted. For the best cup, brew within four weeks of the roast date printed on the label.</p>",
+   "obj": "bag",
+   "bg": "#efe6d6",
+   "col": "#b8423a",
+   "accent": "#6b3f1d",
+   "label": "Kenya Nyeri AA",
+   "sub": "KENYA",
+   "attrs": {
+    "Origin": "Kenya \u00b7 Nyeri",
+    "Roast": "Light",
+    "Process": "Washed, double fermented",
+    "Altitude": "1,850 m",
+    "Tasting notes": "Blackcurrant, Grapefruit, Brown sugar"
+   },
+   "weight": 0.34,
+   "dims": [
+    9,
+    5,
+    3
+   ],
+   "stock": 61,
+   "tags": [
+    "coffee",
+    "light"
+   ],
+   "featured": true,
+   "badge": "new",
+   "brew": "pour-over: 18 g coffee, 300 g water at 94 \u00b0C, 2:45 total. Espresso: 18 g in, 38 g out, 28 s. French press: 1:15 ratio, 4 minute steep, press slowly.",
+   "reviews": [
+    {
+     "author": "Noah F.",
+     "city": "Salt Lake City, UT",
+     "rating": 5,
+     "text": "Smooth and bright. Tastes just like the description, which almost never happens.",
+     "date": "2026-05-22"
+    },
+    {
+     "author": "Maya R.",
+     "city": "Seattle, WA",
+     "rating": 5,
+     "text": "My go-to for the morning pour-over. Sweet, clean finish, no bitterness.",
+     "date": "2026-07-11"
+    },
+    {
+     "author": "Noah F.",
+     "city": "Salt Lake City, UT",
+     "rating": 4,
+     "text": "Good coffee, a little more acidic than I normally like, but dialing the grind finer fixed it.",
+     "date": "2026-09-18"
+    },
+    {
+     "author": "Elena V.",
+     "city": "Brooklyn, NY",
+     "rating": 5,
+     "text": "Lovely aroma the second I cut the bag open. Easy to brew, forgiving.",
+     "date": "2026-02-25"
+    }
+   ],
+   "sold": 234,
+   "rating": 4.75
+  },
+  {
+   "slug": "sumatra-mandheling",
+   "name": "Sumatra Mandheling",
+   "category": "coffee",
+   "type": "variable",
+   "sku": "FH-SUM-104",
+   "price": 17.5,
+   "bag_prices": {
+    "12 oz": 17.5,
+    "2 lb": 57.0
+   },
+   "grinds": [
+    "Whole bean",
+    "Drip / auto",
+    "Pour-over",
+    "French press",
+    "Espresso",
+    "Moka pot"
+   ],
+   "short": "<p><strong>Cedar, Dark cocoa, Molasses.</strong> Dark roast from Sumatra \u00b7 Lintong. Roasted to order and shipped within 24 hours.</p>",
+   "long": "<p>Sumatra Mandheling comes from Lake Toba highlands, grown by Permata Gayo growers at 1,400 m. The cherries are wet-hulled, which is where the cedar and dark cocoa in the cup come from.</p><p>We roast it to a <strong>dark</strong> profile in 12 kg batches on our Probat drum roaster, cupping every batch before it ships. Expect cedar, dark cocoa and a finish of molasses.</p><p>Each bag is packed in a recyclable, one-way-valve pouch the day it is roasted. For the best cup, brew within four weeks of the roast date printed on the label.</p>",
+   "obj": "bag",
+   "bg": "#e8e0d2",
+   "col": "#2f3d2f",
+   "accent": "#2f5d3a",
+   "label": "Sumatra Mandheling",
+   "sub": "SUMATRA",
+   "attrs": {
+    "Origin": "Sumatra \u00b7 Lintong",
+    "Roast": "Dark",
+    "Process": "Wet-hulled",
+    "Altitude": "1,400 m",
+    "Tasting notes": "Cedar, Dark cocoa, Molasses"
+   },
+   "weight": 0.34,
+   "dims": [
+    9,
+    5,
+    3
+   ],
+   "stock": 68,
+   "tags": [
+    "coffee",
+    "dark"
+   ],
+   "featured": false,
+   "badge": "",
+   "brew": "pour-over: 18 g coffee, 300 g water at 94 \u00b0C, 2:45 total. Espresso: 18 g in, 38 g out, 28 s. French press: 1:15 ratio, 4 minute steep, press slowly.",
+   "reviews": [
+    {
+     "author": "Grace D.",
+     "city": "Madison, WI",
+     "rating": 4,
+     "text": "Great flavour, packaging is solid and the one-way valve actually works.",
+     "date": "2026-06-25"
+    },
+    {
+     "author": "Priya S.",
+     "city": "Chicago, IL",
+     "rating": 5,
+     "text": "Smooth and bright. Tastes just like the description, which almost never happens.",
+     "date": "2026-08-14"
+    },
+    {
+     "author": "Hannah B.",
+     "city": "Minneapolis, MN",
+     "rating": 5,
+     "text": "Subscribed after the first bag. The whole house drinks this now.",
+     "date": "2026-01-21"
+    }
+   ],
+   "sold": 212,
+   "rating": 4.67
+  },
+  {
+   "slug": "fernhill-house-blend",
+   "name": "Fernhill House Blend",
+   "category": "coffee",
+   "type": "variable",
+   "sku": "FH-FER-105",
+   "price": 15.5,
+   "bag_prices": {
+    "12 oz": 15.5,
+    "2 lb": 50.0
+   },
+   "grinds": [
+    "Whole bean",
+    "Drip / auto",
+    "Pour-over",
+    "French press",
+    "Espresso",
+    "Moka pot"
+   ],
+   "short": "<p><strong>Toffee, Hazelnut, Milk chocolate.</strong> Medium roast from Brazil \u00b7 Colombia \u00b7 Guatemala. Roasted to order and shipped within 24 hours.</p>",
+   "long": "<p>Fernhill House Blend comes from Three-origin blend, grown by Our own recipe since 2014 at 1,100\u20131,750 m. The cherries are washed and natural, which is where the toffee and hazelnut in the cup come from.</p><p>We roast it to a <strong>medium</strong> profile in 12 kg batches on our Probat drum roaster, cupping every batch before it ships. Expect toffee, hazelnut and a finish of milk chocolate.</p><p>Each bag is packed in a recyclable, one-way-valve pouch the day it is roasted. For the best cup, brew within four weeks of the roast date printed on the label.</p>",
+   "obj": "bag",
+   "bg": "#ece3d3",
+   "col": "#3d5a45",
+   "accent": "#6b3f1d",
+   "label": "House",
+   "sub": "BRAZIL",
+   "attrs": {
+    "Origin": "Brazil \u00b7 Colombia \u00b7 Guatemala",
+    "Roast": "Medium",
+    "Process": "Washed and natural",
+    "Altitude": "1,100\u20131,750 m",
+    "Tasting notes": "Toffee, Hazelnut, Milk chocolate"
+   },
+   "weight": 0.34,
+   "dims": [
+    9,
+    5,
+    3
+   ],
+   "stock": 75,
+   "tags": [
+    "coffee",
+    "medium"
+   ],
+   "featured": true,
+   "badge": "bestseller",
+   "brew": "pour-over: 18 g coffee, 300 g water at 94 \u00b0C, 2:45 total. Espresso: 18 g in, 38 g out, 28 s. French press: 1:15 ratio, 4 minute steep, press slowly.",
+   "reviews": [
+    {
+     "author": "Liam O.",
+     "city": "Nashville, TN",
+     "rating": 5,
+     "text": "Fresh roast date was only three days before it landed on my doorstep. Blooms beautifully.",
+     "date": "2026-07-10"
+    },
+    {
+     "author": "Hannah B.",
+     "city": "Minneapolis, MN",
+     "rating": 5,
+     "text": "Smooth and bright. Tastes just like the description, which almost never happens.",
+     "date": "2026-09-17"
+    },
+    {
+     "author": "Grace D.",
+     "city": "Madison, WI",
+     "rating": 5,
+     "text": "My go-to for the morning pour-over. Sweet, clean finish, no bitterness.",
+     "date": "2026-02-24"
+    },
+    {
+     "author": "Priya S.",
+     "city": "Chicago, IL",
+     "rating": 5,
+     "text": "Smooth and bright. Tastes just like the description, which almost never happens.",
+     "date": "2026-04-13"
+    },
+    {
+     "author": "Marcus L.",
+     "city": "Atlanta, GA",
+     "rating": 5,
+     "text": "Smooth and bright. Tastes just like the description, which almost never happens.",
+     "date": "2026-06-20"
+    },
+    {
+     "author": "Maya R.",
+     "city": "Seattle, WA",
+     "rating": 5,
+     "text": "Subscribed after the first bag. The whole house drinks this now.",
+     "date": "2026-08-27"
+    }
+   ],
+   "sold": 190,
+   "rating": 5.0
+  },
+  {
+   "slug": "sunrise-espresso-blend",
+   "name": "Sunrise Espresso",
+   "category": "coffee",
+   "type": "variable",
+   "sku": "FH-SUN-106",
+   "price": 16.5,
+   "bag_prices": {
+    "12 oz": 16.5,
+    "2 lb": 54.0
+   },
+   "grinds": [
+    "Whole bean",
+    "Drip / auto",
+    "Pour-over",
+    "French press",
+    "Espresso",
+    "Moka pot"
+   ],
+   "short": "<p><strong>Dark cherry, Praline, Cocoa.</strong> Medium-dark roast from Brazil \u00b7 Ethiopia. Roasted to order and shipped within 24 hours.</p>",
+   "long": "<p>Sunrise Espresso comes from Two-origin blend, grown by Built for the espresso machine at 1,000\u20132,000 m. The cherries are natural and washed, which is where the dark cherry and praline in the cup come from.</p><p>We roast it to a <strong>medium-dark</strong> profile in 12 kg batches on our Probat drum roaster, cupping every batch before it ships. Expect dark cherry, praline and a finish of cocoa.</p><p>Each bag is packed in a recyclable, one-way-valve pouch the day it is roasted. For the best cup, brew within four weeks of the roast date printed on the label.</p>",
+   "obj": "bag",
+   "bg": "#efe6d6",
+   "col": "#c78a2e",
+   "accent": "#2f5d3a",
+   "label": "Sunrise Espresso",
+   "sub": "BRAZIL",
+   "attrs": {
+    "Origin": "Brazil \u00b7 Ethiopia",
+    "Roast": "Medium-dark",
+    "Process": "Natural and washed",
+    "Altitude": "1,000\u20132,000 m",
+    "Tasting notes": "Dark cherry, Praline, Cocoa"
+   },
+   "weight": 0.34,
+   "dims": [
+    9,
+    5,
+    3
+   ],
+   "stock": 82,
+   "tags": [
+    "coffee",
+    "medium dark"
+   ],
+   "featured": true,
+   "badge": "bestseller",
+   "brew": "pour-over: 18 g coffee, 300 g water at 94 \u00b0C, 2:45 total. Espresso: 18 g in, 38 g out, 28 s. French press: 1:15 ratio, 4 minute steep, press slowly.",
+   "reviews": [
+    {
+     "author": "Hannah B.",
+     "city": "Minneapolis, MN",
+     "rating": 5,
+     "text": "Lovely aroma the second I cut the bag open. Easy to brew, forgiving.",
+     "date": "2026-08-13"
+    },
+    {
+     "author": "Liam O.",
+     "city": "Nashville, TN",
+     "rating": 5,
+     "text": "Subscribed after the first bag. The whole house drinks this now.",
+     "date": "2026-01-20"
+    },
+    {
+     "author": "Chloe W.",
+     "city": "Boston, MA",
+     "rating": 4,
+     "text": "Great flavour, packaging is solid and the one-way valve actually works.",
+     "date": "2026-03-27"
+    },
+    {
+     "author": "Hannah B.",
+     "city": "Minneapolis, MN",
+     "rating": 5,
+     "text": "My go-to for the morning pour-over. Sweet, clean finish, no bitterness.",
+     "date": "2026-05-16"
+    },
+    {
+     "author": "Liam O.",
+     "city": "Nashville, TN",
+     "rating": 4,
+     "text": "Good coffee, a little more acidic than I normally like, but dialing the grind finer fixed it.",
+     "date": "2026-07-23"
+    },
+    {
+     "author": "Chloe W.",
+     "city": "Boston, MA",
+     "rating": 4,
+     "text": "Good coffee, a little more acidic than I normally like, but dialing the grind finer fixed it.",
+     "date": "2026-09-12"
+    }
+   ],
+   "sold": 168,
+   "rating": 4.5
+  },
+  {
+   "slug": "swiss-water-decaf-colombia",
+   "name": "Decaf Colombia",
+   "category": "coffee",
+   "type": "variable",
+   "sku": "FH-SWI-107",
+   "price": 18.0,
+   "bag_prices": {
+    "12 oz": 18.0,
+    "2 lb": 59.0
+   },
+   "grinds": [
+    "Whole bean",
+    "Drip / auto",
+    "Pour-over",
+    "French press",
+    "Espresso",
+    "Moka pot"
+   ],
+   "short": "<p><strong>Brown sugar, Cherry, Almond.</strong> Medium roast from Colombia \u00b7 Cauca. Roasted to order and shipped within 24 hours.</p>",
+   "long": "<p>Decaf Colombia comes from Cauca Department, grown by Swiss Water Process, 99.9% caffeine free at 1,800 m. The cherries are washed, swiss water decaffeinated, which is where the brown sugar and cherry in the cup come from.</p><p>We roast it to a <strong>medium</strong> profile in 12 kg batches on our Probat drum roaster, cupping every batch before it ships. Expect brown sugar, cherry and a finish of almond.</p><p>Each bag is packed in a recyclable, one-way-valve pouch the day it is roasted. For the best cup, brew within four weeks of the roast date printed on the label.</p>",
+   "obj": "bag",
+   "bg": "#e8e0d2",
+   "col": "#5e6b73",
+   "accent": "#6b3f1d",
+   "label": "Decaf Colombia",
+   "sub": "COLOMBIA",
+   "attrs": {
+    "Origin": "Colombia \u00b7 Cauca",
+    "Roast": "Medium",
+    "Process": "Washed, Swiss Water decaffeinated",
+    "Altitude": "1,800 m",
+    "Tasting notes": "Brown sugar, Cherry, Almond"
+   },
+   "weight": 0.34,
+   "dims": [
+    9,
+    5,
+    3
+   ],
+   "stock": 89,
+   "tags": [
+    "coffee",
+    "medium"
+   ],
+   "featured": false,
+   "badge": "",
+   "brew": "pour-over: 18 g coffee, 300 g water at 94 \u00b0C, 2:45 total. Espresso: 18 g in, 38 g out, 28 s. French press: 1:15 ratio, 4 minute steep, press slowly.",
+   "reviews": [
+    {
+     "author": "Ben A.",
+     "city": "Portland, OR",
+     "rating": 5,
+     "text": "Better than the local cafe. I'm slightly annoyed at how good it is.",
+     "date": "2026-09-16"
+    },
+    {
+     "author": "Noah F.",
+     "city": "Salt Lake City, UT",
+     "rating": 5,
+     "text": "My go-to for the morning pour-over. Sweet, clean finish, no bitterness.",
+     "date": "2026-02-23"
+    },
+    {
+     "author": "Elena V.",
+     "city": "Brooklyn, NY",
+     "rating": 5,
+     "text": "Better than the local cafe. I'm slightly annoyed at how good it is.",
+     "date": "2026-04-12"
+    },
+    {
+     "author": "Aisha T.",
+     "city": "Philadelphia, PA",
+     "rating": 5,
+     "text": "Subscribed after the first bag. The whole house drinks this now.",
+     "date": "2026-06-19"
+    }
+   ],
+   "sold": 146,
+   "rating": 5.0
+  },
+  {
+   "slug": "gooseneck-electric-kettle",
+   "name": "Gooseneck Electric Kettle 0.9 L",
+   "category": "brewing-gear",
+   "sku": "FH-KET-200",
+   "price": 79.0,
+   "sale": 69.0,
+   "obj": "kettle",
+   "col": "#2b2b2b",
+   "bg": "#e6e1d8",
+   "featured": true,
+   "badge": "bestseller",
+   "weight": 1.4,
+   "dims": [
+    26,
+    20,
+    24
+   ],
+   "short": "<p>Variable-temperature gooseneck kettle with a precise pour spout and a 60-minute hold function.</p>",
+   "long": "<p>The kettle we use behind our own bar. A counterbalanced gooseneck spout gives you the slow, steady stream pour-over demands, and the temperature is adjustable from 140 \u00b0F to 212 \u00b0F in one-degree steps.</p><p>Stainless interior, matte powder-coated shell, auto shut-off and boil-dry protection. 1200 W. Cord stores underneath.</p>",
+   "attrs": {
+    "Capacity": "0.9 L",
+    "Power": "1200 W",
+    "Material": "Stainless steel",
+    "Warranty": "2 years"
+   },
+   "reviews": [
+    {
+     "author": "Noah F.",
+     "city": "Salt Lake City, UT",
+     "rating": 5,
+     "text": "Solid build quality. Easy to clean and it looks great on the counter.",
+     "date": "2026-03-16"
+    },
+    {
+     "author": "Daniel K.",
+     "city": "Austin, TX",
+     "rating": 5,
+     "text": "Bought it as a gift and I'm already ordering a second one for myself.",
+     "date": "2026-05-23"
+    },
+    {
+     "author": "Ben A.",
+     "city": "Portland, OR",
+     "rating": 4,
+     "text": "Heavier than expected in a good way. Nothing rattles or wobbles.",
+     "date": "2026-07-12"
+    },
+    {
+     "author": "Daniel K.",
+     "city": "Austin, TX",
+     "rating": 4,
+     "text": "Does the job well. Instructions were a bit thin but figured it out in a minute.",
+     "date": "2026-09-19"
+    },
+    {
+     "author": "Grace D.",
+     "city": "Madison, WI",
+     "rating": 5,
+     "text": "Great value for the quality. Shipping was fast, packaging was thoughtful.",
+     "date": "2026-02-26"
+    },
+    {
+     "author": "Priya S.",
+     "city": "Chicago, IL",
+     "rating": 5,
+     "text": "Feels premium and works exactly as advertised. Wish I'd bought it sooner.",
+     "date": "2026-04-15"
+    }
+   ],
+   "sold": 210,
+   "type": "simple",
+   "tags": [],
+   "stock": 24,
+   "accent": "#c9803d",
+   "rating": 4.67
+  },
+  {
+   "slug": "ceramic-pour-over-dripper",
+   "name": "Ceramic Pour-Over Dripper",
+   "category": "brewing-gear",
+   "sku": "FH-DRP-210",
+   "price": 28.0,
+   "obj": "dripper",
+   "col": "#e9e1d1",
+   "bg": "#dfe6dc",
+   "accent": "#2f5d3a",
+   "weight": 0.5,
+   "dims": [
+    14,
+    14,
+    12
+   ],
+   "featured": true,
+   "short": "<p>Spiral-ribbed ceramic cone, size 02. Brews one to two cups with a clean, sweet extraction.</p>",
+   "long": "<p>A classic cone with a single large hole and spiral ribs for fast, even flow. Glazed ceramic holds heat and goes in the dishwasher. Fits most mugs and carafes. Works with size 02 cone filters.</p>",
+   "attrs": {
+    "Size": "02 (1\u20134 cups)",
+    "Material": "Glazed ceramic"
+   },
+   "reviews": [
+    {
+     "author": "Jorge P.",
+     "city": "San Diego, CA",
+     "rating": 5,
+     "text": "Solid build quality. Easy to clean and it looks great on the counter.",
+     "date": "2026-04-19"
+    },
+    {
+     "author": "Tom H.",
+     "city": "Denver, CO",
+     "rating": 4,
+     "text": "Heavier than expected in a good way. Nothing rattles or wobbles.",
+     "date": "2026-06-26"
+    },
+    {
+     "author": "Marcus L.",
+     "city": "Atlanta, GA",
+     "rating": 5,
+     "text": "Feels premium and works exactly as advertised. Wish I'd bought it sooner.",
+     "date": "2026-08-15"
+    },
+    {
+     "author": "Jorge P.",
+     "city": "San Diego, CA",
+     "rating": 4,
+     "text": "Does the job well. Instructions were a bit thin but figured it out in a minute.",
+     "date": "2026-01-22"
+    }
+   ],
+   "sold": 180,
+   "type": "simple",
+   "tags": [],
+   "badge": "",
+   "stock": 24,
+   "rating": 4.5
+  },
+  {
+   "slug": "hand-burr-coffee-grinder",
+   "name": "Hand Burr Coffee Grinder",
+   "category": "brewing-gear",
+   "sku": "FH-GRN-220",
+   "price": 89.0,
+   "obj": "grinder",
+   "col": "#3b3b3b",
+   "bg": "#e8e2d6",
+   "weight": 0.9,
+   "dims": [
+    7,
+    7,
+    21
+   ],
+   "featured": true,
+   "badge": "new",
+   "short": "<p>Stainless conical burrs, 40 click settings and a 30 g bean hopper. Quiet, consistent, travels anywhere.</p>",
+   "long": "<p>Hand grinding gives you cafe-level consistency without a $300 electric grinder. The 38 mm stainless burrs are adjustable from fine espresso to coarse cold brew, and the aluminum body is anodised for a lifetime of scuffs.</p><p>Disassembles without tools for cleaning. Includes a glass catch jar.</p>",
+   "attrs": {
+    "Burrs": "38 mm conical, stainless",
+    "Capacity": "30 g",
+    "Settings": "40 clicks"
+   },
+   "reviews": [
+    {
+     "author": "Jorge P.",
+     "city": "San Diego, CA",
+     "rating": 5,
+     "text": "Great value for the quality. Shipping was fast, packaging was thoughtful.",
+     "date": "2026-05-22"
+    },
+    {
+     "author": "Elena V.",
+     "city": "Brooklyn, NY",
+     "rating": 4,
+     "text": "Does the job well. Instructions were a bit thin but figured it out in a minute.",
+     "date": "2026-07-11"
+    },
+    {
+     "author": "Grace D.",
+     "city": "Madison, WI",
+     "rating": 4,
+     "text": "Heavier than expected in a good way. Nothing rattles or wobbles.",
+     "date": "2026-09-18"
+    },
+    {
+     "author": "Hannah B.",
+     "city": "Minneapolis, MN",
+     "rating": 5,
+     "text": "Solid build quality. Easy to clean and it looks great on the counter.",
+     "date": "2026-02-25"
+    },
+    {
+     "author": "Ben A.",
+     "city": "Portland, OR",
+     "rating": 5,
+     "text": "Great value for the quality. Shipping was fast, packaging was thoughtful.",
+     "date": "2026-04-14"
+    }
+   ],
+   "sold": 150,
+   "type": "simple",
+   "tags": [],
+   "stock": 24,
+   "accent": "#c9803d",
+   "rating": 4.6
+  },
+  {
+   "slug": "digital-brew-scale",
+   "name": "Digital Brew Scale with Timer",
+   "category": "brewing-gear",
+   "sku": "FH-SCL-230",
+   "price": 49.0,
+   "obj": "scale",
+   "col": "#2e2e2e",
+   "bg": "#e4ded2",
+   "weight": 0.7,
+   "dims": [
+    17,
+    13,
+    3
+   ],
+   "short": "<p>0.1 g resolution up to 2 kg, with a built-in brew timer and a water-resistant surface.</p>",
+   "long": "<p>The single biggest upgrade to a home brew routine is weighing your coffee and water. This scale reads to 0.1 g, auto-tares, and starts its timer the moment you start pouring. USB-C rechargeable, 40 hours per charge.</p>",
+   "attrs": {
+    "Capacity": "2 kg",
+    "Resolution": "0.1 g"
+   },
+   "reviews": [
+    {
+     "author": "Aisha T.",
+     "city": "Philadelphia, PA",
+     "rating": 4,
+     "text": "Heavier than expected in a good way. Nothing rattles or wobbles.",
+     "date": "2026-06-25"
+    },
+    {
+     "author": "Noah F.",
+     "city": "Salt Lake City, UT",
+     "rating": 4,
+     "text": "Does the job well. Instructions were a bit thin but figured it out in a minute.",
+     "date": "2026-08-14"
+    },
+    {
+     "author": "Priya S.",
+     "city": "Chicago, IL",
+     "rating": 5,
+     "text": "Great value for the quality. Shipping was fast, packaging was thoughtful.",
+     "date": "2026-01-21"
+    }
+   ],
+   "sold": 120,
+   "type": "simple",
+   "tags": [],
+   "featured": false,
+   "badge": "",
+   "stock": 24,
+   "accent": "#c9803d",
+   "rating": 4.33
+  },
+  {
+   "slug": "paper-filters-size-02",
+   "name": "Paper Filters, Size 02 (100 ct)",
+   "category": "brewing-gear",
+   "sku": "FH-FLT-240",
+   "price": 9.0,
+   "obj": "filters",
+   "col": "#d8c7a4",
+   "bg": "#e8e1d4",
+   "weight": 0.15,
+   "dims": [
+    12,
+    9,
+    9
+   ],
+   "stock": 200,
+   "short": "<p>Unbleached, oxygen-cleaned cone filters. A clean cup with no papery aftertaste.</p>",
+   "long": "<p>100 unbleached cone filters for size 02 drippers. Rinse before brewing. Compostable.</p>",
+   "reviews": [
+    {
+     "author": "Hannah B.",
+     "city": "Minneapolis, MN",
+     "rating": 5,
+     "text": "Bought it as a gift and I'm already ordering a second one for myself.",
+     "date": "2026-07-10"
+    },
+    {
+     "author": "Ben A.",
+     "city": "Portland, OR",
+     "rating": 4,
+     "text": "Heavier than expected in a good way. Nothing rattles or wobbles.",
+     "date": "2026-09-17"
+    },
+    {
+     "author": "Sofia M.",
+     "city": "Miami, FL",
+     "rating": 4,
+     "text": "Does the job well. Instructions were a bit thin but figured it out in a minute.",
+     "date": "2026-02-24"
+    }
+   ],
+   "sold": 500,
+   "type": "simple",
+   "tags": [],
+   "featured": false,
+   "badge": "",
+   "attrs": {},
+   "accent": "#c9803d",
+   "rating": 4.33
+  },
+  {
+   "slug": "glass-french-press",
+   "name": "Glass French Press 34 oz",
+   "category": "brewing-gear",
+   "sku": "FH-FRP-250",
+   "price": 42.0,
+   "obj": "press",
+   "col": "#2b2b2b",
+   "bg": "#e2e6e0",
+   "weight": 0.9,
+   "dims": [
+    12,
+    10,
+    24
+   ],
+   "short": "<p>Borosilicate glass beaker, double-mesh stainless filter and a steel frame. Rich, full-bodied coffee.</p>",
+   "long": "<p>The simplest way to brew a full, heavy-bodied cup. Heat-resistant borosilicate glass, a dual-screen stainless plunger that keeps grounds out of your cup, and a frame that protects against knocks. Makes 4 cups.</p>",
+   "attrs": {
+    "Capacity": "34 oz (1 L)"
+   },
+   "reviews": [
+    {
+     "author": "Priya S.",
+     "city": "Chicago, IL",
+     "rating": 5,
+     "text": "Feels premium and works exactly as advertised. Wish I'd bought it sooner.",
+     "date": "2026-08-13"
+    },
+    {
+     "author": "Elena V.",
+     "city": "Brooklyn, NY",
+     "rating": 4,
+     "text": "Does the job well. Instructions were a bit thin but figured it out in a minute.",
+     "date": "2026-01-20"
+    },
+    {
+     "author": "Priya S.",
+     "city": "Chicago, IL",
+     "rating": 4,
+     "text": "Heavier than expected in a good way. Nothing rattles or wobbles.",
+     "date": "2026-03-27"
+    },
+    {
+     "author": "Grace D.",
+     "city": "Madison, WI",
+     "rating": 5,
+     "text": "Solid build quality. Easy to clean and it looks great on the counter.",
+     "date": "2026-05-16"
+    }
+   ],
+   "sold": 130,
+   "type": "simple",
+   "tags": [],
+   "featured": false,
+   "badge": "",
+   "stock": 24,
+   "accent": "#c9803d",
+   "rating": 4.5
+  },
+  {
+   "slug": "stainless-milk-pitcher",
+   "name": "Stainless Milk Pitcher 12 oz",
+   "category": "brewing-gear",
+   "sku": "FH-PIT-260",
+   "price": 24.0,
+   "obj": "pitcher",
+   "col": "#c5c9cc",
+   "bg": "#e8e3d9",
+   "weight": 0.25,
+   "dims": [
+    11,
+    8,
+    9
+   ],
+   "short": "<p>Pointed spout for latte art, thermal-grade 18/8 stainless, 12 oz capacity.</p>",
+   "long": "<p>A sharp spout and a perfectly weighted handle make microfoam pours controllable. Dishwasher safe.</p>",
+   "sold": 85,
+   "type": "simple",
+   "reviews": [],
+   "tags": [],
+   "featured": false,
+   "badge": "",
+   "stock": 24,
+   "attrs": {},
+   "accent": "#c9803d",
+   "rating": 0
+  },
+  {
+   "slug": "glass-bean-canister",
+   "name": "Glass Bean Canister",
+   "category": "brewing-gear",
+   "sku": "FH-CAN-270",
+   "price": 22.0,
+   "obj": "canister",
+   "col": "#2b2b2b",
+   "bg": "#e5dfd3",
+   "weight": 0.8,
+   "dims": [
+    11,
+    11,
+    17
+   ],
+   "short": "<p>Airtight seal with a stainless lid. Holds a full 12 oz bag plus a little more.</p>",
+   "long": "<p>Store beans away from light and air. Silicone gasket, stainless lid and a date dial so you always know how fresh they are.</p>",
+   "sold": 70,
+   "type": "simple",
+   "reviews": [],
+   "tags": [],
+   "featured": false,
+   "badge": "",
+   "stock": 24,
+   "attrs": {},
+   "accent": "#c9803d",
+   "rating": 0
+  },
+  {
+   "slug": "stoneware-mug",
+   "name": "Stoneware Mug",
+   "category": "drinkware",
+   "sku": "FH-MUG-300",
+   "price": 22.0,
+   "obj": "mug",
+   "col": "#6b7d58",
+   "bg": "#e7e0d0",
+   "weight": 0.45,
+   "dims": [
+    12,
+    9,
+    9
+   ],
+   "type": "variable",
+   "variants": {
+    "Colour": {
+     "Moss": "#6b7d58",
+     "Clay": "#b4663d",
+     "Oat": "#d9cdb4"
+    }
+   },
+   "featured": true,
+   "badge": "bestseller",
+   "short": "<p>Hand-glazed 12 oz stoneware with a thumb-rest handle. Each one is slightly different.</p>",
+   "long": "<p>Thrown and glazed in small batches by a family pottery in North Carolina. Holds 12 oz, microwave and dishwasher safe.</p>",
+   "attrs": {
+    "Capacity": "12 oz",
+    "Material": "Stoneware"
+   },
+   "reviews": [
+    {
+     "author": "Marcus L.",
+     "city": "Atlanta, GA",
+     "rating": 5,
+     "text": "Bought it as a gift and I'm already ordering a second one for myself.",
+     "date": "2026-09-16"
+    },
+    {
+     "author": "Ben A.",
+     "city": "Portland, OR",
+     "rating": 4,
+     "text": "Heavier than expected in a good way. Nothing rattles or wobbles.",
+     "date": "2026-02-23"
+    },
+    {
+     "author": "Priya S.",
+     "city": "Chicago, IL",
+     "rating": 5,
+     "text": "Great value for the quality. Shipping was fast, packaging was thoughtful.",
+     "date": "2026-04-12"
+    },
+    {
+     "author": "Chloe W.",
+     "city": "Boston, MA",
+     "rating": 5,
+     "text": "Feels premium and works exactly as advertised. Wish I'd bought it sooner.",
+     "date": "2026-06-19"
+    },
+    {
+     "author": "Priya S.",
+     "city": "Chicago, IL",
+     "rating": 5,
+     "text": "Bought it as a gift and I'm already ordering a second one for myself.",
+     "date": "2026-08-26"
+    },
+    {
+     "author": "Tom H.",
+     "city": "Denver, CO",
+     "rating": 5,
+     "text": "Feels premium and works exactly as advertised. Wish I'd bought it sooner.",
+     "date": "2026-01-15"
+    }
+   ],
+   "sold": 260,
+   "tags": [],
+   "stock": 24,
+   "accent": "#c9803d",
+   "rating": 4.83
+  },
+  {
+   "slug": "double-wall-glass-cups",
+   "name": "Double-Wall Glass Cups (Set of 2)",
+   "category": "drinkware",
+   "sku": "FH-GLS-310",
+   "price": 26.0,
+   "obj": "glasscup",
+   "col": "#d9e6e8",
+   "bg": "#e3e8e2",
+   "weight": 0.5,
+   "dims": [
+    9,
+    9,
+    9
+   ],
+   "short": "<p>Insulated borosilicate glass that keeps drinks hot and your hands cool.</p>",
+   "long": "<p>A set of two 8 oz double-wall cups. Great for espresso, cortado or tea, and they look lovely with a layered latte.</p>",
+   "sold": 95,
+   "type": "simple",
+   "reviews": [],
+   "tags": [],
+   "featured": false,
+   "badge": "",
+   "stock": 24,
+   "attrs": {},
+   "accent": "#c9803d",
+   "rating": 0
+  },
+  {
+   "slug": "insulated-travel-tumbler",
+   "name": "Insulated Travel Tumbler 16 oz",
+   "category": "drinkware",
+   "sku": "FH-TMB-320",
+   "price": 34.0,
+   "sale": 29.0,
+   "obj": "tumbler",
+   "col": "#2f5d3a",
+   "bg": "#e6e1d7",
+   "weight": 0.4,
+   "dims": [
+    8,
+    8,
+    20
+   ],
+   "featured": true,
+   "short": "<p>Vacuum-insulated steel. Hot for 8 hours, cold for 24, with a leak-resistant sip lid.</p>",
+   "long": "<p>Double-wall 18/8 stainless with a powder-coat finish. Fits most cup holders. Hand wash recommended.</p>",
+   "reviews": [
+    {
+     "author": "Grace D.",
+     "city": "Madison, WI",
+     "rating": 5,
+     "text": "Great value for the quality. Shipping was fast, packaging was thoughtful.",
+     "date": "2026-01-19"
+    },
+    {
+     "author": "Tom H.",
+     "city": "Denver, CO",
+     "rating": 5,
+     "text": "Bought it as a gift and I'm already ordering a second one for myself.",
+     "date": "2026-03-26"
+    },
+    {
+     "author": "Maya R.",
+     "city": "Seattle, WA",
+     "rating": 4,
+     "text": "Does the job well. Instructions were a bit thin but figured it out in a minute.",
+     "date": "2026-05-15"
+    },
+    {
+     "author": "Grace D.",
+     "city": "Madison, WI",
+     "rating": 5,
+     "text": "Feels premium and works exactly as advertised. Wish I'd bought it sooner.",
+     "date": "2026-07-22"
+    }
+   ],
+   "sold": 160,
+   "type": "simple",
+   "tags": [],
+   "badge": "",
+   "stock": 24,
+   "attrs": {},
+   "accent": "#c9803d",
+   "rating": 4.75
+  },
+  {
+   "slug": "enamel-camp-mug",
+   "name": "Enamel Camp Mug",
+   "category": "drinkware",
+   "sku": "FH-ENM-330",
+   "price": 18.0,
+   "obj": "enamel",
+   "col": "#e9e3d6",
+   "bg": "#dfe5e6",
+   "weight": 0.25,
+   "dims": [
+    10,
+    8,
+    8
+   ],
+   "short": "<p>Speckled enamel on steel with a rolled rim. Built for campfires and kitchens.</p>",
+   "long": "<p>A classic 12 oz enamel mug with the Fernhill wordmark. Dishwasher safe, practically unbreakable.</p>",
+   "sold": 110,
+   "type": "simple",
+   "reviews": [],
+   "tags": [],
+   "featured": false,
+   "badge": "",
+   "stock": 24,
+   "attrs": {},
+   "accent": "#c9803d",
+   "rating": 0
+  },
+  {
+   "slug": "fernhill-canvas-tote",
+   "name": "Fernhill Canvas Tote",
+   "category": "apparel-merch",
+   "sku": "FH-TOT-400",
+   "price": 24.0,
+   "obj": "tote",
+   "col": "#e5d9bf",
+   "bg": "#e8e1d3",
+   "accent": "#2f5d3a",
+   "weight": 0.3,
+   "short": "<p>Heavy 12 oz cotton canvas with reinforced handles. Holds two bags of beans and the farmers-market haul.</p>",
+   "long": "<p>Screen-printed by hand in Portland. 15 x 16 inches with a 24-inch shoulder strap.</p>",
+   "reviews": [
+    {
+     "author": "Jorge P.",
+     "city": "San Diego, CA",
+     "rating": 5,
+     "text": "Fits true to size and the fabric is thick without being stiff.",
+     "date": "2026-02-22"
+    },
+    {
+     "author": "Daniel K.",
+     "city": "Austin, TX",
+     "rating": 4,
+     "text": "Really nice quality for the price. Gets compliments at the farmers market.",
+     "date": "2026-04-11"
+    },
+    {
+     "author": "Grace D.",
+     "city": "Madison, WI",
+     "rating": 4,
+     "text": "Really nice quality for the price. Gets compliments at the farmers market.",
+     "date": "2026-06-18"
+    }
+   ],
+   "sold": 140,
+   "type": "simple",
+   "tags": [],
+   "featured": false,
+   "badge": "",
+   "stock": 24,
+   "dims": [
+    8,
+    8,
+    8
+   ],
+   "attrs": {},
+   "rating": 4.33
+  },
+  {
+   "slug": "barista-apron",
+   "name": "Barista Apron",
+   "category": "apparel-merch",
+   "sku": "FH-APR-410",
+   "price": 48.0,
+   "obj": "apron",
+   "col": "#3a4a3d",
+   "bg": "#e6e0d3",
+   "weight": 0.5,
+   "short": "<p>Waxed canvas with leather straps, a cross-back fit and a split pocket. The one our baristas wear.</p>",
+   "long": "<p>Waxed 14 oz canvas that sheds water and gets better with age. Adjustable leather cross-back straps, one size fits most.</p>",
+   "reviews": [
+    {
+     "author": "Grace D.",
+     "city": "Madison, WI",
+     "rating": 5,
+     "text": "Washed it three times already and the print hasn't faded at all.",
+     "date": "2026-03-25"
+    },
+    {
+     "author": "Liam O.",
+     "city": "Nashville, TN",
+     "rating": 5,
+     "text": "Fits true to size and the fabric is thick without being stiff.",
+     "date": "2026-05-14"
+    },
+    {
+     "author": "Priya S.",
+     "city": "Chicago, IL",
+     "rating": 4,
+     "text": "Really nice quality for the price. Gets compliments at the farmers market.",
+     "date": "2026-07-21"
+    }
+   ],
+   "sold": 60,
+   "type": "simple",
+   "tags": [],
+   "featured": false,
+   "badge": "",
+   "stock": 24,
+   "dims": [
+    8,
+    8,
+    8
+   ],
+   "attrs": {},
+   "accent": "#c9803d",
+   "rating": 4.67
+  },
+  {
+   "slug": "logo-cap",
+   "name": "Fernhill Logo Cap",
+   "category": "apparel-merch",
+   "sku": "FH-CAP-420",
+   "price": 26.0,
+   "obj": "cap",
+   "col": "#b4663d",
+   "bg": "#e5ddcf",
+   "weight": 0.15,
+   "short": "<p>Six-panel organic cotton twill with an embroidered F. Adjustable brass buckle.</p>",
+   "long": "<p>Soft, unstructured and broken-in from day one. One size fits most.</p>",
+   "sold": 75,
+   "type": "simple",
+   "reviews": [],
+   "tags": [],
+   "featured": false,
+   "badge": "",
+   "stock": 24,
+   "dims": [
+    8,
+    8,
+    8
+   ],
+   "attrs": {},
+   "accent": "#c9803d",
+   "rating": 0
+  },
+  {
+   "slug": "coffee-lover-gift-box",
+   "name": "Coffee Lover Gift Box",
+   "category": "gifts-subscriptions",
+   "sku": "FH-GFT-500",
+   "price": 64.0,
+   "obj": "gift",
+   "col": "#3d5a45",
+   "bg": "#ede4d3",
+   "featured": true,
+   "badge": "new",
+   "weight": 1.4,
+   "dims": [
+    28,
+    22,
+    12
+   ],
+   "short": "<p>Two 12 oz bags (our choice of seasonal beans), a stoneware mug and a handwritten card, in a reusable kraft box.</p>",
+   "long": "<p>The easiest gift for anyone who drinks coffee. Includes two freshly roasted 12 oz bags, a Fernhill stoneware mug and a handwritten card. Free gift wrap on request at checkout.</p>",
+   "reviews": [
+    {
+     "author": "Sofia M.",
+     "city": "Miami, FL",
+     "rating": 5,
+     "text": "Feels premium and works exactly as advertised. Wish I'd bought it sooner.",
+     "date": "2026-04-10"
+    },
+    {
+     "author": "Elena V.",
+     "city": "Brooklyn, NY",
+     "rating": 5,
+     "text": "Great value for the quality. Shipping was fast, packaging was thoughtful.",
+     "date": "2026-06-17"
+    },
+    {
+     "author": "Maya R.",
+     "city": "Seattle, WA",
+     "rating": 5,
+     "text": "Bought it as a gift and I'm already ordering a second one for myself.",
+     "date": "2026-08-24"
+    },
+    {
+     "author": "Tom H.",
+     "city": "Denver, CO",
+     "rating": 5,
+     "text": "Bought it as a gift and I'm already ordering a second one for myself.",
+     "date": "2026-01-13"
+    }
+   ],
+   "sold": 90,
+   "type": "simple",
+   "tags": [],
+   "stock": 24,
+   "attrs": {},
+   "accent": "#c9803d",
+   "rating": 5.0
+  },
+  {
+   "slug": "pour-over-starter-kit",
+   "name": "Pour-Over Starter Kit",
+   "category": "gifts-subscriptions",
+   "sku": "FH-KIT-510",
+   "price": 119.0,
+   "sale": 105.0,
+   "obj": "dripper",
+   "col": "#f0e9da",
+   "bg": "#dde6dd",
+   "accent": "#2f5d3a",
+   "weight": 2.2,
+   "dims": [
+    30,
+    24,
+    16
+   ],
+   "featured": true,
+   "short": "<p>Everything for your first great cup: dripper, filters, scale, gooseneck kettle and a bag of House Blend.</p>",
+   "long": "<p>Skip the guesswork. Includes a ceramic dripper, 100 filters, a digital scale, a gooseneck kettle and a 12 oz bag of Fernhill House Blend, plus a brewing card with our recipe.</p>",
+   "reviews": [
+    {
+     "author": "Noah F.",
+     "city": "Salt Lake City, UT",
+     "rating": 5,
+     "text": "Great value for the quality. Shipping was fast, packaging was thoughtful.",
+     "date": "2026-05-13"
+    },
+    {
+     "author": "Jorge P.",
+     "city": "San Diego, CA",
+     "rating": 5,
+     "text": "Feels premium and works exactly as advertised. Wish I'd bought it sooner.",
+     "date": "2026-07-20"
+    },
+    {
+     "author": "Ben A.",
+     "city": "Portland, OR",
+     "rating": 5,
+     "text": "Bought it as a gift and I'm already ordering a second one for myself.",
+     "date": "2026-09-27"
+    },
+    {
+     "author": "Daniel K.",
+     "city": "Austin, TX",
+     "rating": 5,
+     "text": "Bought it as a gift and I'm already ordering a second one for myself.",
+     "date": "2026-02-16"
+    },
+    {
+     "author": "Aisha T.",
+     "city": "Philadelphia, PA",
+     "rating": 5,
+     "text": "Feels premium and works exactly as advertised. Wish I'd bought it sooner.",
+     "date": "2026-04-23"
+    }
+   ],
+   "sold": 70,
+   "type": "simple",
+   "tags": [],
+   "badge": "",
+   "stock": 24,
+   "attrs": {},
+   "rating": 5.0
+  },
+  {
+   "slug": "coffee-club-subscription",
+   "name": "Coffee Club Subscription",
+   "category": "gifts-subscriptions",
+   "sku": "FH-SUB-520",
+   "price": 18.0,
+   "obj": "card",
+   "col": "#2f5d3a",
+   "bg": "#e9e2d3",
+   "type": "variable",
+   "variants": {
+    "Delivery": {
+     "Every 2 weeks": "",
+     "Every month": "",
+     "Every 2 months": ""
+    }
+   },
+   "short": "<p>Fresh-roasted coffee at your door on your schedule. Pause, skip or cancel anytime.</p>",
+   "long": "<p>Pick a roast style, a grind and a schedule. Each shipment is roasted the week it ships and costs less than buying a bag. Free shipping, always.</p>",
+   "reviews": [
+    {
+     "author": "Ben A.",
+     "city": "Portland, OR",
+     "rating": 5,
+     "text": "Fresh roast date was only three days before it landed on my doorstep. Blooms beautifully.",
+     "date": "2026-06-16"
+    },
+    {
+     "author": "Chloe W.",
+     "city": "Boston, MA",
+     "rating": 5,
+     "text": "Better than the local cafe. I'm slightly annoyed at how good it is.",
+     "date": "2026-08-23"
+    },
+    {
+     "author": "Elena V.",
+     "city": "Brooklyn, NY",
+     "rating": 5,
+     "text": "Lovely aroma the second I cut the bag open. Easy to brew, forgiving.",
+     "date": "2026-01-12"
+    },
+    {
+     "author": "Aisha T.",
+     "city": "Philadelphia, PA",
+     "rating": 5,
+     "text": "Fresh roast date was only three days before it landed on my doorstep. Blooms beautifully.",
+     "date": "2026-03-19"
+    }
+   ],
+   "sold": 190,
+   "badge": "bestseller",
+   "tags": [],
+   "featured": false,
+   "stock": 24,
+   "weight": 0.6,
+   "dims": [
+    8,
+    8,
+    8
+   ],
+   "attrs": {},
+   "accent": "#c9803d",
+   "rating": 5.0
+  }
+ ]
+}

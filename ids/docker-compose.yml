@@ -480,7 +480,7 @@ services:
       - WP_ADMIN_PASSWORD=${WP_ADMIN_PASSWORD:-change_this_wp_admin_password}
       - WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-admin@example.com}
       - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
-      - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
+      - WP_SITE_TITLE=${WP_SITE_TITLE:-Fernhill Coffee Roasters}
       - STRIPE_TEST_PUBLISHABLE_KEY=${STRIPE_TEST_PUBLISHABLE_KEY:-}
       - STRIPE_TEST_SECRET_KEY=${STRIPE_TEST_SECRET_KEY:-}
       # Unowned pools kept ready, and the hard ceiling on total pools.
@@ -726,7 +726,7 @@ services:
       - WP_ADMIN_PASSWORD=${WP_ADMIN_PASSWORD:-change_this_wp_admin_password}
       - WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-admin@example.com}
       - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
-      - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
+      - WP_SITE_TITLE=${WP_SITE_TITLE:-Fernhill Coffee Roasters}
       # Set to 1 to wipe and rebuild the storefront from scratch on the
       # next `docker compose up` instead of the normal idempotent no-op --
       # see the dashboard's Backups page "Reset demo store" action /
@@ -744,6 +744,9 @@ services:
       - ./production_eshop_files:/var/www/html
       - ./scripts/seed_wordpress_db.sh:/seed_wordpress_db.sh:ro
       - ./scripts/seed_elementor_pages.sh:/seed_elementor_pages.sh:ro
+      # Storefront catalog/pages/journal (Fernhill Coffee Roasters) and its images.
+      - ./scripts/seed_storefront_content.php:/seed_storefront_content.php:ro
+      - ./eshop_seed:/eshop_seed:ro
     networks:
       - production_network
     # Only the CMD is overridden (matching production_eshop's own command
@@ -810,7 +813,7 @@ services:
       # (theme/plugins/site identity) regardless of which pool they're
       # routed to, so this must match production exactly.
       - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
-      - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
+      - WP_SITE_TITLE=${WP_SITE_TITLE:-Fernhill Coffee Roasters}
       - FORCE_RESEED=${FORCE_RESEED:-0}
       # Optional Stripe sandbox keys -- see scripts/seed_wordpress_db.sh's
       # configure_storefront(). Empty = Stripe gateway stays off, offline
@@ -870,7 +873,7 @@ services:
       - WP_ADMIN_PASSWORD=${WP_ADMIN_PASSWORD:-change_this_wp_admin_password}
       - WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-admin@example.com}
       - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
-      - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
+      - WP_SITE_TITLE=${WP_SITE_TITLE:-Fernhill Coffee Roasters}
       - FORCE_RESEED=${FORCE_RESEED:-0}
       # Optional Stripe sandbox keys -- see scripts/seed_wordpress_db.sh's
       # configure_storefront(). Empty = Stripe gateway stays off, offline
@@ -921,7 +924,7 @@ services:
       - WP_ADMIN_PASSWORD=${WP_ADMIN_PASSWORD:-change_this_wp_admin_password}
       - WP_ADMIN_EMAIL=${WP_ADMIN_EMAIL:-admin@example.com}
       - WP_SITE_URL=${WP_SITE_URL:-http://localhost}
-      - WP_SITE_TITLE=${WP_SITE_TITLE:-Demo eShop}
+      - WP_SITE_TITLE=${WP_SITE_TITLE:-Fernhill Coffee Roasters}
       - FORCE_RESEED=${FORCE_RESEED:-0}
       # Optional Stripe sandbox keys -- see scripts/seed_wordpress_db.sh's
       # configure_storefront(). Empty = Stripe gateway stays off, offline

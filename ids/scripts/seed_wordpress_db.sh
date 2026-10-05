@@ -262,11 +262,19 @@ if ( getenv( 'STRIPE_TEST_PUBLISHABLE_KEY' ) && getenv( 'STRIPE_TEST_SECRET_KEY'
     WP_CLI::log( '  Activated woocommerce-gateway-stripe' );
 }
 
-// Shipping: a free-shipping method on the default zone, once.
+// Shipping on the default zone, once: standard $5.95, free over $45 (the
+// storefront advertises exactly this -- see the Shipping & Returns page).
 $zone = WC_Shipping_Zones::get_zone( 0 );
 if ( empty( $zone->get_shipping_methods() ) ) {
-    $zone->add_shipping_method( 'free_shipping' );
-    WP_CLI::log( '  Added Free shipping to the default shipping zone' );
+    $free = $zone->add_shipping_method( 'free_shipping' );
+    $flat = $zone->add_shipping_method( 'flat_rate' );
+    update_option( 'woocommerce_free_shipping_' . $free . '_settings', [
+        'title' => 'Free shipping', 'requires' => 'min_amount', 'min_amount' => '45', 'ignore_discounts' => 'no',
+    ] );
+    update_option( 'woocommerce_flat_rate_' . $flat . '_settings', [
+        'title' => 'Standard shipping', 'tax_status' => 'none', 'cost' => '5.95',
+    ] );
+    WP_CLI::log( '  Added Standard ($5.95) and Free-over-$45 shipping to the default shipping zone' );
 }
 
 // Offline gateways (always on).
@@ -325,10 +333,21 @@ PHP
     fi
 }
 
+# Authors the Fernhill Coffee Roasters catalog, pages and journal (production
+# only: IMPORT_SAMPLE_CONTENT=1). Version-gated and idempotent -- the PHP bails
+# out in one WordPress boot when the stored catalog version is current -- so it
+# is safe on every boot and upgrades an older install to the current catalog.
+author_storefront_content() {
+    [ "${IMPORT_SAMPLE_CONTENT:-1}" = "1" ] || return 0
+    [ -f /seed_storefront_content.php ] && [ -f /eshop_seed/catalog.json ] || return 0
+    $WP eval-file /seed_storefront_content.php || log "  WARNING: storefront content authoring failed -- continuing."
+}
+
 if $WP core is-installed 2>/dev/null; then
     if [ "${FORCE_RESEED:-0}" != "1" ]; then
         log "WordPress already installed -- skipping install (set FORCE_RESEED=1 to wipe and rebuild)."
         configure_storefront
+        author_storefront_content
         log "Storefront configuration refreshed."
         exit 0
     fi
@@ -397,6 +416,13 @@ fi
 
 # Best-effort from here: a working (if emptier) storefront on failure,
 # not a blocked startup -- see the file header's RESILIENCE note.
+if [ -f /seed_storefront_content.php ] && [ -f /eshop_seed/catalog.json ]; then
+    log "Authoring the Fernhill Coffee Roasters catalog, pages and journal..."
+    author_storefront_content
+    log "Demo storefront ready."
+    exit 0
+fi
+
 log "Importing WooCommerce's official sample product catalog..."
 if $WP plugin install wordpress-importer --activate 2>/var/log/wp_seed_importer_install.log; then
     if $WP import wp-content/plugins/woocommerce/sample-data/sample_products.xml \

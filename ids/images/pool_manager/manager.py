@@ -353,7 +353,7 @@ class Manager:
                 "WP_ADMIN_PASSWORD": os.environ.get("WP_ADMIN_PASSWORD", "change_this_wp_admin_password"),
                 "WP_ADMIN_EMAIL": os.environ.get("WP_ADMIN_EMAIL", "admin@example.com"),
                 "WP_SITE_URL": os.environ.get("WP_SITE_URL", "http://localhost"),
-                "WP_SITE_TITLE": os.environ.get("WP_SITE_TITLE", "Demo eShop"),
+                "WP_SITE_TITLE": os.environ.get("WP_SITE_TITLE", "Fernhill Coffee Roasters"),
                 "FORCE_RESEED": "0", "IMPORT_SAMPLE_CONTENT": "0",
                 "STRIPE_TEST_PUBLISHABLE_KEY": os.environ.get("STRIPE_TEST_PUBLISHABLE_KEY", ""),
                 "STRIPE_TEST_SECRET_KEY": os.environ.get("STRIPE_TEST_SECRET_KEY", "")},
