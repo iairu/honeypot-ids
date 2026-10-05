@@ -30,6 +30,7 @@ from ui.page_health import HealthPage
 from ui.page_kibana import KibanaPage
 from ui.page_learn import LearnPage, page_guide_html
 from ui.page_log_search import LogSearchPage
+from ui.page_pool_test import PoolTestPage
 from ui.page_redis import RedisPage
 from ui.page_resources import ResourcesPage
 from ui.page_services import ServicesPage
@@ -55,7 +56,7 @@ _NOTIFY_ON_STATUSES = {"unhealthy", "exited_bad"}
 
 PAGES = [
     "services", "health", "resources", "certificates", "redis", "backups",
-    "kibana", "exploits", "log_search", "extras", "settings", "learn",
+    "kibana", "exploits", "pool_test", "log_search", "extras", "settings", "learn",
 ]
 PAGE_LABELS = {
     "services": "Services",
@@ -66,6 +67,7 @@ PAGE_LABELS = {
     "backups": "Backups",
     "kibana": "Kibana",
     "exploits": "Exploits",
+    "pool_test": "Pool Test",
     "log_search": "Log Search",
     "extras": "Extras",
     "settings": "Settings",
@@ -147,6 +149,7 @@ class MainWindow(QMainWindow):
         # Every exploit run drops a time-aligned marker onto the Resources
         # graphs so its resource impact is visible.
         self.exploits_page.exploit_ran.connect(self.resources_page.add_exploit_marker)
+        self.pool_test_page = PoolTestPage(state)
         self.log_search_page = LogSearchPage(state)
         self.extras_page = ExtrasPage(self._grab_health_screenshot)
         self.settings_page = SettingsPage(state, self._on_remote_settings_changed, self.set_poll_interval)
@@ -162,6 +165,7 @@ class MainWindow(QMainWindow):
             ("backups", self.backups_page),
             ("kibana", self.kibana_page),
             ("exploits", self.exploits_page),
+            ("pool_test", self.pool_test_page),
             ("log_search", self.log_search_page),
             ("extras", self.extras_page),
             ("settings", self.settings_page),

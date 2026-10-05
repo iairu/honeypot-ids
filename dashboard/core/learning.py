@@ -318,6 +318,12 @@ PAGE_GUIDES: dict[str, PageGuide] = {
         "Raw logs are the ground truth behind every dashboard. Being able to grep them "
         "is a core analyst skill.",
     ),
+    "pool_test": PageGuide(
+        "Three browsers, three separate attacker sessions, against the honeypot pool.",
+        "Press Open shop in all, then Attack from all, then Refresh pool state.",
+        "Attackers are told apart by session, not by address: each frame has its own cookie "
+        "and browser fingerprint, so each is diverted to a honeypot pool of its own.",
+    ),
     "extras": PageGuide(
         "PDF exports: implementation chapter, architecture, exploit matrix.",
         "Export the Exploit / CVE matrix as a study sheet.",

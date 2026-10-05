@@ -337,6 +337,25 @@ def flush_threat_state(remote: RemoteConfig | None, timeout: float = 15.0) -> in
         raise RedisInspectError(f"Unexpected response from flush script: {out!r}")
 
 
+def session_pool(remote: RemoteConfig | None, session_id: str, timeout: float = 15.0) -> int | None:
+    """The honeypot pool number the router bound `session_id` to (the
+    honeypot_pool_session:<id> key), or None while the session has none."""
+    out = _run_redis_cli(remote, "GET", f"honeypot_pool_session:{session_id}", timeout=timeout).strip()
+    return int(out) if out.isdigit() else None
+
+
+def session_decision_raw(remote: RemoteConfig | None, session_id: str,
+                         timeout: float = 15.0) -> tuple[str, str]:
+    """(session:<id> JSON, honeypot_pool_session:<id> value) in one redis-cli
+    call; an empty string where the key does not exist."""
+    script = "return {redis.call('GET', KEYS[1]) or '', redis.call('GET', KEYS[2]) or ''}"
+    out = _run_redis_cli(remote, "EVAL", script, "2", f"session:{session_id}",
+                         f"honeypot_pool_session:{session_id}", timeout=timeout)
+    lines = out.split("\n")
+    lines += [""] * (2 - len(lines))
+    return lines[0].strip(), lines[1].strip()
+
+
 def pool_state(remote: RemoteConfig | None, timeout: float = 15.0) -> dict:
     """Snapshot of the honeypot pool registry: ready pools, free (unowned)
     pools, per-pool owner counts, and why pool_manager is not growing the pool
