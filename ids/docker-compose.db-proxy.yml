@@ -1036,6 +1036,13 @@ services:
       - ABUSEIPDB_BLACKLIST_ENABLED=${ABUSEIPDB_BLACKLIST_ENABLED:-false}
       - ABUSEIPDB_BLACKLIST_REFRESH_HOURS=${ABUSEIPDB_BLACKLIST_REFRESH_HOURS:-24}
       - INTERNAL_TEST_SECRET=${INTERNAL_TEST_SECRET:-}
+      # Signed session cookie + session recovery (lua/session_identity_rules.lua).
+      - SESSION_SIGNING_KEY=${SESSION_SIGNING_KEY:-}
+      - SESSION_RECOVERY_USES_IP=${SESSION_RECOVERY_USES_IP:-true}
+      - SESSION_RECOVERY_WINDOW=${SESSION_RECOVERY_WINDOW:-900}
+      - IP_REPUTATION_CAP=${IP_REPUTATION_CAP:-10}
+      - SHARED_IP_SESSIONS=${SHARED_IP_SESSIONS:-2}
+      - SHARED_IP_WINDOW=${SHARED_IP_WINDOW:-3600}
       # Threat decay: set THREAT_DECAY_ENABLED=false to make session/IP threat
       # scores persist indefinitely (no decay); half-life tunes the fade rate.
       - THREAT_DECAY_ENABLED=${THREAT_DECAY_ENABLED:-true}

@@ -94,7 +94,7 @@ class Reconcile(unittest.TestCase):
         self.r.zrem(self.m.FREE_KEY, str(pool))
         self.r.sadd(self.m.OWNER_PREFIX + str(pool), ip)
         if live:
-            self.r.set(self.m.IP_KEY_PREFIX + ip, str(pool))
+            self.r.set(self.m.SESSION_KEY_PREFIX + ip, str(pool))
 
     def test_low_host_resources_cap_growth(self):
         self.run_reconcile()

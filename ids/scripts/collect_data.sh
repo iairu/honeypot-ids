@@ -13,7 +13,7 @@
 # DATA SOURCES COLLECTED:
 #   1. Redis session store
 #      - All active and recently-expired attacker sessions (honeypot_bound=true)
-#      - Honeynet pool assignments (honeypot_pool_ip:* keys)
+#      - Honeynet pool assignments (honeypot_pool_session:* keys)
 #      - Suricata alert feed (suricata_alerts list)
 #      - Honeytoken usage records (honeytoken:* keys)
 #
@@ -314,14 +314,14 @@ else
     ASSIGN_COUNT=0
 
     while true; do
-        SCAN_RESULT=$(redis_cmd SCAN "$ASSIGN_CURSOR" MATCH "honeypot_pool_ip:*" COUNT 200) || break
+        SCAN_RESULT=$(redis_cmd SCAN "$ASSIGN_CURSOR" MATCH "honeypot_pool_session:*" COUNT 200) || break
         ASSIGN_CURSOR=$(printf '%s' "$SCAN_RESULT" | head -1)
         IP_KEYS=$(printf '%s' "$SCAN_RESULT" | tail -n +2)
 
         for key in $IP_KEYS; do
             pool_num=$(redis_cmd GET "$key") || continue
             [ -z "$pool_num" ] && continue
-            ip_addr=$(printf '%s' "$key" | sed 's/honeypot_pool_ip://')
+            ip_addr=$(printf '%s' "$key" | sed 's/honeypot_pool_session://')
 
             # Optionally exclude RFC-1918 addresses.
             if [ "$INCLUDE_PRIVATE" -eq 0 ]; then

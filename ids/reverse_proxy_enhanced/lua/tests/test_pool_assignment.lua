@@ -78,7 +78,7 @@ local function new_redis()
         return assert(load(rules.ASSIGN_SCRIPT, "assign", "t", env))()
     end
     function r.assign(ip, ttl_s)
-        env.KEYS = { "honeypot_pool_ip:" .. ip, rules.FREE_KEY, rules.READY_KEY,
+        env.KEYS = { "honeypot_pool_session:" .. ip, rules.FREE_KEY, rules.READY_KEY,
                      rules.COUNTER_KEY, rules.PROVISION_KEY }
         env.ARGV = { ip, tostring(ttl_s or 86400) }
         local res = run_script()
@@ -110,7 +110,7 @@ do
     check("each exclusive assignment queued a pool_manager wake-up", #r.lists[rules.PROVISION_KEY] == 3)
     check("owner set holds exactly the one attacker",
           r.sets[rules.OWNER_PREFIX .. "1"]["10.0.0.1"] and next(r.sets[rules.OWNER_PREFIX .. "1"], "10.0.0.1") == nil)
-    check("assignment TTL is applied", r.ttl["honeypot_pool_ip:10.0.0.1"] == 86400)
+    check("assignment TTL is applied", r.ttl["honeypot_pool_session:10.0.0.1"] == 86400)
 end
 
 print("== spare pool added after an assignment is used by the next attacker ==")
@@ -155,7 +155,7 @@ do
     local r = new_redis()
     local p, m = r.assign("10.0.4.1")
     check("returns pool 0 / 'none'", p == 0 and m == "none")
-    check("nothing recorded for the IP", r.kv["honeypot_pool_ip:10.0.4.1"] == nil)
+    check("nothing recorded for the IP", r.kv["honeypot_pool_session:10.0.4.1"] == nil)
 end
 
 print("== proxy target + pool list helpers ==")

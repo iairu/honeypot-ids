@@ -243,7 +243,7 @@ def request_flow_diagram(family: str = "Serif") -> VectorFigure:
         ("ana", 215, 102, 190, 80, "Reverse proxy",
          "score the request, then decide", "#e7effa", _BLUE),
         ("dec", 460, 97, 190, 90, "Route?",
-         "CVE match / high score / bad IP / sticky", "#fff7e6", _ORANGE),
+         "CVE match / high score / sticky session", "#fff7e6", _ORANGE),
         ("hp", 770, 40, 130, 60, "Honeypot",
          "same shop, fake DB" if db_layer else "decoy shop", "#f8e7e7", _RED),
         ("pr", 770, 184, 130, 60, "Production",
@@ -276,7 +276,7 @@ def scoring_pipeline_diagram(family: str = "Serif") -> VectorFigure:
         ("URI patterns", "+15 each", "#e7effa", _BLUE),
         ("CVE patterns", "+40", "#f8e7e7", _RED),
         ("Headers / method", "+N", "#fdf1e3", _ORANGE),
-        ("IP reputation", "Suricata, decayed", "#fdf1e3", _ORANGE),
+        ("IP reputation", "per address: 0 if shared, max 10", "#fdf1e3", _ORANGE),
         ("Accumulate + decay", "session peak", "#eef0f2", _GREY),
     ]
     # Size the boxes so all six (5 stages + "Route") fit the canvas width
@@ -306,8 +306,124 @@ def scoring_pipeline_diagram(family: str = "Serif") -> VectorFigure:
     p.drawText(QRectF(margin, y + h + 22, 920 - 2 * margin, 40),
                int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop) | int(Qt.TextFlag.TextWordWrap),
                "Signals accumulate onto the session's peak (capped at 100) and fade over time "
-               "(unless THREAT_DECAY_ENABLED=false); a CVE match or bad IP can divert to the "
-               "honeypot on its own.")
+               "(unless THREAT_DECAY_ENABLED=false); a CVE match can divert to the honeypot on "
+               "its own. Address reputation alone cannot (see the routing decision figure).")
+    p.end()
+    return img
+
+
+def routing_decision_diagram(family: str = "Serif") -> VectorFigure:
+    """The whole routing decision for one request, in the order the reverse
+    proxy makes it (nginx.conf access block, threat_analyzer.lua, router.lua's
+    decide_route stages): identify the session, score the request, fold it
+    into the session, then the first stage that fires sends the request to
+    THIS session's honeypot pool; none firing means production. Also states
+    what is per session and what is per address, i.e. why users sharing one
+    public address (carrier-grade NAT) aren't routed for a neighbour."""
+    W, H = 920, 1210
+    img, p = _new(W, H)
+    p.setFont(QFont(family, 12, QFont.Weight.Bold))
+    p.setPen(QColor(_INK))
+    p.drawText(20, 24, "Routing decision for one request")
+
+    x, w = 30, 440          # main column
+    rx, rw = 620, 280       # outcome column
+    gap = 18
+    rows = [
+        # key, kind, height, title, subtitle
+        ("req", "proc", 46, "Request", "dynamic page or API call"),
+        ("static", "dec", 46, "Static file?", "CSS, JS, images, fonts"),
+        ("ident", "proc", 92, "Identify the session",
+         "Signed SERVERID cookie (id + HMAC) -> that session. No valid cookie -> passive "
+         "fingerprint (TLS hello, HTTP version, UA, languages, client hints, IP) seen "
+         "within 15 min -> same session. Otherwise a new session. Edited cookie: +50."),
+        ("score", "proc", 106, "Score this request",
+         "The session's own signals: URI and CVE patterns, headers, method, automation and "
+         "request rate, admin/login attempts, uploads, prompt injection; honeytoken reuse = 100. "
+         "Address reputation (Suricata, AbuseIPDB): 0 on a shared address, at most 10 otherwise."),
+        ("acc", "proc", 60, "Fold into the session",
+         "fresh score > 10 adds to the session's decayed peak (max 100)"),
+        ("s2", "dec", 50, "Already in a pool and score >= 30?", "sticky: keeps the same pool"),
+        ("s3", "dec", 46, "Score >= 80?", "threshold"),
+        ("s4", "dec", 46, "CVE pattern matched?", ""),
+        ("s5", "dec", 46, "Vulnerable plugin endpoint?", "PHP file in a known-vulnerable plugin"),
+        ("s6", "dec", 50, "Address reputation > 50?",
+         "only if IP_REPUTATION_CAP > 50; never with the default cap"),
+        ("s7", "dec", 46, "3rd admin-area request in this session?", ""),
+        ("s8", "dec", 46, "5+ suspicious activities in this session?", ""),
+        ("s9", "dec", 46, "Rapid automation and score >= 40?", "per-session request streak"),
+        ("s10", "dec", 46, "Suspicious upload?", ""),
+        ("prod", "out", 50, "Production", "real shop"),
+    ]
+    pos = {}
+    y = 46
+    for key, kind, h, *_ in rows:
+        pos[key] = (y, h)
+        y += h + gap
+
+    def cy(key):
+        y0, h = pos[key]
+        return y0 + h / 2
+
+    # Outcome boxes on the right.
+    hp_top = pos["s2"][0]
+    hp_bot = pos["s10"][0] + pos["s10"][1]
+    nr_y, nr_h = pos["static"]
+
+    # Arrows first.
+    keys = [r[0] for r in rows]
+    for a, b in zip(keys, keys[1:]):
+        ya, ha = pos[a]
+        yb, _ = pos[b]
+        _arrow(p, x + w / 2, ya + ha, x + w / 2, yb,
+               color=_GREEN if b == "prod" else _INK)
+    _arrow(p, x + w, cy("static"), rx, nr_y + nr_h / 2, color=_GREY)
+    dec_keys = ["s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10"]
+    for k in dec_keys:
+        _arrow(p, x + w, cy(k), rx, cy(k), color=_RED, dashed=(k == "s6"))
+
+    # Boxes.
+    styles = {
+        "proc": ("#e7effa", _BLUE),
+        "dec": ("#fff7e6", _ORANGE),
+        "out": ("#e8f3ea", _GREEN),
+    }
+    for key, kind, h, title, sub in rows:
+        fill, border = styles[kind]
+        if key == "req":
+            fill, border = "#eef2f7", _INK
+        _box(p, x, pos[key][0], w, h, title, sub, fill=fill, border=border,
+             text=border, family=family)
+    _box(p, rx, nr_y, rw, nr_h, "Answered by the proxy", "NOT ROUTED",
+         fill="#eef0f2", border=_GREY, text=_GREY, family=family)
+    _box(p, rx, hp_top, rw, hp_bot - hp_top, "Honeypot pool of THIS session",
+         "The first stage that fires assigns a pool to this session (one pool per "
+         "session) and the session stays there while its score stays >= 30. Other "
+         "sessions on the same public address keep their own route.",
+         fill="#f8e7e7", border=_RED, text=_RED, family=family)
+
+    # Labels last, on top of the lines.
+    mid = (x + w + rx) / 2
+    _label(p, mid, cy("static"), "yes", color=_GREY, family=family)
+    for k in dec_keys:
+        _label(p, mid, cy(k), "yes", color=_RED, family=family)
+    _label(p, x + w / 2 + 22, (pos["s10"][0] + pos["s10"][1] + pos["prod"][0]) / 2,
+           "no to all", color=_GREEN, family=family)
+
+    # Per session vs per address note.
+    ny = pos["prod"][0] + pos["prod"][1] + 22
+    p.setFont(QFont(family, 8))
+    p.setPen(QColor(_GREY))
+    p.drawText(QRectF(x, ny, W - 2 * x, H - ny - 6),
+               int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop) | int(Qt.TextFlag.TextWordWrap),
+               "Shared addresses (carrier-grade NAT): everything the client does itself is "
+               "counted on its session, including the rate limit, admin/brute-force counters, "
+               "timing streaks and upload scores. Only Suricata and AbuseIPDB know addresses; "
+               "their reputation is ignored once 2 sessions were active on the address within "
+               "an hour and capped at 10 otherwise, which is below the > 10 needed to count as "
+               "a new signal, so it cannot divert anyone on its own. An address shared with an "
+               "attacker therefore leaves its other users on production. Bound but below 30: "
+               "the session is released back to production.")
     p.end()
     return img
 

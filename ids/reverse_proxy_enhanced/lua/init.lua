@@ -31,6 +31,16 @@
 local cjson = require "cjson"
 local redis = require "resty.redis"
 
+-- Session cookie signing key (see _G.config.session.signing_key below). Made
+-- here, in the master before workers fork, so every worker shares it.
+local SESSION_SIGNING_KEY = os.getenv("SESSION_SIGNING_KEY") or ""
+local SESSION_SIGNING_KEY_STABLE = SESSION_SIGNING_KEY ~= ""
+if not SESSION_SIGNING_KEY_STABLE then
+    local resty_random = require "resty.random"
+    SESSION_SIGNING_KEY = require("resty.string").to_hex(
+        resty_random.bytes(32, true) or resty_random.bytes(32))
+end
+
 -- ---------------------------------------------------------------------------
 -- _G.config – Central configuration table
 --
@@ -106,11 +116,36 @@ _G.config = {
     --   cleanup_interval   – How often (seconds) the background session-cleanup
     --                        timer in init_worker.lua runs to evict expired
     --                        entries from the local shared dict.
+    --   signing_key        – HMAC key for the signed SERVERID cookie
+    --                        ("<session id>.<HMAC>", see
+    --                        session_identity_rules.lua). From
+    --                        SESSION_SIGNING_KEY; when that is unset a random
+    --                        key is made at start-up, so cookies issued before
+    --                        a restart stop verifying (their sessions are then
+    --                        recovered by fingerprint) and a bad signature
+    --                        can't be told apart from tampering.
+    --   signing_key_stable – true when the key came from SESSION_SIGNING_KEY;
+    --                        only then is a bad signature scored as tampering.
+    --   recovery_uses_ip   – Include the client IP in the passive fingerprint
+    --                        that recovers a session after its cookie was
+    --                        cleared (SESSION_RECOVERY_USES_IP, default true).
+    --                        Without it, all visitors with the same browser
+    --                        build would share one session. The IP never tells
+    --                        two sessions apart on its own.
+    --   tamper_score       – Threat score added to a request whose session
+    --                        cookie was edited or forged.
     -- -----------------------------------------------------------------------
     session = {
         cookie_name = "SERVERID",
         max_idle_time = 3600,
-        cleanup_interval = 300
+        cleanup_interval = 300,
+        signing_key = SESSION_SIGNING_KEY,
+        signing_key_stable = SESSION_SIGNING_KEY_STABLE,
+        recovery_uses_ip = (os.getenv("SESSION_RECOVERY_USES_IP") or "true"):lower() ~= "false",
+        -- Seconds after a session's last request during which a cookie-less
+        -- client with the same fingerprint is recovered into it.
+        recovery_window = tonumber(os.getenv("SESSION_RECOVERY_WINDOW")) or 900,
+        tamper_score = 50
     },
 
     -- -----------------------------------------------------------------------
@@ -155,6 +190,16 @@ _G.config = {
         },
         max_threat_score = 100,
         honeypot_threshold = 80,  -- Raised from 50 to prevent false positives
+        -- Per-address reputation (Suricata alerts, AbuseIPDB) on shared
+        -- addresses -- see lua/shared_ip_rules.lua. Everything a client does
+        -- itself is scored on its session; the address only adds at most
+        -- ip_reputation_cap per request (10 = never enough on its own to
+        -- count as a new signal in router.lua's accumulation, so it can't
+        -- divert anyone), and nothing at all once shared_ip_sessions
+        -- distinct sessions were active on it within shared_ip_window s.
+        ip_reputation_cap = tonumber(os.getenv("IP_REPUTATION_CAP")) or 10,
+        shared_ip_sessions = tonumber(os.getenv("SHARED_IP_SESSIONS")) or 2,
+        shared_ip_window = tonumber(os.getenv("SHARED_IP_WINDOW")) or 3600,
         -- THREAT_DECAY_ENABLED=false turns threat decay OFF entirely: a
         -- half-life of 0 makes every decay path (router_rules/suricata_rules
         -- decayed_score, decay_policy.decay) return the stored peak unchanged,

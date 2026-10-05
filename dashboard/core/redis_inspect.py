@@ -57,8 +57,8 @@ _LIST_KEYS_SCRIPT = (
 )
 
 
-# Clears threat_ips / session:* / honeypot_pool_ip:* entries for any IP
-# that can only be internal-to-this-docker-host traffic (RFC1918 private
+# Clears threat_ips entries, and the sessions (with their per-session pool
+# assignments and fingerprint pointers), of any IP that can only be internal-to-this-docker-host traffic (RFC1918 private
 # ranges + loopback) -- the dashboard's own exploit-runner curls, manual
 # browser testing done directly on this machine, container-to-container
 # health checks, and Suricata's own host-network visibility all show up as
@@ -71,8 +71,8 @@ _LIST_KEYS_SCRIPT = (
 # environment's own self-generated noise.
 #
 # All three stores done server-side in one round-trip (not N docker-exec
-# calls) via Lua: KEYS+DEL for the private-IP-matching session:*/
-# honeypot_pool_ip:* records, and a filter-then-SET (or DEL if now empty)
+# calls) via Lua: KEYS+DEL for the private-IP-matching session:* records and
+# their honeypot_pool_session:* / fp_session:* keys, and a filter-then-SET (or DEL if now empty)
 # for threat_ips, which is a single JSON blob keyed by IP rather than one
 # redis key per IP.
 _UNPOISON_SCRIPT = r"""
@@ -87,6 +87,7 @@ local function is_local_ip(ip)
 end
 
 local removed_sessions = 0
+local removed_ids = {}
 local session_keys = redis.call("KEYS", "session:*")
 for _, key in ipairs(session_keys) do
     local val = redis.call("GET", key)
@@ -95,17 +96,25 @@ for _, key in ipairs(session_keys) do
         if ok and type(data) == "table" and data.ip_address and is_local_ip(data.ip_address) then
             redis.call("DEL", key)
             removed_sessions = removed_sessions + 1
+            removed_ids[key:sub(#"session:" + 1)] = true
         end
     end
 end
 
+-- Pools are assigned per session (honeypot_pool_session:<session id>): drop
+-- the assignments of the sessions removed above, and the passive-fingerprint
+-- pointers (fp_session:<fingerprint>) that would recover them.
 local removed_pools = {}
-local pool_keys = redis.call("KEYS", "honeypot_pool_ip:*")
-for _, key in ipairs(pool_keys) do
-    local ip = key:sub(#"honeypot_pool_ip:" + 1)
-    if is_local_ip(ip) then
+for _, key in ipairs(redis.call("KEYS", "honeypot_pool_session:*")) do
+    local sid = key:sub(#"honeypot_pool_session:" + 1)
+    if removed_ids[sid] then
         redis.call("DEL", key)
-        table.insert(removed_pools, ip)
+        table.insert(removed_pools, sid)
+    end
+end
+for _, key in ipairs(redis.call("KEYS", "fp_session:*")) do
+    if removed_ids[redis.call("GET", key) or ""] then
+        redis.call("DEL", key)
     end
 end
 
@@ -268,7 +277,7 @@ def clear_local_threat_state(remote: RemoteConfig | None, timeout: float = 15.0)
     host IP (see _UNPOISON_SCRIPT) so exploit testing always starts from a
     clean, production-routed session -- run this before/after running
     exploits from the Exploits page. Returns a summary dict:
-    {"sessions_removed": int, "pool_assignments_removed": [ip, ...],
+    {"sessions_removed": int, "pool_assignments_removed": [session id, ...],
     "threat_ips_removed": [ip, ...]}."""
     out = _run_redis_cli(remote, "EVAL", _UNPOISON_SCRIPT, "0", timeout=timeout).strip()
     try:
@@ -292,7 +301,7 @@ def flush_all(remote: RemoteConfig | None, timeout: float = 15.0) -> None:
     scoring lives (session:*), threat_analyzer.lua's IP-reputation
     classification (threat_ips, fed by Suricata/admin/vulnerability/
     AbuseIPDB detections), pool_router.lua's sticky pool assignments
-    (honeypot_pool_ip:*), and rate limiting -- unlike
+    (honeypot_pool_session:*), and rate limiting -- unlike
     clear_local_threat_state()'s targeted un-poisoning of just this
     host's own local/test IP, this clears every IP's state, real or
     test. No coming back from this short of the state rebuilding itself
@@ -301,7 +310,7 @@ def flush_all(remote: RemoteConfig | None, timeout: float = 15.0) -> None:
 
 
 # Deletes every key except the honeypot pool registry (honeypot_pool:ready /
-# :free / :owner:* / :pw:* ...), which pool_manager owns. "honeypot_pool_ip:*"
+# :free / :owner:* / :pw:* ...), which pool_manager owns. "honeypot_pool_session:*"
 # (a different prefix) IS deleted: that is the per-IP assignment, i.e. threat
 # state.
 _FLUSH_THREAT_SCRIPT = """

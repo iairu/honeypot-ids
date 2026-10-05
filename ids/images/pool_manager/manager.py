@@ -1,7 +1,7 @@
 """pool_manager: keeps a spare honeypot pool ready for the next attacker.
 
 A pool is a honeypot_eshop_N (WordPress) + honeypot_database_N (MySQL) pair.
-pool_router.lua gives each new attacker IP a free ready pool exclusively and
+pool_router.lua gives each new attacker session a free ready pool exclusively and
 queues a wake-up on honeypot_pool:provision; this service then builds an
 additional pool so one is always waiting. See pool_router_rules.lua for the
 Redis key schema both sides share.
@@ -42,7 +42,7 @@ OWNER_PREFIX = "honeypot_pool:owner:"
 PROVISION_KEY = "honeypot_pool:provision"
 CAPPED_KEY = "honeypot_pool:capped"
 PW_PREFIX = "honeypot_pool:pw:"
-IP_KEY_PREFIX = "honeypot_pool_ip:"
+SESSION_KEY_PREFIX = "honeypot_pool_session:"
 
 PROJECT = os.environ.get("COMPOSE_PROJECT", "honeypot-ids-system-v1")
 MODE = os.environ.get("POOL_MODE", "wordpress")
@@ -229,9 +229,9 @@ class Manager:
             if not owners:
                 continue
             current = {}
-            for ip in owners:
-                v = self.redis.get(IP_KEY_PREFIX + ip)
-                current[ip] = int(v) if v is not None and v.isdigit() else None
+            for owner in owners:   # session ids (pool_router assigns per session)
+                v = self.redis.get(SESSION_KEY_PREFIX + owner)
+                current[owner] = int(v) if v is not None and v.isdigit() else None
             stale = pl.stale_owners(owners, current, n)
             if not stale:
                 continue
