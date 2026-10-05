@@ -78,6 +78,9 @@ function _M.request_fingerprint()
         user_agent = v.http_user_agent,
         accept_language = v.http_accept_language,
         accept_encoding = v.http_accept_encoding,
+        ch_ua = v.http_sec_ch_ua,
+        ch_ua_platform = v.http_sec_ch_ua_platform,
+        ch_ua_mobile = v.http_sec_ch_ua_mobile,
     }, _G.config.session.recovery_uses_ip)
     if not source then
         ctx.recovery_fingerprint = false
@@ -128,7 +131,9 @@ function _M.bind_fingerprint_to_session(session_id)
         return
     end
 
-    red:setex("fp_session:" .. fp, _G.config.session.max_idle_time, session_id)
+    -- Short-lived on purpose (recovery_window, refreshed on every request):
+    -- see session_identity_rules.lua on shared (NAT) addresses.
+    red:setex("fp_session:" .. fp, _G.config.session.recovery_window, session_id)
     _G.redis_pool.close_connection(red)
 end
 

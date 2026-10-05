@@ -52,6 +52,7 @@ local cjson = require "cjson"
 local threat_rules = require "threat_rules"
 local suricata_rules = require "suricata_rules"
 local wp_install_state = require "wp_install_state"
+local shared_ip_rules = require "shared_ip_rules"
 
 local _M = {}
 
@@ -177,11 +178,23 @@ function _M.analyze_request(uri, headers, remote_ip)
         end
     end
 
-    -- Stage 4: IP reputation check
-    local ip_rep = _M.check_ip_reputation(remote_ip)
+    -- Stage 4: IP reputation check, plus this session's own request rate.
+    --
+    -- The actor is the session (resolved in nginx.conf before this runs);
+    -- the address is only a fallback. See shared_ip_rules.lua for how the
+    -- address's own reputation is limited on shared (NAT) addresses.
+    local actor = ngx.ctx.session_id or remote_ip
+    local ip_rep = _M.check_ip_reputation(remote_ip, actor)
     threat_result.ip_reputation = ip_rep.score
     threat_result.ip_reputation_reason = ip_rep.reason
+    threat_result.ip_shared = ip_rep.shared
     threat_result.score = threat_result.score + ip_rep.score
+
+    if _M.session_request_rate_high(actor) then
+        threat_result.score = threat_result.score + 20
+        table.insert(threat_result.patterns_matched, "high_request_rate")
+        ngx.log(ngx.WARN, "[THREAT ANALYZER] 🔍 High request rate for this session (+20)")
+    end
 
     if ip_rep.reason then
         table.insert(threat_result.details, "ip_reputation: " .. ip_rep.reason)
@@ -323,18 +336,27 @@ function _M.is_static_asset(uri)
 end
 
 -- ---------------------------------------------------------------------------
--- check_ip_reputation(ip)
+-- check_ip_reputation(ip, actor)
 --
--- Inherently I/O: reads the threat_intel and rate_limit shared dicts,
--- kicks off an async AbuseIPDB check. Not moved to threat_rules.lua since
--- there's no meaningful pure core left once the Redis/shared-dict reads are
--- taken out -- the "is this IP whitelisted" check itself is a single
--- _G.utils call, not scoring logic.
+-- The address's OWN reputation: Suricata alerts and AbuseIPDB, which only
+-- know addresses. Inherently I/O (threat_intel / rate_limit shared dicts,
+-- async AbuseIPDB lookup); the shared-address policy itself is pure, in
+-- shared_ip_rules.lua.
+--
+-- Many users can sit behind one public address (carrier-grade NAT), so this
+-- is limited: it adds at most _G.config.threat.ip_reputation_cap, and
+-- nothing once the address is shared (shared_ip_sessions distinct sessions
+-- active on it within shared_ip_window). `actor` is the session making this
+-- request; it is recorded against the address to tell whether it's shared.
+--
+-- @return table  { score, reason, shared, raw_score }
 -- ---------------------------------------------------------------------------
-function _M.check_ip_reputation(ip)
+function _M.check_ip_reputation(ip, actor)
     local result = {
         score = 0,
-        reason = nil
+        reason = nil,
+        shared = false,
+        raw_score = 0,
     }
 
     if not ip then
@@ -344,10 +366,15 @@ function _M.check_ip_reputation(ip)
     -- Check if IP is whitelisted
     if _G.utils.is_ip_whitelisted(ip) then
         result.score = -20
+        result.raw_score = -20
         result.reason = "whitelisted"
         ngx.log(ngx.INFO, "[THREAT ANALYZER] ✅ IP is whitelisted: ", ip)
         return result
     end
+
+    local cfg = _G.config.threat
+    local active_sessions = _M.track_address_sessions(ip, actor)
+    result.shared = shared_ip_rules.is_shared(active_sessions, cfg.shared_ip_sessions)
 
     -- Check threat intelligence data
     local threat_intel = ngx.shared.threat_intel
@@ -362,24 +389,27 @@ function _M.check_ip_reputation(ip)
             -- one-off false positive, e.g. an AbuseIPDB blacklist entry
             -- that's since been resolved) would otherwise permanently
             -- poison this IP's reputation contribution with no way to age
-            -- out short of manually clearing Redis -- confirmed live this
-            -- was happening repeatedly. (A DIFFERENT class of false
-            -- positive -- Suricata's network_mode:host visibility
-            -- misattributing an alert to a container's own internal
-            -- address rather than the real client -- is filtered out
-            -- before it ever reaches threat_ips at all; see
-            -- suricata_rules.lua's module docstring and
-            -- init_worker.lua's parse_suricata_logs().)
-            -- score_decay_half_life_seconds is the same knob session-level
-            -- scoring decays against (router_rules.decayed_score(),
-            -- router.lua) -- one shared "how long does suspicion linger"
-            -- setting for both.
-            result.score = suricata_rules.decayed_score(
-                threat_ips[ip], ngx.time(), _G.config.threat.score_decay_half_life_seconds, _G.config.threat)
+            -- out short of manually clearing Redis. (Suricata's
+            -- network_mode:host misattribution to a container's own
+            -- internal address is filtered out before it reaches
+            -- threat_ips -- see suricata_rules.lua and init_worker.lua's
+            -- parse_suricata_logs().) score_decay_half_life_seconds is the
+            -- same knob session-level scoring decays against.
+            local raw = suricata_rules.decayed_score(
+                threat_ips[ip], ngx.time(), cfg.score_decay_half_life_seconds, cfg)
+            local score, limited = shared_ip_rules.contribution(raw, result.shared, cfg.ip_reputation_cap)
+            result.raw_score = raw
+            result.score = score
             result.reason = threat_ips[ip].reason or "known_threat"
+            if limited == "shared_ip" then
+                result.reason = result.reason .. " (shared address, " .. active_sessions .. " sessions: not counted)"
+            elseif limited == "capped" then
+                result.reason = result.reason .. " (capped at " .. cfg.ip_reputation_cap .. ")"
+            end
             ngx.log(ngx.WARN, "[THREAT ANALYZER] 🚨 Known threat IP detected: ", ip, " | Reason: ", result.reason,
-                    " | Stored raw_score: ", threat_ips[ip].raw_score or 0, " | Decayed score: ",
-                    string.format("%.1f", result.score))
+                    " | Stored raw_score: ", threat_ips[ip].raw_score or 0, " | Decayed: ",
+                    string.format("%.1f", raw), " | Counted: ", string.format("%.1f", score),
+                    " | Active sessions on address: ", active_sessions)
         end
     end
 
@@ -394,37 +424,65 @@ function _M.check_ip_reputation(ip)
         end
     end
 
-    -- Per-IP request-rate check. update_rate_limit() below both increments
-    -- and reads the counter for this IP in the same call -- previously this
-    -- read the rate_limit shared dict without anything ever writing to it
-    -- (the only writer, analyze_rate_limiting(), was defined but never
-    -- called from anywhere in the request path), so this signal was
-    -- permanently dead. Fixed by having check_ip_reputation call the
-    -- writer itself instead of a stale read-only snapshot.
-    local rate_data = _M.update_rate_limit(ip)
-    if rate_data.requests and rate_data.window_start then
-        local requests_per_second = rate_data.requests / (ngx.time() - rate_data.window_start + 1)
-        if requests_per_second > 10 then
-            result.score = result.score + 20
-            result.reason = (result.reason and result.reason .. ", " or "") .. "high_request_rate"
-        end
-    end
-
     return result
 end
 
 -- ---------------------------------------------------------------------------
--- update_rate_limit(ip)
+-- track_address_sessions(ip, actor)
 --
--- Increments (or starts) the current 60s request-count window for `ip` in
+-- Records `actor` as active on `ip` and returns how many distinct sessions
+-- were active on it within shared_ip_window (shared_ip_rules.track). Kept in
+-- the rate_limit shared dict; a lost update between workers only delays
+-- "shared" by a request.
+-- ---------------------------------------------------------------------------
+function _M.track_address_sessions(ip, actor)
+    local dict = ngx.shared.rate_limit
+    local window = _G.config.threat.shared_ip_window
+    local key = "ip_sessions:" .. ip
+    local state
+    local json = dict:get(key)
+    if json then
+        local ok, decoded = pcall(cjson.decode, json)
+        if ok then state = decoded end
+    end
+    local count
+    state, count = shared_ip_rules.track(state, actor ~= ip and actor or nil, ngx.time(), window)
+    dict:set(key, cjson.encode(state), window)
+    return count
+end
+
+-- ---------------------------------------------------------------------------
+-- session_request_rate_high(actor)
+--
+-- More than 10 requests/second sustained within this session's current 60 s
+-- window. Per session, so one flooding client doesn't raise the score of
+-- everyone behind the same NAT address.
+-- ---------------------------------------------------------------------------
+function _M.session_request_rate_high(actor)
+    if not actor then
+        return false
+    end
+    local rate_data = _M.update_rate_limit(actor)
+    if rate_data.requests and rate_data.window_start then
+        local requests_per_second = rate_data.requests / (ngx.time() - rate_data.window_start + 1)
+        return requests_per_second > 10
+    end
+    return false
+end
+
+-- ---------------------------------------------------------------------------
+-- update_rate_limit(actor)
+--
+-- Increments (or starts) the current 60s request-count window for `actor`
+-- (the session id; the address only when there is no session) in
 -- the rate_limit shared dict and returns the resulting window data. I/O
 -- (shared dict read+write), so it stays here rather than in threat_rules.lua.
 -- ---------------------------------------------------------------------------
-function _M.update_rate_limit(ip)
+function _M.update_rate_limit(actor)
     local rate_limit_dict = ngx.shared.rate_limit
     local current_time = ngx.time()
     local window_size = 60  -- 1 minute window
-    local rate_key = "ip:" .. ip
+    local rate_key = "actor:" .. actor
 
     local rate_data_json = rate_limit_dict:get(rate_key)
     local rate_data
@@ -491,7 +549,8 @@ function _M.detect_automation(headers, uri)
     --    requests; a real page load's one-off burst never does. Requiring
     --    several in a row is what actually tells the two apart.
     local sessions_dict = ngx.shared.sessions
-    local timing_key = "timing:" .. (ngx.var.remote_addr or "unknown")
+    -- Per session: a NAT neighbour's requests don't extend this client's streak.
+    local timing_key = "timing:" .. (ngx.ctx.session_id or ngx.var.remote_addr or "unknown")
     local now = ngx.now()
     local RAPID_GAP_SECONDS = 0.5
     local MIN_STREAK_FOR_AUTOMATION = 3

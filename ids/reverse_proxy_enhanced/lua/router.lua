@@ -454,6 +454,14 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
     -- Suricata eve.json alerts accumulate a severity-graded score there
     -- (suricata_rules.severity_to_score); any IP scoring > 50 is diverted
     -- immediately regardless of the current request's content.
+    --
+    -- threat_result.ip_reputation is what the address CONTRIBUTES, already
+    -- limited by shared_ip_rules (threat_analyzer.check_ip_reputation): zero
+    -- on a shared address and at most ip_reputation_cap otherwise. With the
+    -- default cap (10) this stage never fires, so a carrier-grade NAT user
+    -- is never diverted for a neighbour's alerts; an operator who knows
+    -- their clients don't share addresses can raise IP_REPUTATION_CAP above
+    -- 50 to turn it back on for unshared addresses.
     if threat_result.ip_reputation > 50 then
         -- honeypot_reason stays one of the fixed category strings every
         -- other stage uses (matches abuseipdb_rules.REASON_CATEGORIES'

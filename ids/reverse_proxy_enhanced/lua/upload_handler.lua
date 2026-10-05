@@ -5,7 +5,6 @@ local cjson = require "cjson"
 local resty_sha1 = require "resty.sha1"
 local str = require "resty.string"
 local upload_rules = require "upload_rules"
-local threat_intel = require "threat_intel"
 
 local _M = {}
 
@@ -152,34 +151,11 @@ function _M.log_suspicious_upload(analysis, headers, args)
         red:ltrim("suspicious_uploads", 0, 999)  -- Keep last 1000 entries
         _G.redis_pool.close_connection(red)
     end
-    
-    -- Update IP threat score
-    _M.update_ip_threat_for_upload(ngx.var.remote_addr, analysis.threat_score)
-end
 
--- Update IP threat score based on upload activity
-function _M.update_ip_threat_for_upload(ip, upload_threat_score)
-    local red, err = _G.redis_pool.get_connection()
-    if not red then
-        return
-    end
-    
-    -- Load, default, and persist (Redis + shared-dict mirror) all go
-    -- through threat_intel, which centralizes the ngx.null-on-missing-key
-    -- handling that used to crash this path on a fresh/flushed Redis.
-    local threats = threat_intel.load(red)
-    local entry = threat_intel.ensure(threats, ip)
-
-    -- Add upload-specific threat score (scaled down for IP reputation).
-    local additional_score = math.floor(upload_threat_score / 2)
-    entry.raw_score = math.min(entry.raw_score + additional_score, 100)
-    entry.reason = "suspicious_upload_activity"
-    entry.updated = ngx.time()
-    entry.upload_attempts = (entry.upload_attempts or 0) + 1
-    entry.offenses = (entry.offenses or 0) + 1  -- decay escalation (decay_policy.lua)
-
-    threat_intel.persist(red, threats)
-    _G.redis_pool.close_connection(red)
+    -- The upload's score already counts against the SESSION (threat_analyzer
+    -- Stage 6b adds it to the request's score). It is not also written into
+    -- the address's reputation: on a shared (NAT) address that would score
+    -- every other user behind it.
 end
 
 -- Generate upload security report

@@ -28,6 +28,17 @@
 --      only ever part of this recovery key -- two clients with different
 --      fingerprints behind one IP are still separate sessions.
 --
+--   Shared addresses (carrier-grade NAT): two users on one public address who
+--   run the identical browser build with the same languages produce the same
+--   recovery key. To keep a neighbour from being merged into an attacker's
+--   session, the key also carries the low-entropy client hints Chromium sends
+--   on every HTTPS request (Sec-CH-UA brand list, platform, mobile), and the
+--   fingerprint -> session binding only lives recovery_window seconds after
+--   the session's last request (session_handler.bind_fingerprint_to_session).
+--   An attacker who clears cookies mid-attack is still recovered; a
+--   neighbour with an identical browser is only merged if they arrive while
+--   that session is active.
+--
 --   What this cannot do: an attacker who clears storage AND changes client
 --   (another browser or tool, a different TLS stack or headers) presents a
 --   new fingerprint and starts a new session. No server-side mechanism can
@@ -43,10 +54,13 @@ _M.ID_PATTERN = "^%x+$"
 _M.ID_LENGTH = 32
 
 -- Recovery-key inputs, in a fixed order. ssl_* come from nginx's $ssl_protocol,
--- $ssl_ciphers (the cipher suites the CLIENT offered) and $ssl_curves.
+-- $ssl_ciphers (the cipher suites the CLIENT offered) and $ssl_curves; ch_* are
+-- the Sec-CH-UA, Sec-CH-UA-Platform and Sec-CH-UA-Mobile request headers
+-- (empty for browsers that don't send client hints).
 _M.FINGERPRINT_FIELDS = {
     "ssl_protocol", "ssl_ciphers", "ssl_curves", "http_version",
     "user_agent", "accept_language", "accept_encoding",
+    "ch_ua", "ch_ua_platform", "ch_ua_mobile",
 }
 
 --- Whether `id` looks like a session id this proxy generated.

@@ -94,6 +94,7 @@ do
         ssl_curves = "X25519:prime256v1", http_version = "HTTP/2.0",
         user_agent = "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0",
         accept_language = "en-US,en;q=0.9", accept_encoding = "gzip, deflate, br",
+        ch_ua = '"Chromium";v="130", "Not?A_Brand";v="99"', ch_ua_platform = '"Linux"', ch_ua_mobile = "?0",
     }
     local function with(changes)
         local t = {}
@@ -111,6 +112,8 @@ do
           a ~= rules.fingerprint_source(with({ accept_language = "sk-SK" }), true))
     check("different TLS cipher offer -> different fingerprint",
           a ~= rules.fingerprint_source(with({ ssl_ciphers = "ECDHE-RSA-AES128-GCM-SHA256" }), true))
+    check("different client-hint platform -> different fingerprint",
+          a ~= rules.fingerprint_source(with({ ch_ua_platform = '"Windows"' }), true))
     check("different HTTP version -> different fingerprint",
           a ~= rules.fingerprint_source(with({ http_version = "HTTP/1.1" }), true))
 

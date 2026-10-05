@@ -86,3 +86,39 @@ class VectorFigureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(vf is None, "PyQt6 not installed")
+class RoutingDecisionDiagramTests(unittest.TestCase):
+    """The routing-decision figure in the exploit report PDF."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_renders_as_vector(self):
+        from core import diagrams
+        doc = QTextDocument()
+        html = diagrams.figure_html(doc, diagrams.routing_decision_diagram(), "decision", 3, "x")
+        doc.setHtml(html)
+        self.assertEqual(vf.embed_figures(doc), 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf = _print(doc, os.path.join(tmp, "d.pdf"))
+        self.assertNotIn(b"/Subtype /Image", pdf)
+
+    def test_covers_every_router_stage(self):
+        # Each honeypot stage in router.lua's decide_route has a row; a new
+        # stage there should get one here too.
+        router = (Path(__file__).resolve().parents[2]
+                  / "ids/reverse_proxy_enhanced/lua/router.lua").read_text()
+        reasons = {"high_threat_score", "cve_pattern_match", "vulnerable_plugin_access",
+                   "bad_ip_reputation", "multiple_admin_attempts",
+                   "accumulated_suspicious_activities", "rapid_automation_detected",
+                   "suspicious_file_upload"}
+        for r in reasons:
+            self.assertIn(f'"{r}"', router, r)
+        src = (Path(__file__).resolve().parents[1] / "core/diagrams.py").read_text()
+        body = src.split("def routing_decision_diagram", 1)[1].split("\ndef ", 1)[0]
+        stage_rows = [k for k in ("s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10")
+                      if f'("{k}", "dec"' in body]
+        self.assertEqual(len(stage_rows), len(reasons) + 1)  # + sticky re-check

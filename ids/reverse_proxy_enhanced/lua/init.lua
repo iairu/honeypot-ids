@@ -142,6 +142,9 @@ _G.config = {
         signing_key = SESSION_SIGNING_KEY,
         signing_key_stable = SESSION_SIGNING_KEY_STABLE,
         recovery_uses_ip = (os.getenv("SESSION_RECOVERY_USES_IP") or "true"):lower() ~= "false",
+        -- Seconds after a session's last request during which a cookie-less
+        -- client with the same fingerprint is recovered into it.
+        recovery_window = tonumber(os.getenv("SESSION_RECOVERY_WINDOW")) or 900,
         tamper_score = 50
     },
 
@@ -187,6 +190,16 @@ _G.config = {
         },
         max_threat_score = 100,
         honeypot_threshold = 80,  -- Raised from 50 to prevent false positives
+        -- Per-address reputation (Suricata alerts, AbuseIPDB) on shared
+        -- addresses -- see lua/shared_ip_rules.lua. Everything a client does
+        -- itself is scored on its session; the address only adds at most
+        -- ip_reputation_cap per request (10 = never enough on its own to
+        -- count as a new signal in router.lua's accumulation, so it can't
+        -- divert anyone), and nothing at all once shared_ip_sessions
+        -- distinct sessions were active on it within shared_ip_window s.
+        ip_reputation_cap = tonumber(os.getenv("IP_REPUTATION_CAP")) or 10,
+        shared_ip_sessions = tonumber(os.getenv("SHARED_IP_SESSIONS")) or 2,
+        shared_ip_window = tonumber(os.getenv("SHARED_IP_WINDOW")) or 3600,
         -- THREAT_DECAY_ENABLED=false turns threat decay OFF entirely: a
         -- half-life of 0 makes every decay path (router_rules/suricata_rules
         -- decayed_score, decay_policy.decay) return the stored peak unchanged,

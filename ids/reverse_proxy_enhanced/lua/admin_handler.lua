@@ -50,7 +50,20 @@ function _M.is_legitimate_ajax_call(uri, method)
 end
 
 -- Process admin access requests
-function _M.process_admin_request(remote_ip, uri)
+-- Scores an admin-area request and returns (score, reason) for the caller
+-- to add to THIS request's threat_result, which the router then accumulates
+-- onto the session. Attempt counters are kept per `actor` (the session id).
+--
+-- Both used to be per IP: brute-force counters were keyed on the address and
+-- the score was written into the IP's reputation (threat_ips), so one
+-- attacker behind a carrier-grade NAT raised the score of every other user
+-- sharing that address. Now an attacker's admin probing only counts against
+-- their own session.
+--
+-- @return number  Score to add (0 when nothing suspicious).
+-- @return string|nil  Pattern name for threat_result.patterns_matched.
+function _M.process_admin_request(remote_ip, uri, actor)
+    actor = actor or remote_ip
     local admin_info = {
         ip = remote_ip,
         uri = uri,
@@ -63,7 +76,7 @@ function _M.process_admin_request(remote_ip, uri)
     if _G.utils.is_ip_whitelisted(remote_ip) then
         ngx.log(ngx.INFO, "[ADMIN] ✅ Whitelisted IP accessing admin area | IP: ", remote_ip, " | URI: ", uri)
         _M.log_admin_access(admin_info, "allowed", "whitelisted_ip")
-        return
+        return 0
     end
 
     ngx.log(ngx.INFO, "[ADMIN] 🔐 Admin area access attempt | IP: ", remote_ip, " | URI: ", uri, " | Method: ", admin_info.method)
@@ -74,24 +87,23 @@ function _M.process_admin_request(remote_ip, uri)
     if is_legitimate_ajax then
         ngx.log(ngx.INFO, "[ADMIN] ✅ Legitimate admin-ajax.php call | IP: ", remote_ip)
         _M.log_admin_access(admin_info, "monitored", "legitimate_ajax")
-        return
+        return 0
     end
 
     -- Check for brute force attempts (only for actual login endpoints)
     local is_login = _M.is_login_attempt(uri, admin_info.method)
     if is_login then
-        local brute_force_score = _M.check_brute_force_attempts(remote_ip)
+        local brute_force_score = _M.check_brute_force_attempts(actor)
         if brute_force_score > 50 then
             ngx.log(ngx.WARN, "[ADMIN] 🚨 BRUTE FORCE DETECTED | IP: ", remote_ip, " | Score: ", brute_force_score, " | URI: ", uri)
             _M.log_admin_access(admin_info, "blocked", "brute_force_detected")
-            _M.increment_threat_score(remote_ip, 30)
-            return
+            return 30, "admin_brute_force"
         elseif brute_force_score > 0 then
             ngx.log(ngx.WARN, "[ADMIN] ⚠️  Multiple admin attempts detected | IP: ", remote_ip, " | Score: ", brute_force_score)
         end
 
         -- Track login attempts
-        _M.track_admin_attempt(remote_ip, uri)
+        _M.track_admin_attempt(actor, uri)
     end
 
     -- Analyze admin request patterns
@@ -100,14 +112,14 @@ function _M.process_admin_request(remote_ip, uri)
         ngx.log(ngx.WARN, "[ADMIN] 🔍 Suspicious admin pattern detected | IP: ", remote_ip,
                 " | Reason: ", pattern_analysis.reason, " | Score: +", pattern_analysis.score)
         _M.log_admin_access(admin_info, "suspicious", pattern_analysis.reason)
-        _M.increment_threat_score(remote_ip, pattern_analysis.score)
-    else
-        ngx.log(ngx.INFO, "[ADMIN] ✅ Admin access pattern appears legitimate | IP: ", remote_ip)
-        _M.log_admin_access(admin_info, "monitored", "legitimate_access")
+        return pattern_analysis.score, "admin_" .. tostring(pattern_analysis.reason or "suspicious")
     end
+    ngx.log(ngx.INFO, "[ADMIN] ✅ Admin access pattern appears legitimate | IP: ", remote_ip)
+    _M.log_admin_access(admin_info, "monitored", "legitimate_access")
+    return 0
 end
 
--- Check for brute force login attempts
+-- Check for brute force login attempts (`ip` is the actor key: the session id)
 -- Thin adapter over admin_rules.score_brute_force_attempts() -- reads the
 -- attempt-tracking record from the shared dict (I/O), delegates the actual
 -- window-filtering/scoring, then logs at the tier the pure function's
@@ -193,82 +205,6 @@ function _M.track_admin_attempt(ip, uri)
     
     -- Store updated data (expire in 30 minutes)
     rate_limit_dict:set(attempt_key, cjson.encode(attempts_data), 1800)
-end
-
--- Increment threat score for IP based on admin activity
-function _M.increment_threat_score(ip, additional_score)
-    -- Update Redis for persistence
-    local red, err = _G.redis_pool.get_connection()
-    if not red then
-        ngx.log(ngx.ERR, "Failed to connect to Redis for threat score update: ", err)
-        -- Continue to update shared memory even if Redis fails
-    end
-    
-    local threats = {}
-    local old_score = 0
-
-    if red then
-        local threat_data = red:get('threat_ips')
-        if threat_data then
-            threat_data = tostring(threat_data)
-            local ok, decoded = pcall(cjson.decode, threat_data)
-            if ok and decoded then
-                threats = decoded
-            end
-        end
-
-        if not threats[ip] then
-            threats[ip] = {
-                raw_score = 0,
-                reason = "clean",
-                updated = ngx.time()
-            }
-        end
-
-        old_score = threats[ip].raw_score
-        threats[ip].raw_score = math.min(threats[ip].raw_score + additional_score, 100)
-        threats[ip].admin_activity = (threats[ip].admin_activity or 0) + 1
-        threats[ip].offenses = (threats[ip].offenses or 0) + 1  -- decay escalation (decay_policy.lua)
-        threats[ip].updated = ngx.time()
-        threats[ip].reason = "suspicious_admin_activity"
-
-        red:set('threat_ips', cjson.encode(threats))
-        _G.redis_pool.close_connection(red)
-    end
-    
-    -- Also update shared memory for immediate effect in threat_analyzer
-    local threat_intel = ngx.shared.threat_intel
-    if threat_intel then
-        local shared_threats_json = threat_intel:get("threat_ips")
-        local shared_threats = {}
-        if shared_threats_json then
-            local ok, decoded = pcall(cjson.decode, tostring(shared_threats_json))
-            if ok and decoded then
-                shared_threats = decoded
-            end
-        end
-        
-        if not shared_threats[ip] then
-            shared_threats[ip] = {
-                raw_score = 0,
-                reason = "clean",
-                updated = ngx.time()
-            }
-        end
-
-        old_score = shared_threats[ip].raw_score
-        shared_threats[ip].raw_score = math.min(shared_threats[ip].raw_score + additional_score, 100)
-        shared_threats[ip].admin_activity = (shared_threats[ip].admin_activity or 0) + 1
-        shared_threats[ip].offenses = (shared_threats[ip].offenses or 0) + 1  -- decay escalation (decay_policy.lua)
-        shared_threats[ip].updated = ngx.time()
-        shared_threats[ip].reason = "suspicious_admin_activity"
-
-        threat_intel:set("threat_ips", cjson.encode(shared_threats))
-    end
-
-    ngx.log(ngx.WARN, "[ADMIN] 📈 Threat score increased | IP: ", ip, " | Old: ", old_score,
-            " | New: ", (threats[ip] and threats[ip].raw_score or (shared_threats and shared_threats[ip] and shared_threats[ip].raw_score or 0)),
-            " | Added: +", additional_score)
 end
 
 -- Log admin access events
