@@ -17,10 +17,9 @@ pool registry) shows how many pools are ready and how many sessions each owns.
 """
 from __future__ import annotations
 
-import os
 from datetime import datetime
 
-from PyQt6.QtCore import QEventLoop, Qt, QThread, QTimer, QUrl, pyqtSignal
+from PyQt6.QtCore import QEventLoop, Qt, QThread, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
@@ -298,8 +297,15 @@ class PoolTestPage(QWidget):
     def _load_all(self, urls: list[str]) -> None:
         """Navigate each frame to its URL and wait for all loads (hard timeout,
         so one stuck page cannot hang the export)."""
-        pending = set(range(len(self.browsers)))
+        # A frame already on about:blank never fires loadFinished for about:blank.
+        pending = {i for i, u in enumerate(urls)
+                   if not (u == "about:blank" and self.browsers[i].view.url().toString()
+                           in ("", "about:blank"))}
         loop = QEventLoop()
+        if not pending:
+            for browser, url in zip(self.browsers, urls):
+                browser.navigate(url)
+            return
         conns = []
         for i, (browser, url) in enumerate(zip(self.browsers, urls)):
             def finished(_ok, n=i):
@@ -569,16 +575,30 @@ class PoolTestPage(QWidget):
             browser.navigate("about:blank")
 
     def refresh_pool_state(self) -> None:
-        try:
-            info = redis_inspect.pool_state(target_for("edge", self.state).remote)
-        except Exception as e:  # noqa: BLE001 -- show the failure, don't crash the page
-            self.pool_label.setText(f"Pool state unavailable: {e}")
+        """Read the pool registry off the GUI thread (a stopped stack makes the
+        docker call slow, and this runs every time the page is shown)."""
+        if self._exporting or getattr(self, "_pool_job", None) is not None:
             return
-        owners = ", ".join(f"pool {n}: {c} session(s)" for n, c in sorted(info["owners"].items()))
-        text = f"Ready pools: {info['ready'] or 'none'} — owners: {owners or 'none'}"
-        if info["capped"]:
-            text += f" — pool growth capped: {info['capped']}"
-        self.pool_label.setText(text)
+        remote = self._remote()
+        job = _Job(lambda: redis_inspect.pool_state(remote), self)
+        self._pool_job = job
+
+        def done() -> None:
+            self._pool_job = None
+            if not self._exporting:
+                if job.error is not None:
+                    self.pool_label.setText(f"Pool state unavailable: {job.error}")
+                else:
+                    info = job.result
+                    owners = ", ".join(f"pool {n}: {c} session(s)"
+                                       for n, c in sorted(info["owners"].items()))
+                    text = f"Ready pools: {info['ready'] or 'none'} — owners: {owners or 'none'}"
+                    if info["capped"]:
+                        text += f" — pool growth capped: {info['capped']}"
+                    self.pool_label.setText(text)
+            job.deleteLater()
+        job.finished.connect(done)
+        job.start()
 
     def showEvent(self, event) -> None:
         super().showEvent(event)

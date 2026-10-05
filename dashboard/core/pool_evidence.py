@@ -116,14 +116,19 @@ def db_status(target: Target, pool: int) -> dict[str, int] | None:
         return None
 
 
+_SINCE_RE = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+
+
 def take_baseline(target: Target, pools: list[int]) -> dict:
     """Start time (read from a pool's own container, so its clock is the one
     the logs and file times use) and each existing pool's DB counters."""
     since = ""
     for pool in pools:
         try:
-            since = _exec(target, f"honeypot_eshop_{pool}", "date -u +%Y-%m-%dT%H:%M:%SZ").strip()
-            break
+            got = _exec(target, f"honeypot_eshop_{pool}", "date -u +%Y-%m-%dT%H:%M:%SZ").strip()
+            if _SINCE_RE.match(got):   # interpolated into a shell command below
+                since = got
+                break
         except PoolEvidenceError:
             continue
     return {"since": since, "db": {p: db_status(target, p) for p in pools}}
@@ -135,7 +140,9 @@ def collect(target: Target, pools: list[int], baseline: dict) -> list[ContainerE
     for pool in pools:
         ev = ContainerEvidence(pool)
         try:
-            if since:
+            if not since:
+                ev.error = "Could not read the start time from the pool containers."
+            else:
                 argv, cwd = target.build("logs", "--no-log-prefix", "--since", since,
                                          f"honeypot_eshop_{pool}")
                 log = run_checked(argv, error=PoolEvidenceError, cwd=cwd, timeout=30,
