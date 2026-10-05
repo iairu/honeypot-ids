@@ -24,7 +24,7 @@
 #   request landed on via any client-visible response header (see
 #   router.lua: "X-Honeypot-Pool is intentionally NOT exposed to the
 #   client"). So this script instead reads the ground truth directly from
-#   Redis (honeypot_pool_ip:<IP>, the exact key pool_router.lua itself
+#   Redis (honeypot_pool_session:<IP>, the exact key pool_router.lua itself
 #   writes/reads) after driving real honeypot-routed traffic through the
 #   live reverse proxy with curl.
 #
@@ -159,11 +159,11 @@ fi
 # docker bridge gateway IP when curling a published port from the host),
 # discovered empirically rather than assumed.
 ASSIGNED_IP=$(docker exec "${REDIS_CONTAINER}" \
-    redis-cli -a "${REDIS_PASSWORD}" --no-auth-warning --scan --pattern 'honeypot_pool_ip:*' 2>/dev/null \
+    redis-cli -a "${REDIS_PASSWORD}" --no-auth-warning --scan --pattern 'honeypot_pool_session:*' 2>/dev/null \
     | tail -1)
 
 if [ -z "${ASSIGNED_IP}" ]; then
-    fail "No honeypot_pool_ip:* key found in Redis after a honeypot-routed request"
+    fail "No honeypot_pool_session:* key found in Redis after a honeypot-routed request"
     exit 1
 fi
 pass "Found pool assignment key in Redis: ${ASSIGNED_IP}"

@@ -68,16 +68,24 @@ local _M = {}
 --                                     { honeypot_bound, route_preference,
 --                                       honeypot_pool, honeypot_reason }
 --
--- Also refreshes the Redis TTL for the IP's pool assignment so long-running
+-- Also refreshes the Redis TTL for the pool assignment so long-running
 -- attack sessions are not evicted mid-way.
+--
+-- The pool belongs to the SESSION (pool_owner = the session id), not to the
+-- client IP: two attackers behind one address get separate sessions and so
+-- separate pools, and an attacker who changes address keeps both as long as
+-- the session follows them (signed cookie, or the passive-fingerprint
+-- recovery in session_handler.lua). remote_ip is only used for logging and
+-- AbuseIPDB, which are about addresses by nature.
 -- ---------------------------------------------------------------------------
-local function assign_honeypot_pool(routing_decision, extra_session_data, remote_ip)
+local function assign_honeypot_pool(routing_decision, extra_session_data, remote_ip, pool_owner)
+    pool_owner = pool_owner or remote_ip
     -- Lazy-require to avoid circular dependency issues at module load time.
     local pool_router = require "pool_router"
 
-    -- Determine which pool this IP belongs to (round-robin for new IPs,
-    -- sticky for returning ones).  Falls back to pool 1 on Redis errors.
-    local pool_num = pool_router.get_or_assign_pool(remote_ip)
+    -- Determine which pool this session belongs to (a free pool for a new
+    -- session, sticky for a returning one).  Falls back to pool 1 on Redis errors.
+    local pool_num = pool_router.get_or_assign_pool(pool_owner)
     local upstream = pool_router.get_upstream_for_pool(pool_num)
 
     routing_decision.target   = "honeypot"
@@ -118,7 +126,7 @@ local function assign_honeypot_pool(routing_decision, extra_session_data, remote
     routing_decision.session_data = sd
 
     -- Keep the assignment alive in Redis while the attacker is still active.
-    pool_router.refresh_assignment_ttl(remote_ip)
+    pool_router.refresh_assignment_ttl(pool_owner)
 
     -- Report to AbuseIPDB, but only for deterministic, high-confidence
     -- reasons (CVE match, vulnerable-plugin access, brute-force, confirmed
@@ -131,7 +139,7 @@ local function assign_honeypot_pool(routing_decision, extra_session_data, remote
     end
 
     ngx.log(ngx.WARN,
-        "[POOL] IP ", remote_ip,
+        "[POOL] Session ", pool_owner, " (IP ", remote_ip, ")",
         " assigned to honeypot pool ", pool_num,
         " (honeypot_eshop_", pool_num, " + honeypot_database_", pool_num,
         ", upstream=", upstream, ")",
@@ -191,6 +199,9 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         routing_decision.session_data = session_data
         ngx.log(ngx.INFO, "[ROUTING] New session created for IP: ", remote_ip, " | Session ID: ", session_data.id)
     end
+
+    -- Honeypot pools are assigned per session (see assign_honeypot_pool).
+    local pool_owner = session_data.id or session_id or remote_ip
     
     -- Stage 1b: WordPress installer wizard fast path (uninstalled instance).
     -- install.php is normally treated as a strong attack signal (Stage 3's
@@ -302,13 +313,13 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         local pool_router = require "pool_router"
         local pool_num = session_data.honeypot_pool
         if not pool_num then
-            pool_num = pool_router.get_or_assign_pool(remote_ip)
+            pool_num = pool_router.get_or_assign_pool(pool_owner)
             -- Persist pool number back into session on next update_session call.
             routing_decision.update_session = true
             routing_decision.session_data   = { honeypot_pool = pool_num }
         end
         -- Always refresh the TTL so an active attack session is never evicted.
-        pool_router.refresh_assignment_ttl(remote_ip)
+        pool_router.refresh_assignment_ttl(pool_owner)
 
         -- Only persist the new accumulated peak / refresh the decay
         -- anchor when THIS request itself carried a genuinely new signal
@@ -365,7 +376,7 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         assign_honeypot_pool(routing_decision, {
             threat_score    = threat_result.score,
             honeypot_reason = "high_threat_score",
-        }, remote_ip)
+        }, remote_ip, pool_owner)
 
         ngx.log(ngx.WARN, "[ROUTING] 🚨 HIGH THREAT SCORE -> HONEYPOT | Score: ", threat_result.score,
                 "/", _G.config.threat.honeypot_threshold, " | IP: ", remote_ip,
@@ -393,7 +404,7 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
             threat_score    = threat_result.score,
             honeypot_reason = "cve_pattern_match",
             matched_cves    = threat_result.cve_matched,
-        }, remote_ip)
+        }, remote_ip, pool_owner)
 
         ngx.log(ngx.WARN, "[ROUTING] 🎯 CVE EXPLOIT DETECTED -> HONEYPOT | CVEs: ",
                 table.concat(threat_result.cve_matched, ", "), " | Score: ", threat_result.score,
@@ -421,7 +432,7 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         assign_honeypot_pool(routing_decision, {
             threat_score    = math.max(threat_result.score, 60),
             honeypot_reason = "vulnerable_plugin_access",
-        }, remote_ip)
+        }, remote_ip, pool_owner)
 
         ngx.log(ngx.WARN, "[ROUTING] 🔌 VULNERABLE PLUGIN ACCESS -> HONEYPOT | Score: ",
                 math.max(threat_result.score, 60), " | IP: ", remote_ip, " | URI: ", uri)
@@ -464,7 +475,7 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         assign_honeypot_pool(routing_decision, {
             threat_score    = threat_result.score,
             honeypot_reason = reputation_reason,
-        }, remote_ip)
+        }, remote_ip, pool_owner)
 
         ngx.log(ngx.WARN, "[ROUTING] 🚫 BAD IP REPUTATION -> HONEYPOT | IP Rep Score: ",
                 threat_result.ip_reputation, " | Threat Score: ", threat_result.score,
@@ -486,7 +497,7 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
             assign_honeypot_pool(routing_decision, {
                 threat_score    = math.max(threat_result.score, 40),
                 honeypot_reason = "multiple_admin_attempts",
-            }, remote_ip)
+            }, remote_ip, pool_owner)
             ngx.log(ngx.WARN, "[ROUTING] 🔐 MULTIPLE ADMIN ATTEMPTS -> HONEYPOT | Attempts: ",
                     admin_attempts + 1, " | Score: ", math.max(threat_result.score, 40),
                     " | IP: ", remote_ip, " | URI: ", uri)
@@ -515,7 +526,7 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         assign_honeypot_pool(routing_decision, {
             threat_score    = threat_result.score,
             honeypot_reason = "accumulated_suspicious_activities",
-        }, remote_ip)
+        }, remote_ip, pool_owner)
 
         ngx.log(ngx.WARN, "[ROUTING] 📊 ACCUMULATED SUSPICIOUS ACTIVITIES -> HONEYPOT | Count: ",
                 #session_data.suspicious_activities, " | Score: ", threat_result.score,
@@ -536,7 +547,7 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         assign_honeypot_pool(routing_decision, {
             threat_score    = math.max(threat_result.score, 45),
             honeypot_reason = "rapid_automation_detected",
-        }, remote_ip)
+        }, remote_ip, pool_owner)
 
         ngx.log(ngx.WARN, "[ROUTING] 🤖 RAPID AUTOMATION DETECTED -> HONEYPOT | Score: ",
                 math.max(threat_result.score, 45), " | IP: ", remote_ip,
@@ -554,7 +565,7 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         assign_honeypot_pool(routing_decision, {
             threat_score    = math.max(threat_result.score, 50),
             honeypot_reason = "suspicious_file_upload",
-        }, remote_ip)
+        }, remote_ip, pool_owner)
 
         ngx.log(ngx.WARN, "[ROUTING] 📤 SUSPICIOUS FILE UPLOAD -> HONEYPOT | Score: ",
                 math.max(threat_result.score, 50), " | IP: ", remote_ip, " | URI: ", uri)

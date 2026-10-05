@@ -54,7 +54,7 @@ _M.MAX_POOL_NUMBER = 64
 --- Atomic assignment, run in Redis with EVAL so concurrent nginx workers can
 --- never hand one free pool to two attackers.
 ---
---- KEYS[1] = honeypot_pool_ip:<IP>   ARGV[1] = IP
+--- KEYS[1] = honeypot_pool_session:<SID> ARGV[1] = session id (the pool owner)
 --- KEYS[2] = free ZSET               ARGV[2] = assignment TTL (seconds)
 --- KEYS[3] = ready SET
 --- KEYS[4] = round-robin counter

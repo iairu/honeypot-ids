@@ -1,8 +1,9 @@
 -- pool_router.lua - Honeypot Pool Routing and Assignment Module
 --
 -- PURPOSE:
---   Implements the honeynet pooling architecture: each attacking IP address is
---   permanently assigned to a specific honeypot pool instance (honeypot_eshop_N +
+--   Implements the honeynet pooling architecture: each attacker SESSION (not
+--   IP address -- see session_handler.lua for how a session is kept and
+--   recovered) is permanently assigned to a specific honeypot pool instance (honeypot_eshop_N +
 --   honeypot_database_N). This gives every attacker their own isolated WordPress
 --   environment so their actions cannot cross-contaminate other attacker sessions.
 --
@@ -12,8 +13,8 @@
 --     pool_manager container (ids/pool_manager/) and registered in Redis once
 --     healthy (honeypot_pool:ready). The set of usable pools is therefore read
 --     from Redis, not hard-coded.
---   - EXCLUSIVE assignment: a new attacker IP is handed a free ready pool that
---     no other IP owns (atomic Redis EVAL, see pool_router_rules.ASSIGN_SCRIPT,
+--   - EXCLUSIVE assignment: a new attacker session is handed a free ready pool
+--     that no other session owns (atomic Redis EVAL, see pool_router_rules.ASSIGN_SCRIPT,
 --     so concurrent nginx workers cannot give one pool to two attackers).
 --   - SPARE provisioning: every assignment also queues a wake-up on
 --     honeypot_pool:provision; pool_manager then builds an additional
@@ -21,13 +22,13 @@
 --     attacker.
 --   - REUSE under resource pressure: if no pool is free (all owned, or
 --     pool_manager has capped growth because the host is low on memory/CPU/
---     disk), the new IP is assigned to an existing ready pool in strict
+--     disk), the new session is assigned to an existing ready pool in strict
 --     round-robin order and shares it. That is the only case in which two
 --     attackers share a pool.
---   - Once assigned, the IP->pool mapping lives in Redis with a 24-hour TTL so
+--   - Once assigned, the session->pool mapping lives in Redis with a 24-hour TTL so
 --     the same attacker always hits the same fake environment across sessions.
 --   - A fast per-request local cache (ngx.shared.honeypot_routes) avoids Redis
---     lookups on every request from a known IP.
+--     lookups on every request from a known session.
 --   - If a pool instance is found to be unhealthy (tracked via health_check.lua),
 --     the router transparently falls back to the next healthy pool without changing
 --     the stored assignment; the original assignment is restored as soon as the pool
@@ -37,10 +38,10 @@
 --
 -- REDIS KEY SCHEMA: see pool_router_rules.lua (honeypot_pool:ready / :free /
 --   :owner:<N> / :counter / :provision / :capped) plus
---   honeypot_pool_ip:<IP> -> pool number, TTL POOL_ASSIGNMENT_TTL.
+--   honeypot_pool_session:<SID> -> pool number, TTL POOL_ASSIGNMENT_TTL.
 --
 -- SHARED DICT USAGE:
---   ngx.shared.honeypot_routes  key "pool_ip:<IP>" -> pool number, 5-min local cache
+--   ngx.shared.honeypot_routes  key "pool_session:<SID>" -> pool number, 5-min local cache
 --   ngx.shared.threat_intel     key "pool_list"    -> "1,2,3,5" ready pool numbers,
 --                                                    mirrored from Redis by
 --                                                    refresh_pool_list() on a timer
@@ -67,21 +68,21 @@ local _M = {}
 -- Shared-dict key holding the comma-separated list of ready pool numbers.
 local POOL_LIST_KEY = "pool_list"
 
--- Redis key used to store the per-IP pool assignment.
-local POOL_ASSIGNMENT_KEY_PREFIX = "honeypot_pool_ip:"
+-- Redis key used to store the per-session pool assignment.
+local POOL_ASSIGNMENT_KEY_PREFIX = "honeypot_pool_session:"
 
 
--- How long (seconds) an IP→pool assignment is retained in Redis.
--- After expiry the IP can be assigned to any pool again (acceptable for honeypots).
+-- How long (seconds) a session→pool assignment is retained in Redis.
+-- After expiry the session can be assigned to any pool again (acceptable for honeypots).
 -- 24 hours is long enough to cover any realistic attack session.
 local POOL_ASSIGNMENT_TTL = 86400
 
 -- Local shared-dict cache TTL in seconds (5 minutes).
--- Keeps Redis round-trips off the hot path for known IPs.
+-- Keeps Redis round-trips off the hot path for known sessions.
 local LOCAL_CACHE_TTL = 300
 
 -- Prefix used in ngx.shared.honeypot_routes for cached pool assignments.
-local LOCAL_CACHE_KEY_PREFIX = "pool_ip:"
+local LOCAL_CACHE_KEY_PREFIX = "pool_session:"
 
 -- ---------------------------------------------------------------------------
 -- Internal helpers
@@ -100,32 +101,32 @@ local function pool_ids()
     return rules.parse_pool_list(dict and dict:get(POOL_LIST_KEY) or nil)
 end
 
--- Return the cached pool number for ip_address from the local shared dict,
+-- Return the cached pool number for owner from the local shared dict,
 -- or nil if the entry is absent / expired.
-local function get_from_local_cache(ip_address)
+local function get_from_local_cache(owner)
     local dict = ngx.shared.honeypot_routes
     if not dict then return nil end
 
-    local cached = dict:get(LOCAL_CACHE_KEY_PREFIX .. ip_address)
+    local cached = dict:get(LOCAL_CACHE_KEY_PREFIX .. owner)
     if cached then
         return clamp_pool(cached)
     end
     return nil
 end
 
--- Store the pool number for ip_address in the local shared dict.
-local function set_local_cache(ip_address, pool_num)
+-- Store the pool number for owner in the local shared dict.
+local function set_local_cache(owner, pool_num)
     local dict = ngx.shared.honeypot_routes
     if not dict then return end
 
     local ok, err, forcible = dict:set(
-        LOCAL_CACHE_KEY_PREFIX .. ip_address,
+        LOCAL_CACHE_KEY_PREFIX .. owner,
         tostring(pool_num),
         LOCAL_CACHE_TTL
     )
     if not ok then
         ngx.log(ngx.WARN,
-            "[POOL] Local cache set failed for IP ", ip_address, ": ", err,
+            "[POOL] Local cache set failed for session ", owner, ": ", err,
             (forcible and " (forcible eviction)" or ""))
     end
 end
@@ -232,7 +233,7 @@ function _M.get_upstream_for_pool(pool_num)
     return rules.proxy_target_for_pool(pool_num)
 end
 
---- Retrieve an existing IP→pool assignment or create a new one via round-robin.
+--- Retrieve an existing session→pool assignment or create a new one via round-robin.
 ---
 --- The assignment is stored in Redis with POOL_ASSIGNMENT_TTL and also in the
 --- local shared dict for fast subsequent lookups.  The function is safe to call
@@ -240,18 +241,18 @@ end
 ---
 --- On any Redis error the function degrades gracefully to pool 1.
 ---
---- @param  ip_address  string  The remote client IP address.
+--- @param  owner  string  The session id that owns the pool.
 --- @return integer  The assigned pool number.
-function _M.get_or_assign_pool(ip_address)
-    if not ip_address or ip_address == "" then
-        ngx.log(ngx.WARN, "[POOL] Empty IP address supplied; defaulting to pool 1")
+function _M.get_or_assign_pool(owner)
+    if not owner or owner == "" then
+        ngx.log(ngx.WARN, "[POOL] Empty session id supplied; defaulting to pool 1")
         return 1
     end
 
     -- 1. Fast path: local in-worker cache (no Redis round-trip)
-    local cached = get_from_local_cache(ip_address)
+    local cached = get_from_local_cache(owner)
     if cached then
-        ngx.log(ngx.DEBUG, "[POOL] Local cache hit for IP ", ip_address, " → pool ", cached)
+        ngx.log(ngx.DEBUG, "[POOL] Local cache hit for session ", owner, " → pool ", cached)
         return find_healthy_pool(cached)
     end
 
@@ -259,11 +260,11 @@ function _M.get_or_assign_pool(ip_address)
     local red, err = _G.redis_pool.get_connection()
     if not red then
         ngx.log(ngx.ERR,
-            "[POOL] Redis unavailable (", err, "); defaulting IP ", ip_address, " to pool 1")
+            "[POOL] Redis unavailable (", err, "); defaulting session ", owner, " to pool 1")
         return 1
     end
 
-    local redis_key = POOL_ASSIGNMENT_KEY_PREFIX .. ip_address
+    local redis_key = POOL_ASSIGNMENT_KEY_PREFIX .. owner
     local existing_pool, redis_err = red:get(redis_key)
 
     if existing_pool and existing_pool ~= ngx.null then
@@ -271,83 +272,83 @@ function _M.get_or_assign_pool(ip_address)
         local pool_num = clamp_pool(existing_pool)
         _G.redis_pool.close_connection(red)
 
-        set_local_cache(ip_address, pool_num)
+        set_local_cache(owner, pool_num)
 
         ngx.log(ngx.INFO,
-            "[POOL] Restored existing assignment for IP ", ip_address, " → pool ", pool_num)
+            "[POOL] Restored existing assignment for session ", owner, " → pool ", pool_num)
         return find_healthy_pool(pool_num)
     end
 
-    -- 3. Brand-new IP: one atomic EVAL hands out a free ready pool exclusively
+    -- 3. Brand-new session: one atomic EVAL hands out a free ready pool exclusively
     --    (and queues a spare-pool wake-up for pool_manager), or -- when no pool
     --    is free -- reuses a ready pool round-robin. See ASSIGN_SCRIPT.
     local res, eval_err = red:eval(
         rules.ASSIGN_SCRIPT, 5,
         redis_key, rules.FREE_KEY, rules.READY_KEY, rules.COUNTER_KEY, rules.PROVISION_KEY,
-        ip_address, POOL_ASSIGNMENT_TTL)
+        owner, POOL_ASSIGNMENT_TTL)
     _G.redis_pool.close_connection(red)
 
     local pool_num = type(res) == "table" and tonumber(res[1]) or nil
     local mode = type(res) == "table" and res[2] or nil
     if not pool_num or pool_num < 1 then
         ngx.log(ngx.ERR,
-            "[POOL] No ready honeypot pool for IP ", ip_address, " (",
+            "[POOL] No ready honeypot pool for session ", owner, " (",
             eval_err or mode or "unknown", "); defaulting to pool 1")
         return 1
     end
     pool_num = clamp_pool(pool_num)
 
-    -- Populate local cache to avoid Redis on the next request from this IP.
-    set_local_cache(ip_address, pool_num)
+    -- Populate local cache to avoid Redis on the next request from this session.
+    set_local_cache(owner, pool_num)
 
     if mode == "shared" then
         ngx.log(ngx.WARN,
-            "[POOL] NEW assignment (SHARED, no free pool: capped or all owned): IP ",
-            ip_address, " -> pool ", pool_num)
+            "[POOL] NEW assignment (SHARED, no free pool: capped or all owned): session ",
+            owner, " -> pool ", pool_num)
     else
         ngx.log(ngx.INFO,
-            "[POOL] NEW assignment (", mode, "): IP ", ip_address, " -> pool ", pool_num,
+            "[POOL] NEW assignment (", mode, "): session ", owner, " -> pool ", pool_num,
             "; spare pool requested")
     end
 
     return find_healthy_pool(pool_num)
 end
 
---- Extend the TTL of an IP's pool assignment without changing the pool number.
+--- Extend the TTL of a session's pool assignment without changing the pool number.
 --- Call this on each honeypot-bound request to prevent active sessions from expiring.
 ---
---- @param  ip_address  string  The remote client IP address.
+--- @param  owner  string  The session id that owns the pool.
 --- @return boolean  true on success, false if Redis was unreachable.
-function _M.refresh_assignment_ttl(ip_address)
-    if not ip_address or ip_address == "" then return false end
+function _M.refresh_assignment_ttl(owner)
+    if not owner or owner == "" then return false end
 
     local red, err = _G.redis_pool.get_connection()
     if not red then
-        ngx.log(ngx.WARN, "[POOL] Cannot refresh TTL for ", ip_address, ": ", err)
+        ngx.log(ngx.WARN, "[POOL] Cannot refresh TTL for session ", owner, ": ", err)
         return false
     end
 
-    red:expire(POOL_ASSIGNMENT_KEY_PREFIX .. ip_address, POOL_ASSIGNMENT_TTL)
+    red:expire(POOL_ASSIGNMENT_KEY_PREFIX .. owner, POOL_ASSIGNMENT_TTL)
     _G.redis_pool.close_connection(red)
     return true
 end
 
---- Look up the current pool assignment for an IP without creating a new one.
+--- Look up the current pool assignment for a session without creating a new one.
 --- Used for logging and analytics where a side-effect-free query is needed.
 ---
---- @param  ip_address  string  The remote client IP address.
+--- @param  owner  string  The session id that owns the pool.
 --- @return integer|nil  Pool number, or nil if no assignment exists.
-function _M.get_pool_assignment(ip_address)
-    if not ip_address or ip_address == "" then return nil end
+function _M.get_pool_assignment(owner)
+    if not owner or owner == "" then return nil end
 
     -- Check local cache first.
-    local cached = get_from_local_cache(ip_address)
+    local cached = get_from_local_cache(owner)
     if cached then return cached end
 
     local red, err = _G.redis_pool.get_connection()
     if not red then return nil end
 
-    local pool_num = red:get(POOL_ASSIGNMENT_KEY_PREFIX .. ip_address)
+    local pool_num = red:get(POOL_ASSIGNMENT_KEY_PREFIX .. owner)
     _G.redis_pool.close_connection(red)
 
     if pool_num and pool_num ~= ngx.null then

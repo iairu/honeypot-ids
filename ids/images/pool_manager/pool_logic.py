@@ -30,7 +30,7 @@ def spares_needed(free: int, in_flight: int, spares_wanted: int,
 def stale_owners(owners: set[str], ip_assignments: dict[str, int | None],
                  pool: int) -> set[str]:
     """Owners of `pool` whose assignment has expired or moved elsewhere.
-    `ip_assignments` maps IP -> the pool number its honeypot_pool_ip key holds
+    `ip_assignments` maps owner (session id) -> the pool number its honeypot_pool_session key holds
     now (None when the key is gone)."""
     return {ip for ip in owners if ip_assignments.get(ip) != pool}
 

@@ -35,7 +35,7 @@ active_sessions
 compromised_sessions
 threat_ips
 honeytoken:*
-honeypot_pool_ip:*
+honeypot_pool_session:*
 honeypot_pool:counter
 admin_access_logs
 vulnerability_events

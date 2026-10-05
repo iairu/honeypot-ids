@@ -15,15 +15,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           filter: blob:none
-          # nginx.conf files: test_no_tarpit.lua checks they never hold requests;
-          # test_test_client_rules.lua checks they (and proxy_params) wire up $client_ip.
+          # nginx.conf files: test_no_tarpit.lua checks they never hold requests.
           sparse-checkout: |
             ids/reverse_proxy_enhanced/lua
             ids/reverse_proxy_enhanced/nginx.conf
-            ids/reverse_proxy_enhanced/proxy_params
             ids/db_proxy/reverse_proxy_enhanced/nginx.conf
-            ids/db_proxy/reverse_proxy_enhanced/proxy_params
-          sparse-checkout-cone-mode: false
       - name: Install Lua 5.1 (OpenResty's LuaJIT is 5.1-compatible)
         run: sudo apt-get update && sudo apt-get install -y lua5.1
       - name: Run suites

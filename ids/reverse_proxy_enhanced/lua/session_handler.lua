@@ -8,19 +8,128 @@
 
 local cjson = require "cjson"
 local resty_sha1 = require "resty.sha1"
+local resty_random = require "resty.random"
 local str = require "resty.string"
+local identity_rules = require "session_identity_rules"
 local session_rules = require "session_rules"
 local router_rules = require "router_rules"
 
 local _M = {}
 
--- Generate a cryptographically secure session ID
+-- Generate a session ID: 16 bytes from OpenSSL's CSPRNG, hex encoded.
+-- (It used to be sha1(time .. math.random() .. worker pid), which is
+-- guessable: the time is public, math.random is a predictable PRNG and pids
+-- are small.)
 function _M.generate_session_id()
+    local bytes = resty_random.bytes(16, true) or resty_random.bytes(16)
+    return str.to_hex(bytes)
+end
+
+-- ---------------------------------------------------------------------------
+-- Signed session cookie (see session_identity_rules.lua).
+-- ---------------------------------------------------------------------------
+
+local function mac(id)
+    return str.to_hex(ngx.hmac_sha1(_G.config.session.signing_key, id))
+end
+
+--- SERVERID cookie value for a session id: "<id>.<HMAC>".
+function _M.cookie_value(session_id)
+    return identity_rules.sign(session_id, mac)
+end
+
+--- The session id from this request's SERVERID cookie, if it is genuine.
+--- @return string|nil  session id (nil unless the cookie verified)
+--- @return string      "valid" | "missing" | "malformed" | "bad_signature"
+function _M.read_session_cookie()
+    return identity_rules.verify(ngx.var["cookie_" .. _G.config.session.cookie_name], mac)
+end
+
+-- ---------------------------------------------------------------------------
+-- Passive fingerprint -> session_id binding.
+--
+-- A session cookie is trivial for a client to discard (clear cookies,
+-- private window, localStorage wipe) -- without a server-side fallback,
+-- that alone would be enough to walk away from an elevated threat_score
+-- or a honeypot_bound=true session and come back in as a brand-new,
+-- zero-score visitor. Every session creation and update refreshes an
+-- "fp_session:<fingerprint>" Redis pointer at the session's own TTL, where
+-- the fingerprint is built from what the client SENDS but never stores
+-- (TLS ClientHello, HTTP version, User-Agent, Accept-Language/-Encoding and,
+-- by default, the IP -- see session_identity_rules.lua), so nginx.conf's
+-- session lookup can recover the SAME session for a returning client that
+-- cleared its storage, before ever generating a fresh one.
+-- ---------------------------------------------------------------------------
+
+--- This request's recovery fingerprint (hex), or nil when the request
+--- carries too little to fingerprint. Computed once per request.
+function _M.request_fingerprint()
+    local ctx = ngx.ctx
+    if ctx.recovery_fingerprint ~= nil then
+        return ctx.recovery_fingerprint or nil
+    end
+    local v = ngx.var
+    local source = identity_rules.fingerprint_source({
+        ip = v.remote_addr,
+        ssl_protocol = v.ssl_protocol,
+        ssl_ciphers = v.ssl_ciphers,
+        ssl_curves = v.ssl_curves,
+        http_version = v.server_protocol,
+        user_agent = v.http_user_agent,
+        accept_language = v.http_accept_language,
+        accept_encoding = v.http_accept_encoding,
+    }, _G.config.session.recovery_uses_ip)
+    if not source then
+        ctx.recovery_fingerprint = false
+        return nil
+    end
     local sha1 = resty_sha1:new()
-    local random_data = tostring(ngx.time()) .. tostring(math.random()) .. tostring(ngx.worker.pid())
-    sha1:update(random_data)
-    local digest = sha1:final()
-    return str.to_hex(digest)
+    sha1:update(source)
+    local fp = str.to_hex(sha1:final())
+    ctx.recovery_fingerprint = fp
+    return fp
+end
+
+function _M.get_session_id_for_fingerprint()
+    local fp = _M.request_fingerprint()
+    if not fp then
+        return nil
+    end
+
+    local red, err = _G.redis_pool.get_connection()
+    if not red then
+        ngx.log(ngx.ERR, "[SESSION] Failed to connect to Redis for fingerprint->session lookup: ", err)
+        return nil
+    end
+
+    local session_id, get_err = red:get("fp_session:" .. fp)
+    _G.redis_pool.close_connection(red)
+
+    if get_err then
+        ngx.log(ngx.ERR, "[SESSION] Redis error during fingerprint->session lookup: ", get_err)
+        return nil
+    end
+    if session_id and session_id ~= ngx.null and identity_rules.is_valid_id(session_id) then
+        return session_id
+    end
+    return nil
+end
+
+--- Point this request's fingerprint at session_id (refreshes its TTL).
+function _M.bind_fingerprint_to_session(session_id)
+    local fp = _M.request_fingerprint()
+    if not fp or not session_id then
+        return
+    end
+
+    local red, err = _G.redis_pool.get_connection()
+    if not red then
+        ngx.log(ngx.ERR, "[SESSION] Failed to connect to Redis for fingerprint->session bind: ", err)
+        return
+    end
+
+    red:setex("fp_session:" .. fp, _G.config.session.max_idle_time, session_id)
+    _G.redis_pool.close_connection(red)
 end
 
 -- Get session data from Redis and local cache
@@ -65,92 +174,6 @@ function _M.get_session(session_id)
     return nil
 end
 
--- ---------------------------------------------------------------------------
--- IP -> session_id binding.
---
--- A session cookie is trivial for a client to discard (clear cookies,
--- private window, localStorage wipe) -- without a server-side fallback,
--- that alone used to be enough to walk away from an elevated threat_score
--- or a honeypot_bound=true session and come back in as a brand-new,
--- zero-score visitor: nginx.conf's session lookup only ever knew about the
--- cookie, so no cookie meant session_handler.create_session() ran again
--- from scratch (see router.lua's "Session bootstrap" comment). Pool
--- assignment (pool_router.lua) was already IP-sticky, but the SESSION's
--- own accumulated score/honeypot_bound flag was not, so Stage 2's sticky-
--- honeypot re-check silently never fired for a cookie-cleared return
--- visit even though the attacker landed on the exact same honeypot pool.
---
--- get_session_id_for_ip()/bind_ip_to_session() close that gap: every
--- session creation and update refreshes an "ip_session:<ip>" Redis
--- pointer at the session's own TTL, so nginx.conf's session lookup can
--- recover the SAME session_id for a returning IP even with zero cookie
--- state, before ever falling back to generating a fresh one.
--- ---------------------------------------------------------------------------
-
-function _M.get_session_id_for_ip(ip)
-    if not ip then
-        return nil
-    end
-
-    local red, err = _G.redis_pool.get_connection()
-    if not red then
-        ngx.log(ngx.ERR, "[SESSION] Failed to connect to Redis for IP->session lookup: ", err)
-        return nil
-    end
-
-    local session_id, get_err = red:get("ip_session:" .. ip)
-    _G.redis_pool.close_connection(red)
-
-    if get_err then
-        ngx.log(ngx.ERR, "[SESSION] Redis error during IP->session lookup: ", get_err)
-        return nil
-    end
-    if session_id and session_id ~= ngx.null then
-        return session_id
-    end
-    return nil
-end
-
-function _M.bind_ip_to_session(ip, session_id)
-    if not ip or not session_id then
-        return
-    end
-
-    local red, err = _G.redis_pool.get_connection()
-    if not red then
-        ngx.log(ngx.ERR, "[SESSION] Failed to connect to Redis for IP->session bind: ", err)
-        return
-    end
-
-    red:setex("ip_session:" .. ip, _G.config.session.max_idle_time, session_id)
-    _G.redis_pool.close_connection(red)
-end
-
--- Sanity check, not a gate, for a session recovered via IP rather than
--- cookie: does the current request's browser fingerprint still look like
--- the same client the session was created for? The SAME browser clearing
--- its own cookies keeps an identical User-Agent/Accept-* fingerprint, so
--- this passes for the exact scenario this feature exists to catch
--- (attacker clears cookies, comes right back on the same IP/browser).
--- A mismatch merely gets logged for investigation -- deliberately not used
--- to block/deny the IP-based recovery, since two distinct low-value users
--- sharing one honeypot session (false negative) is far cheaper than an
--- attacker escaping detection by spoofing headers to dodge a fingerprint
--- check (false positive). IP is the authoritative signal; fingerprinting
--- is enrichment only, used here strictly as a secondary corroboration
--- signal, not a primary identity mechanism.
-function _M.fingerprint_matches(session_data, user_agent)
-    if not session_data or not session_data.metadata then
-        return true
-    end
-    local stored_fp = session_data.metadata.browser_fingerprint
-    local current_fp = _M.generate_browser_fingerprint(user_agent)
-    if not stored_fp or not current_fp then
-        return true
-    end
-    return stored_fp == current_fp
-end
-
 -- Create a new session
 function _M.create_session(ip_address, user_agent, initial_route, provided_session_id)
     -- Use provided session_id or generate new one
@@ -192,10 +215,10 @@ function _M.create_session(ip_address, user_agent, initial_route, provided_sessi
         local sessions_dict = ngx.shared.sessions
         sessions_dict:set("session:" .. session_id, session_json, 300)
 
-        -- So a later cookie-clear from this same IP can recover this exact
-        -- session instead of starting over at threat_score=0 -- see the
-        -- "IP -> session_id binding" comment above.
-        _M.bind_ip_to_session(ip_address, session_id)
+        -- So a later cookie-clear by this same client can recover this
+        -- exact session instead of starting over at threat_score=0 -- see
+        -- the "Passive fingerprint -> session_id binding" comment above.
+        _M.bind_fingerprint_to_session(session_id)
 
         ngx.log(ngx.INFO, "[SESSION] ✅ Created new session: ", session_id, " for IP: ", ip_address,
                 " | User-Agent: ", (user_agent or "none"):sub(1, 50), " | Initial Route: ", initial_route or "production")
@@ -261,13 +284,11 @@ function _M.update_session(session_id, updates)
         local sessions_dict = ngx.shared.sessions
         sessions_dict:set("session:" .. session_id, session_json, 300)
 
-        -- Refresh the IP->session TTL alongside the session's own, so the
-        -- binding stays alive exactly as long as the session does rather
-        -- than expiring independently on its own fixed schedule from
-        -- creation time.
-        if session_data.ip_address then
-            _M.bind_ip_to_session(session_data.ip_address, session_id)
-        end
+        -- Refresh the fingerprint->session binding alongside the session's
+        -- own TTL, from THIS request: it stays alive exactly as long as the
+        -- session does, and follows the client if its fingerprint changes
+        -- while it still holds the signed cookie.
+        _M.bind_fingerprint_to_session(session_id)
 
         ngx.log(ngx.INFO, "[SESSION] ✅ Session updated successfully | ID: ", session_id,
                 " | Request Count: ", session_data.request_count or 0, 
@@ -302,7 +323,7 @@ function _M.mark_compromised(session_id, reason)
             timestamp = ngx.time(),
             activity = "session_compromised",
             reason = reason,
-            ip = (ngx.var.client_ip or ngx.var.remote_addr),
+            ip = ngx.var.remote_addr,
             uri = ngx.var.request_uri
         })
         
@@ -313,13 +334,13 @@ function _M.mark_compromised(session_id, reason)
     
     if success then
         ngx.log(ngx.ERR, "[SESSION] 🚨 SESSION COMPROMISED | ID: ", session_id, 
-                " | Reason: ", reason, " | IP: ", (ngx.var.client_ip or ngx.var.remote_addr), " | URI: ", ngx.var.request_uri)
+                " | Reason: ", reason, " | IP: ", ngx.var.remote_addr, " | URI: ", ngx.var.request_uri)
         
         -- Log security event
         _G.utils.log_security_event("session_compromised", {
             session_id = session_id,
             reason = reason,
-            ip = (ngx.var.client_ip or ngx.var.remote_addr),
+            ip = ngx.var.remote_addr,
             user_agent = ngx.var.http_user_agent
         })
         
@@ -367,39 +388,6 @@ function _M.generate_browser_fingerprint(user_agent)
     return str.to_hex(digest):sub(1, 16) -- Use first 16 characters
 end
 
--- Get or create session for current request
-function _M.get_or_create_session()
-    local session_id = ngx.var.cookie_PHPSESSID or ngx.var["cookie_" .. _G.config.session.cookie_name]
-    local session_data
-    
-    if session_id then
-        session_data = _M.get_session(session_id)
-    end
-    
-    if not session_data then
-        -- Create new session
-        session_data = _M.create_session(
-            (ngx.var.client_ip or ngx.var.remote_addr),
-            ngx.var.http_user_agent,
-            "production"
-        )
-        
-        -- Set session cookie
-        local cookie_value = session_data.id .. "; Path=/; HttpOnly; SameSite=Lax"
-        if ngx.var.scheme == "https" then
-            cookie_value = cookie_value .. "; Secure"
-        end
-        
-        ngx.header["Set-Cookie"] = _G.config.session.cookie_name .. "=" .. cookie_value
-        ngx.log(ngx.INFO, "[SESSION] 🍪 Setting session cookie for new session: ", session_data.id)
-    else
-        ngx.log(ngx.INFO, "[SESSION] 🔄 Using existing session: ", session_data.id, 
-                " | Request #", session_data.request_count or 0, " | Threat Score: ", session_data.threat_score or 0)
-    end
-    
-    return session_data
-end
-
 -- Analyze session for anomalies.
 -- Thin adapter over session_rules.analyze_session_anomalies() -- fetches
 -- the current IP/UA, decodes the malicious-agents list from the shared
@@ -412,7 +400,7 @@ function _M.analyze_session_anomalies(session_data)
         return {}
     end
 
-    local current_ip = (ngx.var.client_ip or ngx.var.remote_addr)
+    local current_ip = ngx.var.remote_addr
     local current_ua = ngx.var.http_user_agent or ""
     local current_time = ngx.time()
 

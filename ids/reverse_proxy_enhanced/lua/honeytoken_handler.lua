@@ -252,7 +252,7 @@ function _M.analyze_request_for_tokens()
             " type=", token.type,
             " severity=", token.severity,
             " use_count=", use_count,
-            " ip=", (ngx.var.client_ip or ngx.var.remote_addr),
+            " ip=", ngx.var.remote_addr,
             " uri=", ngx.var.request_uri,
             " | ", token.note)
 
@@ -264,7 +264,7 @@ function _M.analyze_request_for_tokens()
                 token_type = token.type,
                 severity   = token.severity,
                 use_count  = use_count,
-                ip         = (ngx.var.client_ip or ngx.var.remote_addr),
+                ip         = ngx.var.remote_addr,
                 uri        = ngx.var.request_uri,
                 user_agent = ngx.var.http_user_agent,
                 note       = token.note,
@@ -309,14 +309,14 @@ function _M.record_token_use(token_id, value)
             token_id       = token_id,
             value          = value,
             first_used_at  = os.date("!%Y-%m-%dT%H:%M:%SZ"),
-            first_used_ip  = (ngx.var.client_ip or ngx.var.remote_addr),
+            first_used_ip  = ngx.var.remote_addr,
             use_count      = 0,
         }
     end
 
     record.use_count      = (record.use_count or 0) + 1
     record.last_used_at   = os.date("!%Y-%m-%dT%H:%M:%SZ")
-    record.last_used_ip   = (ngx.var.client_ip or ngx.var.remote_addr)
+    record.last_used_ip   = ngx.var.remote_addr
     record.last_used_uri  = ngx.var.request_uri
 
     red:setex(key, TOKEN_TTL, cjson.encode(record))

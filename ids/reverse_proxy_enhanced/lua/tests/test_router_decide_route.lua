@@ -45,12 +45,16 @@ _G.utils = {
 
 local pool_calls
 package.loaded["pool_router"] = {
-    get_or_assign_pool = function(ip)
+    get_or_assign_pool = function(owner)
         pool_calls.assign = pool_calls.assign + 1
+        pool_calls.owners[#pool_calls.owners + 1] = owner
         return 2
     end,
     get_upstream_for_pool = function(n) return "honeypot_backend_" .. n end,
-    refresh_assignment_ttl = function() pool_calls.refresh = pool_calls.refresh + 1 end,
+    refresh_assignment_ttl = function(owner)
+        pool_calls.refresh = pool_calls.refresh + 1
+        pool_calls.owners[#pool_calls.owners + 1] = owner
+    end,
 }
 
 local created_sessions
@@ -107,7 +111,7 @@ local function route(req, threat, session)
     local t = { score = 0, ip_reputation = 0, patterns_matched = {}, cve_matched = {}, details = {} }
     for k, v in pairs(threat or {}) do t[k] = v end
     if session == nil then session = { id = "s1", created_at = NOW - 60, request_count = 3 } end
-    pool_calls = { assign = 0, refresh = 0 }
+    pool_calls = { assign = 0, refresh = 0, owners = {} }
     created_sessions, abuse_reports, security_events = {}, {}, {}
     return router.decide_route(session or nil, t, IP, "s1"), t
 end
@@ -189,6 +193,11 @@ print("Stage 4: CVE match")
 do
     local d = route({ uri = "/wp-json/wp/v2/users" }, { score = 20, cve_matched = { "CVE-2023-28121" } })
     check("CVE match below threshold -> honeypot", d.target == "honeypot" and reason(d) == "cve_pattern_match")
+    local by_session = #pool_calls.owners > 0
+    for _, owner in ipairs(pool_calls.owners) do
+        if owner ~= "s1" then by_session = false end
+    end
+    check("pool is assigned to the session, not the IP", by_session)
     check("matched CVEs are stored on the session", d.session_data.matched_cves[1] == "CVE-2023-28121")
 end
 

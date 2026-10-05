@@ -1841,6 +1841,9 @@ services:
       - ABUSEIPDB_BLACKLIST_ENABLED=${ABUSEIPDB_BLACKLIST_ENABLED:-false}
       - ABUSEIPDB_BLACKLIST_REFRESH_HOURS=${ABUSEIPDB_BLACKLIST_REFRESH_HOURS:-24}
       - INTERNAL_TEST_SECRET=${INTERNAL_TEST_SECRET:-}
+      # Signed session cookie + session recovery (lua/session_identity_rules.lua).
+      - SESSION_SIGNING_KEY=${SESSION_SIGNING_KEY:-}
+      - SESSION_RECOVERY_USES_IP=${SESSION_RECOVERY_USES_IP:-true}
       # Threat decay: set THREAT_DECAY_ENABLED=false to make session/IP threat
       # scores persist indefinitely (no decay); half-life tunes the fade rate.
       - THREAT_DECAY_ENABLED=${THREAT_DECAY_ENABLED:-true}

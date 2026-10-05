@@ -31,6 +31,16 @@
 local cjson = require "cjson"
 local redis = require "resty.redis"
 
+-- Session cookie signing key (see _G.config.session.signing_key below). Made
+-- here, in the master before workers fork, so every worker shares it.
+local SESSION_SIGNING_KEY = os.getenv("SESSION_SIGNING_KEY") or ""
+local SESSION_SIGNING_KEY_STABLE = SESSION_SIGNING_KEY ~= ""
+if not SESSION_SIGNING_KEY_STABLE then
+    local resty_random = require "resty.random"
+    SESSION_SIGNING_KEY = require("resty.string").to_hex(
+        resty_random.bytes(32, true) or resty_random.bytes(32))
+end
+
 -- ---------------------------------------------------------------------------
 -- _G.config – Central configuration table
 --
@@ -106,11 +116,33 @@ _G.config = {
     --   cleanup_interval   – How often (seconds) the background session-cleanup
     --                        timer in init_worker.lua runs to evict expired
     --                        entries from the local shared dict.
+    --   signing_key        – HMAC key for the signed SERVERID cookie
+    --                        ("<session id>.<HMAC>", see
+    --                        session_identity_rules.lua). From
+    --                        SESSION_SIGNING_KEY; when that is unset a random
+    --                        key is made at start-up, so cookies issued before
+    --                        a restart stop verifying (their sessions are then
+    --                        recovered by fingerprint) and a bad signature
+    --                        can't be told apart from tampering.
+    --   signing_key_stable – true when the key came from SESSION_SIGNING_KEY;
+    --                        only then is a bad signature scored as tampering.
+    --   recovery_uses_ip   – Include the client IP in the passive fingerprint
+    --                        that recovers a session after its cookie was
+    --                        cleared (SESSION_RECOVERY_USES_IP, default true).
+    --                        Without it, all visitors with the same browser
+    --                        build would share one session. The IP never tells
+    --                        two sessions apart on its own.
+    --   tamper_score       – Threat score added to a request whose session
+    --                        cookie was edited or forged.
     -- -----------------------------------------------------------------------
     session = {
         cookie_name = "SERVERID",
         max_idle_time = 3600,
-        cleanup_interval = 300
+        cleanup_interval = 300,
+        signing_key = SESSION_SIGNING_KEY,
+        signing_key_stable = SESSION_SIGNING_KEY_STABLE,
+        recovery_uses_ip = (os.getenv("SESSION_RECOVERY_USES_IP") or "true"):lower() ~= "false",
+        tamper_score = 50
     },
 
     -- -----------------------------------------------------------------------

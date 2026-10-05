@@ -28,7 +28,7 @@ function _M.analyze_upload(headers, args)
         upload_type = "unknown"
     }
     
-    ngx.log(ngx.INFO, "[UPLOAD] 📤 Analyzing potential upload request | IP: ", (ngx.var.client_ip or ngx.var.remote_addr), " | URI: ", ngx.var.request_uri)
+    ngx.log(ngx.INFO, "[UPLOAD] 📤 Analyzing potential upload request | IP: ", ngx.var.remote_addr, " | URI: ", ngx.var.request_uri)
     
     -- Check if this is actually a file upload
     local content_type = headers["Content-Type"] or headers["content-type"] or ""
@@ -130,7 +130,7 @@ function _M.log_suspicious_upload(analysis, headers, args)
         timestamp = ngx.time(),
         iso_timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
         event_type = "suspicious_upload",
-        ip = (ngx.var.client_ip or ngx.var.remote_addr),
+        ip = ngx.var.remote_addr,
         uri = ngx.var.request_uri,
         method = ngx.var.request_method,
         user_agent = headers["User-Agent"] or headers["user-agent"] or "",
@@ -154,7 +154,7 @@ function _M.log_suspicious_upload(analysis, headers, args)
     end
     
     -- Update IP threat score
-    _M.update_ip_threat_for_upload((ngx.var.client_ip or ngx.var.remote_addr), analysis.threat_score)
+    _M.update_ip_threat_for_upload(ngx.var.remote_addr, analysis.threat_score)
 end
 
 -- Update IP threat score based on upload activity
