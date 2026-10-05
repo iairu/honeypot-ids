@@ -65,7 +65,7 @@ local _M = {}
 --
 -- @param uri        string   Raw request URI including query string.
 -- @param headers    table    Request headers table from ngx.req.get_headers().
--- @param remote_ip  string   Client IP address (ngx.var.remote_addr).
+-- @param remote_ip  string   Client IP address ((ngx.var.client_ip or ngx.var.remote_addr)).
 -- @return           table    threat_result with fields:
 --                              .score           – integer threat score (0..100)
 --                              .suspicious      – boolean threshold exceeded
@@ -491,7 +491,7 @@ function _M.detect_automation(headers, uri)
     --    requests; a real page load's one-off burst never does. Requiring
     --    several in a row is what actually tells the two apart.
     local sessions_dict = ngx.shared.sessions
-    local timing_key = "timing:" .. (ngx.var.remote_addr or "unknown")
+    local timing_key = "timing:" .. ((ngx.var.client_ip or ngx.var.remote_addr) or "unknown")
     local now = ngx.now()
     local RAPID_GAP_SECONDS = 0.5
     local MIN_STREAK_FOR_AUTOMATION = 3

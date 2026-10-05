@@ -47,6 +47,7 @@
 
 local cjson = require "cjson"
 local abuseipdb_rules = require "abuseipdb_rules"
+local test_client_rules = require "test_client_rules"
 
 local http_ok, http = pcall(require, "resty.http")
 
@@ -273,6 +274,10 @@ function _M.check_ip_async(ip)
     if not _M.is_enabled() or not ip then
         return
     end
+    -- Simulated Pool Test clients (198.18.0.0/15) are not real hosts.
+    if test_client_rules.is_test_ip(ip) then
+        return
+    end
 
     local threat_intel = ngx.shared.threat_intel
     if not threat_intel then return end
@@ -368,6 +373,10 @@ _M.is_reportable_reason = abuseipdb_rules.is_reportable_reason
 -- ---------------------------------------------------------------------------
 function _M.report_ip_async(ip, reason, details)
     if not _M.is_enabled() or not ip or not _M.is_reportable_reason(reason) then
+        return
+    end
+    -- Never report a simulated Pool Test client (see test_client_rules.lua).
+    if test_client_rules.is_test_ip(ip) then
         return
     end
 

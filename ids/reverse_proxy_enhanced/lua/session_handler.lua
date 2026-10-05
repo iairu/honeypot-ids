@@ -302,7 +302,7 @@ function _M.mark_compromised(session_id, reason)
             timestamp = ngx.time(),
             activity = "session_compromised",
             reason = reason,
-            ip = ngx.var.remote_addr,
+            ip = (ngx.var.client_ip or ngx.var.remote_addr),
             uri = ngx.var.request_uri
         })
         
@@ -313,13 +313,13 @@ function _M.mark_compromised(session_id, reason)
     
     if success then
         ngx.log(ngx.ERR, "[SESSION] 🚨 SESSION COMPROMISED | ID: ", session_id, 
-                " | Reason: ", reason, " | IP: ", ngx.var.remote_addr, " | URI: ", ngx.var.request_uri)
+                " | Reason: ", reason, " | IP: ", (ngx.var.client_ip or ngx.var.remote_addr), " | URI: ", ngx.var.request_uri)
         
         -- Log security event
         _G.utils.log_security_event("session_compromised", {
             session_id = session_id,
             reason = reason,
-            ip = ngx.var.remote_addr,
+            ip = (ngx.var.client_ip or ngx.var.remote_addr),
             user_agent = ngx.var.http_user_agent
         })
         
@@ -379,7 +379,7 @@ function _M.get_or_create_session()
     if not session_data then
         -- Create new session
         session_data = _M.create_session(
-            ngx.var.remote_addr,
+            (ngx.var.client_ip or ngx.var.remote_addr),
             ngx.var.http_user_agent,
             "production"
         )
@@ -412,7 +412,7 @@ function _M.analyze_session_anomalies(session_data)
         return {}
     end
 
-    local current_ip = ngx.var.remote_addr
+    local current_ip = (ngx.var.client_ip or ngx.var.remote_addr)
     local current_ua = ngx.var.http_user_agent or ""
     local current_time = ngx.time()
 
