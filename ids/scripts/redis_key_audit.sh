@@ -1,6 +1,6 @@
 #!/bin/sh
 # Live audit of the session_store Redis keyspace, grouped by the prefixes
-# documented in README.md §3.5 ("Session, Redis & IP-based state"). Run this
+# documented in docs/MANUAL.md §3.5 ("Session, Redis & IP-based state"). Run this
 # after an attack test (or periodically in production) to check the live
 # keyspace still matches what's documented -- catches the exact kind of
 # drift that made the schema only discoverable by grepping ~10 Lua files
@@ -27,7 +27,7 @@ if ! redis ping >/dev/null 2>&1; then
   exit 1
 fi
 
-# Documented prefixes from README.md §3.5. Exact keys (no trailing '*') are
+# Documented prefixes from docs/MANUAL.md §3.5. Exact keys (no trailing '*') are
 # matched literally; everything else is a SCAN MATCH pattern.
 DOCUMENTED_PATTERNS="
 session:*
@@ -91,10 +91,10 @@ for k in $all_keys; do
 done
 
 if [ -n "$undocumented" ]; then
-  echo "=== Keys present but NOT in README.md §3.5's documented schema ==="
+  echo "=== Keys present but NOT in docs/MANUAL.md §3.5's documented schema ==="
   printf '%s' "$undocumented"
   echo
-  echo "(This means either the schema doc is now stale, or something new got added -- update README.md §3.5 to match.)"
+  echo "(This means either the schema doc is now stale, or something new got added -- update docs/MANUAL.md §3.5 to match.)"
 else
-  echo "No undocumented keys found -- live keyspace matches README.md §3.5."
+  echo "No undocumented keys found -- live keyspace matches docs/MANUAL.md §3.5."
 fi

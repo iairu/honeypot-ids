@@ -1,7 +1,7 @@
 # elk-dockerized
 Repository contains ELK secure installation in docker environment
 
-**This is one half of a two-host system.** The other half is `ids/` (the honeypot itself) at the repository root — see `../ARCHITECTURE.md` for why they're split across two hosts, the full data-flow diagram, and how to run both together on a single host for testing. See `../README.md` §6 for how the shipped log data is structured once it lands here (index naming, what's in each log type).
+**This is one half of a two-host system.** The other half is `ids/` (the honeypot itself) at the repository root — see `../ARCHITECTURE.md` for why they're split across two hosts, the full data-flow diagram, and how to run both together on a single host for testing. See `../docs/MANUAL.md` §6 for how the shipped log data is structured once it lands here (index naming, what's in each log type).
 
 ## Usage
 1. Run `./gen_elk_certs.sh` in `certs/root-ca/` — creates a CA, signs certs for `es01`/`kibana`/`vector`/`vector-agent`, and copies them into each service's own `certs/` directory. The `vector-agent` client certificate (under `vector/certs/vector-agent/`) needs to be copied to the *other* host's `ids/vector/certs/` directory before its Vector shipper can connect — see `../ARCHITECTURE.md` for the exact steps, both for a real two-host deployment and for single-host testing.

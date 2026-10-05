@@ -42,7 +42,7 @@ echo "-- XML-RPC --"
 # makes the full pipeline a flaky thing to assert "always 403" against in
 # a repeatable script. The WP-layer check below is deterministic regardless
 # of this script's own call history; the nginx-layer nginx.conf block is
-# covered separately by the "production-bound" curl test in README.md §9.3,
+# covered separately by the "production-bound" curl test in docs/MANUAL.md §9.3,
 # run once by hand rather than in a loop.
 XMLRPC_PROD=$(docker compose exec -T production_eshop sh -c "curl -sk -o /dev/null -w '%{http_code}' -X POST -d '<?xml version=\"1.0\"?><methodCall><methodName>system.listMethods</methodName></methodCall>' http://localhost/xmlrpc.php" 2>/dev/null)
 if [ "$XMLRPC_PROD" = "403" ]; then

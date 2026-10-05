@@ -1207,7 +1207,7 @@ services:
     # mem_limit/cpus bumped 512m/0.5 -> 1024m/1.0 this session: confirmed
     # live via `docker stats` that all three pools were sitting at
     # ~434-436MB *idle* against the old 512m cap (near-zero headroom) after
-    # the new plugin roster (Wordfence, Elementor, etc. -- see README §3.4)
+    # the new plugin roster (Wordfence, Elementor, etc. -- see docs/MANUAL.md §3.4)
     # pushed the per-instance footprint up by several hundred MB. One pool
     # was observed pegged at 300%+ CPU and its own Docker healthcheck
     # timing out -- cgroup memory pressure thrashing, not an application
@@ -1293,7 +1293,7 @@ services:
     # mem_limit/cpus bumped 512m/0.5 -> 1024m/1.0 this session: confirmed
     # live via `docker stats` that all three pools were sitting at
     # ~434-436MB *idle* against the old 512m cap (near-zero headroom) after
-    # the new plugin roster (Wordfence, Elementor, etc. -- see README §3.4)
+    # the new plugin roster (Wordfence, Elementor, etc. -- see docs/MANUAL.md §3.4)
     # pushed the per-instance footprint up by several hundred MB. One pool
     # was observed pegged at 300%+ CPU and its own Docker healthcheck
     # timing out -- cgroup memory pressure thrashing, not an application
@@ -1379,7 +1379,7 @@ services:
     # mem_limit/cpus bumped 512m/0.5 -> 1024m/1.0 this session: confirmed
     # live via `docker stats` that all three pools were sitting at
     # ~434-436MB *idle* against the old 512m cap (near-zero headroom) after
-    # the new plugin roster (Wordfence, Elementor, etc. -- see README §3.4)
+    # the new plugin roster (Wordfence, Elementor, etc. -- see docs/MANUAL.md §3.4)
     # pushed the per-instance footprint up by several hundred MB. One pool
     # was observed pegged at 300%+ CPU and its own Docker healthcheck
     # timing out -- cgroup memory pressure thrashing, not an application
