@@ -43,6 +43,9 @@ class Reconcile(unittest.TestCase):
         self.mgr.redis = self.r
         self.mgr.in_flight = set()
         self.mgr.backoff_until = 0.0
+        self.mgr.build_started = {}
+        self.mgr.capped_reason = ""
+        self.mgr._local = manager.threading.local()
         self.mgr.docker = mock.MagicMock()
         self.mgr.static_pool_up = lambda n: True
         self.mgr.runtime_pools = lambda: set()
@@ -52,7 +55,7 @@ class Reconcile(unittest.TestCase):
         # Builds finish when finish_builds() is called (synchronously).
         self.building = []
 
-        def fake_start(n):
+        def fake_start(n, reason="spare"):
             self.started.append(n)
             self.mgr.in_flight.add(n)
             self.building.append(n)
@@ -159,7 +162,8 @@ class Reconcile(unittest.TestCase):
         script = script.split("_M.ASSIGN_SCRIPT = [[", 1)[1].split("]]", 1)[0]
         pool, mode = self.r.eval(script, 7, self.m.SESSION_KEY_PREFIX + sid, self.m.FREE_KEY,
                                  self.m.READY_KEY, "honeypot_pool:counter", self.m.PROVISION_KEY,
-                                 self.m.CAPPED_KEY, self.m.WAITING_KEY, sid, 86400, 200)
+                                 self.m.CAPPED_KEY, self.m.WAITING_KEY, sid, 86400, 200,
+                                 f"{time.time() - 30:.3f}")
         return int(pool), mode
 
     def test_scales_one_pool_per_waiting_session_and_hands_it_over(self):
@@ -200,6 +204,50 @@ class Reconcile(unittest.TestCase):
         self.assertEqual(int(self.r.get(self.m.SESSION_KEY_PREFIX + "w0")), self.STATIC + 1)
         self.assertEqual(self.r.zcard(self.m.WAITING_KEY), 0)  # the rest stay round-robin
         self.assertEqual(self.assign("late")[1], "shared")
+
+    def events(self, kind):
+        import json
+        return [e for e in map(json.loads, self.r.lrange(self.m.EVENTS_KEY, 0, -1))
+                if e["type"] == kind]
+
+    def test_handoff_logs_how_long_the_session_waited(self):
+        self.run_reconcile()
+        for i in range(self.STATIC):
+            self.assign(f"s{i}")
+        borrowed, _mode = self.assign("w0")
+        self.run_reconcile()
+        (h,) = self.events("handoff")
+        self.assertEqual((h["session"], h["borrowed"], h["pool"]), ("w0", borrowed, self.STATIC + 1))
+        self.assertAlmostEqual(h["waited"], 30, delta=5)   # assign() backdates by 30 s
+
+    def test_cap_transition_and_dropped_waiters_are_logged(self):
+        self.m.MAX_POOLS = self.STATIC
+        self.run_reconcile()
+        for i in range(self.STATIC):
+            self.assign(f"s{i}")
+        self.r.delete(self.m.CAPPED_KEY)      # w0 arrives just before the cap is republished
+        self.assertEqual(self.assign("w0")[1], "pending")
+        self.run_reconcile()
+        self.run_reconcile()
+        self.assertEqual(len(self.events("capped")), 1)   # logged once, not every loop
+        (d,) = self.events("dropped_waiting")
+        self.assertEqual(d["sessions"], ["w0"])
+        self.assertEqual(self.r.zcard(self.m.WAITING_KEY), 0)
+
+    def test_reserve_builds_extra_free_pools(self):
+        self.run_reconcile()
+        for i in range(self.STATIC):
+            self.assign(f"s{i}")
+        self.r.set(self.m.RESERVE_KEY, 3, ex=60)
+        self.run_reconcile()
+        self.run_reconcile()
+        self.assertEqual(self.r.zcard(self.m.FREE_KEY), 3)
+        import json
+        status = json.loads(self.r.get(self.m.STATUS_KEY))
+        self.assertEqual(status["spares"], 3)
+        self.r.delete(self.m.RESERVE_KEY)
+        self.run_reconcile()
+        self.assertEqual(len(self.started), 3)        # back to POOL_SPARES: nothing more
 
     def test_expired_waiting_session_gets_no_pool(self):
         self.run_reconcile()

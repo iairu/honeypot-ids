@@ -368,6 +368,48 @@ def pool_state(remote: RemoteConfig | None, timeout: float = 15.0) -> dict:
     capped = _run_redis_cli(remote, "GET", "honeypot_pool:capped", timeout=timeout).strip()
     reused = _run_redis_cli(remote, "GET", "honeypot_pool:counter", timeout=timeout).strip()
     waiting = _run_redis_cli(remote, "ZCARD", "honeypot_pool:waiting", timeout=timeout).strip()
+    try:
+        status = json.loads(_run_redis_cli(remote, "GET", "honeypot_pool:status",
+                                           timeout=timeout).strip() or "{}")
+    except ValueError:
+        status = {}
     return {"ready": ready, "free": free, "owners": owners, "capped": capped,
             "waiting": int(waiting) if waiting.isdigit() else 0,
-            "reused_assignments": int(reused) if reused.isdigit() else 0}
+            "reused_assignments": int(reused) if reused.isdigit() else 0,
+            # pool_manager's own view: budget, room for more pools, builds in
+            # progress ({pool: start epoch}); {} when the manager is not running.
+            "status": status if isinstance(status, dict) else {}}
+
+
+def server_time(remote: RemoteConfig | None, timeout: float = 10.0) -> float:
+    """Redis' clock (epoch seconds) -- the edge host's, which pool_manager's
+    event timestamps use too."""
+    parts = _run_redis_cli(remote, "TIME", timeout=timeout).split()
+    return int(parts[0]) + int(parts[1]) / 1e6
+
+
+def pool_events(remote: RemoteConfig | None, timeout: float = 15.0) -> list[dict]:
+    """pool_manager's event log (builds with phase timings, hand-offs with wait
+    times, resource-limit transitions), oldest first."""
+    out = []
+    for line in _run_redis_cli(remote, "LRANGE", "honeypot_pool:events", "0", "-1",
+                               timeout=timeout).splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict) and "at" in e:
+            out.append(e)
+    return out
+
+
+def set_pool_reserve(remote: RemoteConfig | None, pools: int, ttl: int = 1800,
+                     timeout: float = 10.0) -> None:
+    """Ask pool_manager to keep `pools` unowned pools ready (on top of
+    POOL_SPARES, within the resource limit); 0 withdraws the request. The TTL
+    makes a forgotten request expire on its own."""
+    if pools > 0:
+        _run_redis_cli(remote, "SET", "honeypot_pool:reserve", str(pools), "EX", str(ttl),
+                       timeout=timeout)
+    else:
+        _run_redis_cli(remote, "DEL", "honeypot_pool:reserve", timeout=timeout)

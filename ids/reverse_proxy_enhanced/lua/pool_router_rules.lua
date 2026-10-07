@@ -39,8 +39,10 @@ local _M = {}
 --                                  budget / POOL_MAX reached, host too loaded)
 --   honeypot_pool:waiting    ZSET  sessions sharing a pool only until the pool
 --                                  being built for them is ready (score =
---                                  arrival order); pool_manager hands each new
---                                  pool to the oldest waiting session
+--                                  epoch seconds they started waiting);
+--                                  pool_manager hands each new pool to the
+--                                  oldest waiting session and logs how long
+--                                  it waited
 _M.READY_KEY = "honeypot_pool:ready"
 _M.FREE_KEY = "honeypot_pool:free"
 _M.OWNER_PREFIX = "honeypot_pool:owner:"
@@ -67,7 +69,7 @@ _M.MAX_POOL_NUMBER = 64
 --- KEYS[1] = honeypot_pool_session:<SID> ARGV[1] = session id (the pool owner)
 --- KEYS[2] = free ZSET               ARGV[2] = assignment TTL (seconds)
 --- KEYS[3] = ready SET               ARGV[3] = max waiting sessions
---- KEYS[4] = round-robin counter
+--- KEYS[4] = round-robin counter     ARGV[4] = now (epoch seconds)
 --- KEYS[5] = provision LIST
 --- KEYS[6] = capped STR
 --- KEYS[7] = waiting ZSET
@@ -122,7 +124,7 @@ if not pool then
     mode = 'shared'
   else
     mode = 'pending'
-    redis.call('ZADD', KEYS[7], c, ARGV[1])
+    redis.call('ZADD', KEYS[7], tonumber(ARGV[4]) or c, ARGV[1])
     local max_waiting = tonumber(ARGV[3]) or 200
     redis.call('ZREMRANGEBYRANK', KEYS[7], 0, -(max_waiting + 1))
   end

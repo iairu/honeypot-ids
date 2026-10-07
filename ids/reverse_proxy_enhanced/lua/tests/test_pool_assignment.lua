@@ -100,7 +100,9 @@ local function new_redis()
         env.KEYS = { "honeypot_pool_session:" .. ip, rules.FREE_KEY, rules.READY_KEY,
                      rules.COUNTER_KEY, rules.PROVISION_KEY, rules.CAPPED_KEY,
                      rules.WAITING_KEY }
-        env.ARGV = { ip, tostring(ttl_s or 86400), tostring(r.max_waiting or rules.MAX_WAITING) }
+        r.now = (r.now or 1000) + 1.5
+        env.ARGV = { ip, tostring(ttl_s or 86400), tostring(r.max_waiting or rules.MAX_WAITING),
+                     string.format("%.3f", r.now) }
         local res = run_script()
         return res[1], res[2]
     end
@@ -159,6 +161,8 @@ do
     local w = r.zsets[rules.WAITING_KEY] or {}
     check("every pending session is queued, in arrival order",
           w["10.0.5.4"] and w["10.0.5.7"] and w["10.0.5.4"] < w["10.0.5.7"])
+    check("the queue score is the time the session started waiting",
+          math.abs(w["10.0.5.7"] - w["10.0.5.4"] - 4.5) < 1e-6)
     local p, m = r.assign("10.0.5.5")
     check("a waiting session stays 'pending' on its borrowed pool", p == 2 and m == "pending")
     r.zsets[rules.WAITING_KEY]["10.0.5.5"] = nil      -- pool_manager handed it pool 4

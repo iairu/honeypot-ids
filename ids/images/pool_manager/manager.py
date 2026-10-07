@@ -38,6 +38,8 @@ import sys
 import threading
 import time
 
+import json
+
 import docker
 import redis
 
@@ -49,6 +51,15 @@ OWNER_PREFIX = "honeypot_pool:owner:"
 PROVISION_KEY = "honeypot_pool:provision"
 CAPPED_KEY = "honeypot_pool:capped"
 WAITING_KEY = "honeypot_pool:waiting"
+# Extra unowned pools a client asks to have ready (an int, with a TTL) on top of
+# POOL_SPARES, e.g. the dashboard's pool test before its delayed windows attack.
+RESERVE_KEY = "honeypot_pool:reserve"
+# JSON snapshot of the manager's view (budget, room, builds in progress).
+STATUS_KEY = "honeypot_pool:status"
+# JSON event log (builds with per-phase timings, hand-offs with wait times,
+# resource-limit transitions), newest last, capped to EVENTS_MAX.
+EVENTS_KEY = "honeypot_pool:events"
+EVENTS_MAX = 500
 PW_PREFIX = "honeypot_pool:pw:"
 SESSION_KEY_PREFIX = "honeypot_pool_session:"
 
@@ -113,6 +124,9 @@ class Manager:
         self.image = self.docker.containers.get(socket.gethostname()).image
         self.in_flight: set[int] = set()   # pools being built (one thread each)
         self.backoff_until = 0.0
+        self.build_started: dict[int, float] = {}
+        self.capped_reason = ""
+        self._local = threading.local()    # per build thread: phase timings
 
     # ---- discovery -------------------------------------------------------
 
@@ -172,9 +186,33 @@ class Manager:
         """Give unowned pool n to the session that has waited longest for a pool
         of its own (moving it off the pool it borrowed), or put n in the free
         set when nobody waits. Returns the session id it went to."""
-        sid = self.redis.eval(HANDOFF_SCRIPT, 3, WAITING_KEY, FREE_KEY, READY_KEY,
+        res = self.redis.eval(HANDOFF_SCRIPT, 3, WAITING_KEY, FREE_KEY, READY_KEY,
                               str(n), SESSION_KEY_PREFIX, OWNER_PREFIX)
-        return sid or None
+        if not res:
+            return None
+        sid, since, old = res
+        now = time.time()
+        self.event("handoff", pool=n, session=sid,
+                   borrowed=int(old) if str(old).isdigit() else None,
+                   waited=round(max(0.0, now - float(since)), 3) if since else None)
+        return sid
+
+    # ---- event log -------------------------------------------------------
+
+    def event(self, kind: str, **fields) -> None:
+        """Append one event to the log clients (the dashboard's pool test
+        report) read back for latency figures. Never fails the caller."""
+        try:
+            self.redis.rpush(EVENTS_KEY, json.dumps({"type": kind, "at": round(time.time(), 3),
+                                                     **fields}))
+            self.redis.ltrim(EVENTS_KEY, -EVENTS_MAX, -1)
+        except Exception as e:  # noqa: BLE001
+            log(f"event log write failed: {e}")
+
+    def _phase(self, name: str, started: float) -> None:
+        phases = getattr(self._local, "phases", None)
+        if phases is not None:
+            phases.append([name, round(time.time() - started, 3)])
 
     def unregister(self, n: int) -> None:
         self.redis.srem(READY_KEY, n)
@@ -416,6 +454,7 @@ class Manager:
                     extra_networks=()):
         """Run a short-lived container to completion; raise unless it exits 0."""
         volumes = {src: {"bind": dst, "mode": mode} for src, (dst, mode) in binds.items()}
+        started = time.time()
         c = self.docker.containers.create(
             image, command=command, labels=labels, volumes=volumes, user=user,
             environment=environment, network=network, entrypoint=entrypoint,
@@ -430,13 +469,16 @@ class Manager:
                 raise RuntimeError(f"helper '{what}' exited {result.get('StatusCode')}:\n{tail}")
         finally:
             c.remove(force=True)
+        self._phase(what, started)
 
     def _wait_healthy(self, container, what: str) -> None:
-        deadline = time.time() + READY_TIMEOUT_S
+        started = time.time()
+        deadline = started + READY_TIMEOUT_S
         while time.time() < deadline:
             container.reload()
             state = container.attrs["State"]
             if state.get("Health", {}).get("Status") == "healthy":
+                self._phase(f"{what} start", started)
                 return
             if state.get("Status") in ("exited", "dead"):
                 raise RuntimeError(f"{what} container {container.name} stopped: "
@@ -457,10 +499,19 @@ class Manager:
         log(f"pool {n}: destroyed")
 
     def _provision_thread(self, n: int) -> None:
+        self._local.phases = []
+        started = self.build_started.get(n, time.time())
         try:
             self.provision(n)
+            took = time.time() - started
+            log(f"pool {n}: built in {took:.0f}s")
+            self.event("build", pool=n, start=round(started, 3), seconds=round(took, 3),
+                       ok=True, phases=self._local.phases)
         except Exception as e:  # noqa: BLE001 -- keep the manager alive
             log(f"pool {n}: provisioning FAILED: {e}")
+            self.event("build", pool=n, start=round(started, 3),
+                       seconds=round(time.time() - started, 3), ok=False,
+                       phases=self._local.phases, error=str(e)[:300])
             try:
                 self.destroy(n)
             except Exception as e2:  # noqa: BLE001
@@ -468,9 +519,12 @@ class Manager:
             self.backoff_until = time.time() + RETRY_BACKOFF_S
         finally:
             self.in_flight.discard(n)
+            self.build_started.pop(n, None)
 
-    def start_build(self, n: int) -> None:
+    def start_build(self, n: int, reason: str = "spare") -> None:
         self.in_flight.add(n)
+        self.build_started[n] = time.time()
+        self.event("build_start", pool=n, reason=reason)
         threading.Thread(target=self._provision_thread, args=(n,), daemon=True).start()
 
     # ---- main loop -------------------------------------------------------
@@ -493,6 +547,24 @@ class Manager:
         """Every pool that exists or is being built, compose-declared included."""
         return ready | self.runtime_pools() | self.in_flight | set(range(1, STATIC_COUNT + 1))
 
+    def reserve(self) -> int:
+        """Extra unowned pools a client asked for (RESERVE_KEY), 0 if none."""
+        v = self.redis.get(RESERVE_KEY)
+        return max(0, min(MAX_POOLS, int(v))) if v and v.isdigit() else 0
+
+    def set_capped(self, reason: str) -> None:
+        """Publish (or clear) the cap and log each transition."""
+        if reason:
+            self.redis.set(CAPPED_KEY, reason, ex=int(POLL_SECONDS * 6))
+        else:
+            self.redis.delete(CAPPED_KEY)
+        if reason and not self.capped_reason:
+            self.event("capped", reason=reason)
+            log(f"growth capped: {reason}")
+        elif self.capped_reason and not reason:
+            self.event("uncapped")
+        self.capped_reason = reason
+
     def reconcile(self) -> None:
         self.adopt_static_pools()
         self.adopt_runtime_pools()
@@ -505,29 +577,41 @@ class Manager:
         waiting = self.prune_waiting()
         in_flight = len(self.in_flight)
         pools = self.all_pools(ready)
+        spares = max(SPARES, self.reserve())
         room, reason = pl.budget_room(len(pools), POOL_MEM_MB, POOL_CPUS,
                                       MAX_MEMORY_MB, MAX_CPUS, MAX_POOLS)
-        start = pl.pools_to_start(free, in_flight, waiting, SPARES, room, PARALLEL_BUILDS)
+        start = pl.pools_to_start(free, in_flight, waiting, spares, room, PARALLEL_BUILDS)
         if not reason and start > 0:
             ok, reason = self.can_grow()
+        self.redis.set(STATUS_KEY, json.dumps({
+            "at": round(time.time(), 3), "pools": len(pools), "ready": len(ready),
+            "free": free, "waiting": waiting, "room": room, "spares": spares,
+            "building": {str(n): round(t, 3) for n, t in self.build_started.items()},
+            "max_pools": MAX_POOLS, "max_memory_mb": MAX_MEMORY_MB, "max_cpus": MAX_CPUS,
+            "mem_per_pool": POOL_MEM_MB, "cpus_per_pool": POOL_CPUS,
+            "parallel": PARALLEL_BUILDS, "capped": reason}), ex=int(POLL_SECONDS * 6))
+        self.set_capped(reason)
         if reason:
             # The resource limit is reached: the router now assigns every new
             # session round-robin for good. Sessions already waiting keep their
             # borrowed pool, except as many as pools are still being built.
-            self.redis.set(CAPPED_KEY, reason, ex=int(POLL_SECONDS * 6))
-            self.redis.zremrangebyrank(WAITING_KEY, in_flight, -1)
+            dropped = self.redis.zrange(WAITING_KEY, in_flight, -1)
+            if dropped:
+                self.redis.zrem(WAITING_KEY, *dropped)
+                self.event("dropped_waiting", sessions=dropped, reason=reason)
             return
-        self.redis.delete(CAPPED_KEY)
         if start <= 0 or time.time() < self.backoff_until:
             return
         if waiting:
             log(f"{waiting} session(s) waiting for a pool of their own; "
                 f"building {start} more ({in_flight} already building, room for {room})")
+        for_waiting = max(0, waiting - free - in_flight)
         taken = set(pools)
-        for _ in range(start):
+        for i in range(start):
             n = pl.next_pool_number(taken, STATIC_COUNT)
             taken.add(n)
-            self.start_build(n)
+            self.start_build(n, "waiting session" if i < for_waiting
+                             else ("reserve" if spares > SPARES else "spare"))
 
     def run(self) -> None:
         log(f"started (project {PROJECT}, mode {MODE}, spares {SPARES}, max pools {MAX_POOLS}, "
@@ -545,6 +629,7 @@ class Manager:
 # longest for one of its own: the session's assignment moves from the pool it
 # borrowed to this one (TTL kept), and the borrowed pool goes back to the free
 # set if nobody else owns it. Sessions whose assignment expired are skipped.
+# Returns {session id, waiting since (epoch s), borrowed pool}, or nil.
 # With nobody waiting the pool becomes free. Atomic, so pool_router's
 # ASSIGN_SCRIPT never sees a half-moved session.
 #   KEYS: waiting ZSET, free ZSET, ready SET
@@ -554,7 +639,7 @@ local n = ARGV[1]
 while true do
   local popped = redis.call('ZPOPMIN', KEYS[1])
   if not popped or #popped == 0 then break end
-  local sid = popped[1]
+  local sid, since = popped[1], popped[2]
   local skey = ARGV[2] .. sid
   local old = redis.call('GET', skey)
   if old then
@@ -569,7 +654,7 @@ while true do
     end
     redis.call('SADD', ARGV[3] .. n, sid)
     redis.call('ZREM', KEYS[2], n)
-    return sid
+    return {sid, since, old}
   end
 end
 redis.call('ZADD', KEYS[2], 'NX', tonumber(n), n)

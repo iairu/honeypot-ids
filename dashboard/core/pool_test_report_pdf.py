@@ -6,8 +6,8 @@ GUI-thread only, same print machinery and Baskerville styling as
 core/exploit_report_pdf.py."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QMarginsF, QSizeF, QUrl
-from PyQt6.QtGui import QFont, QPageLayout, QPageSize
+from PyQt6.QtCore import QMarginsF, QPointF, QRectF, QSizeF, Qt, QUrl
+from PyQt6.QtGui import QFont, QFontMetrics, QPageLayout, QPageSize, QPainter, QPen
 from PyQt6.QtPrintSupport import QPrinter
 from PyQt6.QtGui import QColor, QTextDocument
 
@@ -15,8 +15,10 @@ from core import diagrams, pool_evidence, vector_figures
 from core.diagrams import _arrow, _box, _new
 from core.exploit_report_pdf import (_FONT_CSS_STACK, _GREEN, _GREY, _ORANGE, _RED, _badge, _esc,
                                      _pool_state_html, _report_font_family)
-from core.pool_test_report import (CART_LOST, EXCLUSIVE, INCOMPLETE, MERGED, SHARED_EXPECTED,
-                                   UNSTABLE, PoolTestData, Verdict, analyze, cart_violations)
+from core.pool_test_report import (BORROWED, CART_LOST, EXCLUSIVE, INCOMPLETE, MERGED, OWN,
+                                   PRODUCTION, SHARED, SHARED_EXPECTED, STATES, UNSTABLE,
+                                   PoolTestData, ScalingSummary, Verdict, _quantile, analyze,
+                                   cart_violations, load_stats, scaling_summary)
 
 _STATUS_COLOR = {EXCLUSIVE: _GREEN, SHARED_EXPECTED: _ORANGE, INCOMPLETE: _GREY, MERGED: _RED,
                  CART_LOST: _RED, UNSTABLE: _ORANGE}
@@ -238,6 +240,14 @@ def render_pdf(data: PoolTestData, out_path: str) -> Verdict:
     verdict = analyze(data.frames, data.pool_state, data.steps)
     owners = {f.pool: f.label[-1] for f in data.frames if f.pool is not None}
     verdict.findings.extend(pool_evidence.cross_traffic(data.evidence, owners))
+    summ = scaling_summary(data)
+    first_delayed = len(data.frames) - data.delayed
+    if data.delayed and summ.reserve.get("reached"):
+        for c in summ.borrow:
+            if c.window >= first_delayed:
+                verdict.findings.append(
+                    f"{data.frames[c.window].label} borrowed pool {c.borrowed} although "
+                    "pools had been pre-built for the delayed windows.")
     for r in data.runs:
         if not r.diverted:
             verdict.findings.append(
@@ -276,6 +286,9 @@ def render_pdf(data: PoolTestData, out_path: str) -> Verdict:
         width=640))
     parts.append('<h2 style="color:#222;">Windows</h2>')
     parts.append(_frames_table(data))
+    scaling, _next_fig = _scaling_html(data, doc, family, 2)
+    parts.append(scaling)
+    parts.append(_round_robin_html(data))
     parts.append(_cart_section_html(data))
     parts.append(_runs_html(data))
     parts.append(_steps_html(data, doc))
@@ -305,3 +318,554 @@ def render_pdf(data: PoolTestData, out_path: str) -> Verdict:
     doc.setPageSize(QSizeF(printer.pageRect(QPrinter.Unit.DevicePixel).size()))
     doc.print(printer)
     return verdict
+
+
+# ---- scaling and latency ---------------------------------------------------
+
+_STATE_FILL = {PRODUCTION: "#cfd4da", OWN: _GREEN, BORROWED: _ORANGE, SHARED: _RED}
+_STATE_INK = {PRODUCTION: "#1a1a1a", OWN: "#ffffff", BORROWED: "#1a1a1a", SHARED: "#ffffff"}
+_STATE_LABEL = {PRODUCTION: "production", OWN: "own pool", BORROWED: "borrowed (not scaled yet)",
+                SHARED: "shared (resource limit)"}
+# Build phases are ordered stages: one hue, dark (first) to light (last).
+_PHASE_RAMP = ["#0d47a1", "#1565c0", "#1e88e5", "#42a5f5", "#90caf9", "#bbdefb"]
+_PURPLE = "#6a3fb0"
+_INK = "#1a1a1a"
+_MUTED = "#666666"
+
+
+def _mmss(t: float) -> str:
+    t = max(0, int(round(t)))
+    return f"{t // 60}:{t % 60:02d}"
+
+
+def _tick_step(span: float, max_ticks: int = 10) -> float:
+    for step in (5, 10, 15, 30, 60, 120, 300, 600, 1200):
+        if span / step <= max_ticks:
+            return step
+    return 1800
+
+
+def _phase_names(builds) -> list[str]:
+    names: list[str] = []
+    for b in builds:
+        for name, _sec in b.phases:
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def _phase_color(names: list[str], name: str) -> str:
+    i = names.index(name) if name in names else len(names)
+    return _PHASE_RAMP[min(i, len(_PHASE_RAMP) - 1)]
+
+
+def _legend(p: QPainter | None, x: float, y: float, items: list[tuple[str, str]], family: str,
+            width: float) -> float:
+    """Swatch + label pairs, wrapping at `width`; returns the y below them.
+    With p=None it only measures."""
+    font = QFont(family, 9)
+    fm = QFontMetrics(font)
+    if p is not None:
+        p.setFont(font)
+    cx = x
+    for color, label in items:
+        w = 16 + fm.horizontalAdvance(label) + 18
+        if cx + w > x + width:
+            cx, y = x, y + fm.height() + 6
+        if p is None:
+            cx += w
+            continue
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(color))
+        p.drawRoundedRect(QRectF(cx, y + 2, 12, 12), 2, 2)
+        p.setPen(QColor(_INK))
+        p.drawText(QPointF(cx + 16, y + 12), label)
+        cx += w
+    return y + fm.height() + 6
+
+
+def _time_axis(p: QPainter, x0: float, x1: float, y: float, span: float, family: str,
+               grid_top: float | None = None) -> None:
+    font = QFont(family, 8)
+    p.setFont(font)
+    step = _tick_step(span)
+    t = 0.0
+    while t <= span + 1e-6:
+        x = x0 + (t / span) * (x1 - x0)
+        if grid_top is not None:
+            p.setPen(QPen(QColor("#e6e6e6"), 1))
+            p.drawLine(QPointF(x, grid_top), QPointF(x, y))
+        p.setPen(QPen(QColor("#999999"), 1))
+        p.drawLine(QPointF(x, y), QPointF(x, y + 4))
+        p.setPen(QColor(_MUTED))
+        label = _mmss(t)
+        p.drawText(QPointF(x - QFontMetrics(font).horizontalAdvance(label) / 2, y + 16), label)
+        t += step
+    p.setPen(QPen(QColor("#999999"), 1))
+    p.drawLine(QPointF(x0, y), QPointF(x1, y))
+
+
+def _bar(p: QPainter, x0: float, x1: float, y: float, h: float, color: str,
+         outline: str | None = None, dashed: bool = False) -> None:
+    """A segment with a 1px surface gap on each side so neighbours stay apart."""
+    r = QRectF(x0 + 1, y, max(1.0, x1 - x0 - 2), h)
+    p.setBrush(QColor(color))
+    if outline:
+        pen = QPen(QColor(outline), 1.5)
+        if dashed:
+            pen.setStyle(Qt.PenStyle.DashLine)
+        p.setPen(pen)
+    else:
+        p.setPen(Qt.PenStyle.NoPen)
+    p.drawRoundedRect(r, 3, 3)
+
+
+def _text_in(p: QPainter, x0: float, x1: float, y: float, h: float, text: str, ink: str,
+             family: str) -> None:
+    font = QFont(family, 8)
+    fm = QFontMetrics(font)
+    if fm.horizontalAdvance(text) + 6 > x1 - x0:
+        return
+    p.setFont(font)
+    p.setPen(QColor(ink))
+    p.drawText(QRectF(x0, y, x1 - x0, h), int(Qt.AlignmentFlag.AlignCenter), text)
+
+
+def scaling_timeline_figure(data: PoolTestData, summ: ScalingSummary, family: str = "Serif"):
+    """Gantt of the whole run: where each window was served over time, every
+    pool built during it (phases shaded), hand-offs from a finished build to
+    the window that got it, and when the resource limit / pre-build happened."""
+    builds = summ.builds
+    span = max([data.duration, 1.0] + [b.start + (b.seconds or 0) for b in builds])
+    W, ml, mr = 900, 150, 24
+    plot_w = W - ml - mr
+    row_h, bar_h = 26, 18
+    windows = sorted(summ.timelines)
+    font = QFont(family, 9)
+    fm = QFontMetrics(font)
+
+    def X(t):
+        return ml + (max(0.0, min(t, span)) / span) * plot_w
+
+    # Marker band: step numbers, then labelled events, each on a free row.
+    markers = []   # (x, label, color, dashed)
+    for t, reason in summ.capped:
+        markers.append((X(t), "resource limit reached", _RED, True))
+    if summ.reserve.get("requested"):
+        r = summ.reserve
+        markers.append((X(r["start"]), f"pre-build of {r['requested']} pool(s) requested",
+                        _PURPLE, True))
+        if r.get("end") is not None:
+            markers.append((X(r["end"]), f"{r['requested']} pool(s) ready" if r.get("reached")
+                            else "pre-build stopped", _PURPLE, False))
+    rows_end: list[float] = []
+    placed = []
+    for m in markers:
+        w = fm.horizontalAdvance(m[1]) + 6
+        left = m[0] + 3 if m[0] + 3 + w <= W - 2 else m[0] - 3 - w
+        row = next((i for i, end in enumerate(rows_end) if left > end + 4), None)
+        if row is None:
+            rows_end.append(left + w)
+            row = len(rows_end) - 1
+        else:
+            rows_end[row] = left + w
+        placed.append((left, row, m))
+    title_h, step_h = 28, 18
+    band = title_h + step_h + len(rows_end) * (fm.height() + 2) + 6
+    win_top = band
+    build_top = win_top + len(windows) * row_h + (28 if builds else 0)
+    plot_bottom = build_top + len(builds) * row_h + 6
+    names = _phase_names(builds)
+    items = [(_STATE_FILL[s], _STATE_LABEL[s]) for s in STATES]
+    items += [(_phase_color(names, n), f"build: {n}") for n in names]
+    if builds:
+        items.append(("#b0bec5", "build: create / register"))
+    H = int(_legend(None, ml, plot_bottom + 24, items, family, plot_w)) + 8
+
+    img, p = vector_figures.new_figure(W, H)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setFont(QFont(family, 12, QFont.Weight.Bold))
+    p.setPen(QColor(_INK))
+    p.drawText(20, 20, "Pool scaling over the run")
+    _time_axis(p, ml, ml + plot_w, plot_bottom, span, family, grid_top=win_top - 4)
+
+    # Step ticks (numbers match the "Step by step" section).
+    p.setFont(QFont(family, 8))
+    for i, (t, _title) in enumerate(data.marks, start=1):
+        x = X(t)
+        p.setPen(QPen(QColor("#bdbdbd"), 1, Qt.PenStyle.DotLine))
+        p.drawLine(QPointF(x, title_h + step_h - 2), QPointF(x, plot_bottom))
+        p.setPen(QColor(_MUTED))
+        p.drawText(QPointF(x - 3, title_h + 10), str(i))
+    for left, row, (x, label, color, dashed) in placed:
+        y = title_h + step_h + row * (fm.height() + 2)
+        pen = QPen(QColor(color), 1.5)
+        if dashed:
+            pen.setStyle(Qt.PenStyle.DashLine)
+        p.setPen(pen)
+        p.drawLine(QPointF(x, y + 2), QPointF(x, plot_bottom))
+        p.setFont(font)
+        p.setPen(QColor(color))
+        p.drawText(QPointF(left, y + fm.ascent()), label)
+
+    # Window rows.
+    p.setFont(font)
+    row_y = {}
+    for k, w in enumerate(windows):
+        y = win_top + k * row_h
+        row_y[w] = y
+        p.setPen(QColor(_INK))
+        label = data.frames[w].label if w < len(data.frames) else f"Window {w + 1}"
+        if w >= len(data.frames) - data.delayed:
+            label += " (delayed)"
+        p.drawText(QRectF(8, y, ml - 14, bar_h), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), label)
+        for t0, t1, state, pool in summ.timelines[w]:
+            _bar(p, X(t0), X(t1), y, bar_h, _STATE_FILL[state])
+            if pool is not None:
+                _text_in(p, X(t0), X(t1), y, bar_h, f"pool {pool}", _STATE_INK[state], family)
+
+    # Build rows.
+    if builds:
+        p.setFont(QFont(family, 9, QFont.Weight.Bold))
+        p.setPen(QColor(_INK))
+        p.drawText(QPointF(8, build_top - 10), "Pools built")
+    by_pool_end = {}
+    for k, b in enumerate(builds):
+        y = build_top + k * row_h
+        p.setFont(font)
+        p.setPen(QColor(_INK))
+        p.drawText(QRectF(8, y, ml - 14, bar_h), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                   f"pool {b.pool}")
+        end = b.start + (b.seconds if b.seconds is not None else span - b.start)
+        if b.seconds is None:
+            _bar(p, X(b.start), X(end), y, bar_h, "#e3eaf3", outline=_BLUE_INK, dashed=True)
+            _text_in(p, X(b.start), X(end), y, bar_h, "still building", _INK, family)
+            continue
+        t = b.start
+        for name, sec in b.phases:
+            _bar(p, X(t), X(t + sec), y, bar_h, _phase_color(names, name))
+            t += sec
+        if end > t:   # container creation, network attach, registration
+            _bar(p, X(t), X(end), y, bar_h, "#b0bec5")
+        if not b.ok:
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(QPen(QColor(_RED), 2))
+            p.drawRoundedRect(QRectF(X(b.start), y, X(end) - X(b.start), bar_h), 3, 3)
+        label = f"{b.seconds:.0f} s" + ("" if b.ok else " FAILED") + (f" \u00b7 {b.reason}" if b.reason else "")
+        lx = X(end) + 4
+        if lx + fm.horizontalAdvance(label) > W - 2:
+            lx = X(b.start) - 4 - fm.horizontalAdvance(label)
+        p.setPen(QColor(_INK))
+        p.drawText(QPointF(lx, y + bar_h - 5), label)
+        by_pool_end.setdefault(b.pool, []).append((end, y))
+
+    # Hand-offs: from the finished build to the window row that got the pool.
+    sid_win = {}
+    for smp in data.samples:
+        if smp.session_id:
+            sid_win[smp.session_id] = smp.window
+    for e in data.events:
+        if e.get("type") != "handoff":
+            continue
+        w = sid_win.get(str(e.get("session")))
+        ends = by_pool_end.get(e.get("pool"))
+        if w is None or w not in row_y or not ends:
+            continue
+        end, by = min(ends, key=lambda v: abs(v[0] - e["at"]))
+        _arrow(p, X(end), by, X(e["at"]), row_y[w] + bar_h, color=_GREY, dashed=True, width=1)
+
+    _legend(p, ml, plot_bottom + 24, items, family, plot_w)
+    p.end()
+    return img
+
+
+_BLUE_INK = "#1565c0"
+
+
+def _hbar_chart(rows: list[tuple[str, float, str, str]], unit: str, title: str,
+                family: str, whiskers: dict | None = None):
+    """Horizontal bars on one value axis: (label, value, color, note). Optional
+    whiskers {row index: (p90, max)} draw a thin line to the p90 and a tick at
+    the max."""
+    font = QFont(family, 9)
+    fm = QFontMetrics(font)
+    W, ml = 900, 210
+    mr = 12 + max([fm.horizontalAdvance(n) for _l, _v, _c, n in rows] + [40])
+    plot_w = max(240, W - ml - mr)
+    W = ml + plot_w + mr
+    row_h, bar_h = 26, 16
+    vmax = max([v for _l, v, _c, _n in rows] + [m for _p, m in (whiskers or {}).values()] + [1.0])
+    step = None
+    for s in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000):
+        if vmax / s <= 8:
+            step = s
+            break
+    step = step or 10000
+    vmax = step * (int(vmax / step) + 1)
+    top = 34
+    H = top + len(rows) * row_h + 34
+    img, p = vector_figures.new_figure(W, H)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setFont(QFont(family, 12, QFont.Weight.Bold))
+    p.setPen(QColor(_INK))
+    p.drawText(20, 20, title)
+
+    def X(v):
+        return ml + (v / vmax) * plot_w
+    base = top + len(rows) * row_h
+    p.setFont(QFont(family, 8))
+    v = 0
+    while v <= vmax:
+        x = X(v)
+        p.setPen(QPen(QColor("#e6e6e6"), 1))
+        p.drawLine(QPointF(x, top - 4), QPointF(x, base))
+        p.setPen(QColor(_MUTED))
+        lab = f"{v:g} {unit}"
+        p.drawText(QPointF(x - QFontMetrics(p.font()).horizontalAdvance(lab) / 2, base + 16), lab)
+        v += step
+    for i, (label, value, color, note) in enumerate(rows):
+        y = top + i * row_h
+        p.setFont(font)
+        p.setPen(QColor(_INK))
+        p.drawText(QRectF(8, y, ml - 14, bar_h), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), label)
+        _bar(p, ml - 1, X(value) + 1, y, bar_h, color)
+        end = X(value)
+        if whiskers and i in whiskers:
+            p90, mx = whiskers[i]
+            p.setPen(QPen(QColor(_INK), 1.2))
+            p.drawLine(QPointF(X(value), y + bar_h / 2), QPointF(X(mx), y + bar_h / 2))
+            p.drawLine(QPointF(X(p90), y + 3), QPointF(X(p90), y + bar_h - 3))
+            p.drawLine(QPointF(X(mx), y + 1), QPointF(X(mx), y + bar_h - 1))
+            end = X(mx)
+        p.setPen(QColor(_INK))
+        p.drawText(QPointF(end + 6, y + bar_h - 4), note)
+    p.setPen(QPen(QColor("#999999"), 1))
+    p.drawLine(QPointF(ml, base), QPointF(ml + plot_w, base))
+    p.end()
+    return img
+
+
+def build_breakdown_figure(summ: ScalingSummary, family: str = "Serif"):
+    """Per pool built: its build time split into phases (stacked)."""
+    builds = [b for b in summ.builds if b.seconds is not None]
+    names = _phase_names(builds)
+    W, ml, mr = 900, 210, 90
+    plot_w = W - ml - mr
+    row_h, bar_h = 26, 16
+    vmax = max([b.seconds for b in builds] + [1.0])
+    step = _tick_step(vmax, 8)
+    vmax = step * (int(vmax / step) + 1)
+    top = 34
+    base = top + len(builds) * row_h
+    items = [(_phase_color(names, n), n) for n in names] + [("#b0bec5", "create / register")]
+    H = int(_legend(None, ml, base + 26, items, family, plot_w)) + 8
+    img, p = vector_figures.new_figure(W, H)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    font = QFont(family, 9)
+    p.setFont(QFont(family, 12, QFont.Weight.Bold))
+    p.setPen(QColor(_INK))
+    p.drawText(20, 20, "Time to add one honeypot pool, by phase")
+
+    def X(v):
+        return ml + (v / vmax) * plot_w
+    _time_axis(p, ml, ml + plot_w, base, vmax, family, grid_top=top - 4)
+    for i, b in enumerate(builds):
+        y = top + i * row_h
+        p.setFont(font)
+        p.setPen(QColor(_INK))
+        p.drawText(QRectF(8, y, ml - 14, bar_h), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                   f"pool {b.pool} ({b.reason or 'build'})")
+        t = 0.0
+        for name, sec in b.phases:
+            _bar(p, X(t), X(t + sec), y, bar_h, _phase_color(names, name))
+            t += sec
+        if b.seconds > t:
+            _bar(p, X(t), X(b.seconds), y, bar_h, "#b0bec5")
+        p.setPen(QColor(_RED if not b.ok else _INK))
+        p.drawText(QPointF(X(b.seconds) + 6, y + bar_h - 4),
+                   f"{b.seconds:.0f} s" + ("" if b.ok else " FAILED"))
+    _legend(p, ml, base + 26, items, family, plot_w)
+    p.end()
+    return img
+
+
+def _ms(v: float) -> str:
+    return f"{v / 1000:.2f} s" if v >= 1000 else f"{v:.0f} ms"
+
+
+def _secs(v) -> str:
+    return "—" if v is None else f"{v:.0f} s"
+
+
+def _scaling_html(data: PoolTestData, doc: QTextDocument, family: str, fig: int) -> tuple[str, int]:
+    """Section: how fast pools were added, how long windows borrowed a pool,
+    and page-load latency per routing state. Returns (html, next figure no)."""
+    summ = scaling_summary(data)
+    status = (data.pool_state or {}).get("status") or {}
+    builds_done = [b for b in summ.builds if b.seconds is not None]
+    ok = [b.seconds for b in builds_done if b.ok]
+    waits = [c.end - c.start for c in summ.borrow if c.end is not None and c.outcome == "own"]
+    res = summ.reserve
+    out = ['<h2 style="color:#222;">Scaling and latency</h2>',
+           '<p style="color:#555;">pool_manager adds one honeypot pool (an eshop container plus '
+           'its own database seeded from production) for every attacker session that finds no '
+           'free pool, up to the resource limit. These figures come from pool_manager\'s own '
+           'event log (build phases, hand-overs with their wait time, resource-limit changes) '
+           'and from the windows themselves (routing read after every step and every 2 s while '
+           'waiting; the duration of each page load).</p>']
+    rows = [("Windows", f"{len(data.frames)}" + (f", of which {data.delayed} attacked only after "
+                                                 "pools were pre-built for them" if data.delayed else "")),
+            ("Run time", _mmss(data.duration))]
+    if status:
+        lim = []
+        if status.get("max_memory_mb"):
+            lim.append(f"{status['max_memory_mb']:g} MB")
+        if status.get("max_cpus"):
+            lim.append(f"{status['max_cpus']:g} CPUs")
+        lim.append(f"POOL_MAX {status.get('max_pools')}")
+        rows.append(("Resource limit", ", ".join(lim) + f" (a pool reserves "
+                     f"{status.get('mem_per_pool')} MB / {status.get('cpus_per_pool'):g} CPUs); "
+                     f"{status.get('pools')} pool(s) exist, room for {status.get('room')} more"))
+    else:
+        rows.append(("Resource limit", "unknown (pool_manager status not readable)"))
+    rows.append(("Pools added during the run",
+                 f"{len(ok)} built" + (f", {len(builds_done) - len(ok)} failed" if len(builds_done) > len(ok) else "")
+                 + (f", {len(summ.builds) - len(builds_done)} still building" if len(summ.builds) > len(builds_done) else "")
+                 + (f"; build time median {_quantile(ok, .5):.0f} s, max {max(ok):.0f} s" if ok else "")))
+    rows.append(("Round-robin while not scaled yet (case A)",
+                 f"{len(summ.borrow)} window(s) borrowed a pool"
+                 + (f"; moved to their own after median {_quantile(waits, .5):.0f} s, max {max(waits):.0f} s"
+                    if waits else "")))
+    rows.append(("Round-robin at the resource limit (case B)",
+                 f"{len(summ.limit)} window(s) share a pool for good"
+                 + (f"; limit first reached at {_mmss(summ.capped[0][0])} ({summ.capped[0][1]})"
+                    if summ.capped else "")))
+    if res.get("requested"):
+        took = (res.get("end") or data.duration) - res["start"]
+        rows.append(("Pre-build for the delayed windows",
+                     f"{res['requested']} pool(s) ready after {took:.0f} s" if res.get("reached")
+                     else f"{res.get('free', 0)} of {res['requested']} ready after {took:.0f} s "
+                          f"({res.get('reason') or 'stopped'})"))
+    out.append('<table width="100%" cellspacing="0" cellpadding="4" border="1" '
+               'style="border-collapse:collapse; color:#333;">'
+               + "".join(f'<tr><td width="32%"><b>{_esc(k)}</b></td><td>{_esc(v)}</td></tr>' for k, v in rows)
+               + '</table><br/>')
+
+    out.append(diagrams.figure_html(
+        doc, scaling_timeline_figure(data, summ, family), "pool-scaling-timeline", fig,
+        "Where each window was served over the run (grey: production, green: its own pool, "
+        "orange: a borrowed pool while its own was being built, red: shared because the "
+        "resource limit was reached), and every pool built during the run, its phases shaded "
+        "dark to light. Dashed grey arrows: a finished pool handed to the window that waited "
+        "for it. Numbered dotted lines: the steps below.", width=640))
+    fig += 1
+    if builds_done:
+        out.append(diagrams.figure_html(
+            doc, build_breakdown_figure(summ, family), "pool-build-breakdown", fig,
+            "Latency of adding one honeypot pool: wall time from the decision to build it until "
+            "it was registered healthy, split into pool_manager's phases.", width=640))
+        fig += 1
+        out.append('<table width="100%" cellspacing="0" cellpadding="4" border="1" '
+                   'style="border-collapse:collapse; color:#333; font-size:9pt;"><tr><th>Pool</th>'
+                   '<th>Built for</th><th>Started</th><th>Build time</th><th>Phases</th></tr>'
+                   + "".join(
+                       f'<tr><td>{b.pool}</td><td>{_esc(b.reason or "-")}</td><td>{_mmss(b.start)}</td>'
+                       f'<td>{_secs(b.seconds)}{"" if b.ok else " &ndash; failed: " + _esc(b.error[:120])}</td>'
+                       f'<td>{_esc(", ".join(f"{n} {s:.0f} s" for n, s in b.phases) or "-")}</td></tr>'
+                       for b in summ.builds) + '</table><br/>')
+    elif not summ.builds:
+        out.append('<p style="color:#555;">No pool was built during the run: the ready pools '
+                   'covered every window, or growth was capped from the start.</p>')
+
+    wait_rows, frames = [], data.frames
+    for c in summ.borrow:
+        label = frames[c.window].label if c.window < len(frames) else f"Window {c.window + 1}"
+        if c.end is None:
+            wait_rows.append((label, data.duration - c.start, _ORANGE,
+                              f"still borrowing pool {c.borrowed} at the end"))
+            continue
+        note = (f"pool {c.borrowed} → own pool {c.own_pool}" if c.outcome == "own"
+                else f"pool {c.borrowed}, then shared at the limit")
+        if c.waited is not None:
+            note += f" (manager: {c.waited:.0f} s)"
+        wait_rows.append((label, c.end - c.start, _ORANGE if c.outcome == "own" else _RED, note))
+    if res.get("requested"):
+        took = (res.get("end") or data.duration) - res["start"]
+        wait_rows.append((f"pre-build of {res['requested']} pool(s)", took, _PURPLE,
+                          "ready" if res.get("reached") else (res.get("reason") or "stopped")))
+    if wait_rows:
+        out.append(diagrams.figure_html(
+            doc, _hbar_chart(wait_rows, "s", "How long windows waited for a pool of their own", family),
+            "pool-wait-latency", fig,
+            "Orange: time a window spent on a borrowed pool (assigned round-robin because no pool "
+            "was free yet) until it was moved to the pool built for it, as seen by the window "
+            "(2 s resolution); pool_manager's own measurement in brackets. Red: the window was "
+            "left on the borrowed pool because the resource limit was reached. Purple: time to "
+            "pre-build the pools for the delayed windows.", width=640))
+        fig += 1
+
+    stats = load_stats(data.loads)
+    if stats:
+        rows_l, whisk = [], {}
+        for i, st in enumerate(s for s in STATES if s in stats):
+            v = stats[st]
+            rows_l.append((_STATE_LABEL[st], v["median"], _STATE_FILL[st],
+                           f"{_ms(v['median'])} \u00b7 p90 {_ms(v['p90'])} \u00b7 max {_ms(v['max'])} \u00b7 n={v['n']}"))
+            whisk[i] = (v["p90"], v["max"])
+        out.append(diagrams.figure_html(
+            doc, _hbar_chart(rows_l, "ms", "Page load latency by where the window was served",
+                             family, whisk),
+            "pool-load-latency", fig,
+            "Every page load of every window during the run (browser navigation start to load "
+            "finished), grouped by where that window was routed right after it. Bar: median; "
+            "short tick: 90th percentile; line end: slowest load.", width=640))
+        fig += 1
+    return "".join(out), fig
+
+
+def _round_robin_html(data: PoolTestData) -> str:
+    """Both round-robin cases, explicitly: A (no free pool yet, scaling) and
+    B (resource limit reached, no more pools)."""
+    summ = scaling_summary(data)
+    frames = data.frames
+    name = lambda w: frames[w].label if w < len(frames) else f"Window {w + 1}"   # noqa: E731
+    status = (data.pool_state or {}).get("status") or {}
+    out = ['<h2 style="color:#222;">Round-robin assignment</h2>',
+           '<p style="color:#555;">A diverted session is only ever put on a pool another session '
+           'uses in two situations, both handled round-robin over the ready pools:</p>',
+           '<h3 style="color:#222;">A. Not scaled up yet (no free pool, more can be built)</h3>']
+    if summ.borrow:
+        out.append('<table width="100%" cellspacing="0" cellpadding="4" border="1" '
+                   'style="border-collapse:collapse; color:#333;"><tr><th>Window</th><th>Borrowed</th>'
+                   '<th>From</th><th>Until</th><th>Waited</th><th>Outcome</th></tr>' + "".join(
+                       f'<tr><td>{_esc(name(c.window))}</td><td>pool {c.borrowed}</td>'
+                       f'<td>{_mmss(c.start)}</td><td>{_mmss(c.end) if c.end is not None else "end of run"}</td>'
+                       f'<td>{_secs((c.end - c.start) if c.end is not None else None)}'
+                       f'{" (pool_manager: " + _secs(c.waited) + ")" if c.waited is not None else ""}</td>'
+                       f'<td>{_esc({"own": f"moved to its own pool {c.own_pool}", "dropped": "limit reached: stays shared (case B)", "waiting": "still waiting"}[c.outcome])}</td></tr>'
+                       for c in summ.borrow) + '</table>')
+    else:
+        out.append('<p style="color:#555;">Not observed: every window found a free pool the moment '
+                   'it was diverted.' + (' The delayed windows waited for pre-built pools, which is '
+                                         'how this case is avoided.' if data.delayed else '') + '</p>')
+    out.append('<h3 style="color:#222;">B. Resource limit reached (no more pools can be built)</h3>')
+    if summ.capped:
+        out.append('<p style="color:#555;">' + "<br/>".join(
+            f"Growth capped at {_mmss(t)}: {_esc(r)}" for t, r in summ.capped) + '</p>')
+    if summ.limit:
+        out.append('<table width="100%" cellspacing="0" cellpadding="4" border="1" '
+                   'style="border-collapse:collapse; color:#333;"><tr><th>Window</th><th>Pool</th>'
+                   '<th>Since</th><th>Shares with</th><th>How</th></tr>' + "".join(
+                       f'<tr><td>{_esc(name(c.window))}</td><td>pool {c.pool}</td><td>{_mmss(c.since)}</td>'
+                       f'<td>{_esc(", ".join(name(o) for o in c.shared_with) or "a session outside the test")}</td>'
+                       f'<td>{_esc(c.how)}</td></tr>' for c in summ.limit) + '</table>')
+    else:
+        room = status.get("room")
+        free = len((data.pool_state or {}).get("free", []))
+        hint = (f" At the end there was room for {room} more pool(s) and {free} free one(s): "
+                f"run with more than {room + free} additional diverted windows, or lower "
+                "POOL_MAX_MEMORY_MB / POOL_MAX_CPUS / POOL_MAX, to see this case."
+                if isinstance(room, int) else "")
+        out.append('<p style="color:#555;">Not observed: the resource limit was not reached during '
+                   'the run.' + _esc(hint) + '</p>')
+    return "".join(out)

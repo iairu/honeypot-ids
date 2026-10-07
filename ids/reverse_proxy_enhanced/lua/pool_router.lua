@@ -301,7 +301,7 @@ function _M.get_or_assign_pool(owner)
         rules.ASSIGN_SCRIPT, 7,
         redis_key, rules.FREE_KEY, rules.READY_KEY, rules.COUNTER_KEY, rules.PROVISION_KEY,
         rules.CAPPED_KEY, rules.WAITING_KEY,
-        owner, POOL_ASSIGNMENT_TTL, rules.MAX_WAITING)
+        owner, POOL_ASSIGNMENT_TTL, rules.MAX_WAITING, string.format("%.3f", ngx.now()))
     _G.redis_pool.close_connection(red)
 
     local pool_num = type(res) == "table" and tonumber(res[1]) or nil

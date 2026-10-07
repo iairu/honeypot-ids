@@ -221,6 +221,33 @@ class ExploitRun:
     replaced: bool = False        # picked because an earlier choice never diverted
 
 
+# Where a window's session is served at one moment (see classify()).
+PRODUCTION, OWN, BORROWED, SHARED = "production", "own", "borrowed", "shared"
+STATES = (PRODUCTION, OWN, BORROWED, SHARED)
+
+
+@dataclass
+class Sample:
+    """One window's routing at one moment of the run (seconds since its start).
+    Samples taken together (one read of every window) share the same `t`."""
+    t: float
+    window: int
+    session_id: str
+    route: str
+    pool: int | None
+    waiting: bool
+
+
+@dataclass
+class LoadTiming:
+    """How long one page load took in one window, and where it was served."""
+    t: float                      # seconds since the run started (load start)
+    window: int
+    step: str
+    ms: float
+    state: str = ""               # filled from the routing read right after the load
+
+
 @dataclass
 class PoolTestData:
     generated_at: str
@@ -233,6 +260,199 @@ class PoolTestData:
     runs: list[ExploitRun] = field(default_factory=list)
     evidence: list[Any] = field(default_factory=list)   # pool_evidence.ContainerEvidence
     since: str = ""
+    # Scaling / latency (all times in seconds since the run started).
+    duration: float = 0.0
+    delayed: int = 0              # windows that attacked only after pools were pre-built
+    samples: list[Sample] = field(default_factory=list)
+    loads: list[LoadTiming] = field(default_factory=list)
+    events: list[dict] = field(default_factory=list)  # pool_manager events, `at` rebased
+    marks: list[tuple[float, str]] = field(default_factory=list)   # (t, step title)
+    reserve: dict = field(default_factory=dict)       # see ScalingSummary.reserve
+
+
+def classify(batch: list[Sample]) -> list[str]:
+    """State of each sample in one simultaneous read of the windows:
+    production, borrowed (sharing a pool only until its own is built), shared
+    (with another test window, for good) or own."""
+    out = []
+    for s in batch:
+        if s.route != "HONEYPOT" or s.pool is None:
+            out.append(PRODUCTION)
+        elif s.waiting:
+            out.append(BORROWED)
+        elif any(o is not s and o.pool == s.pool and o.route == "HONEYPOT" and not o.waiting
+                 for o in batch):
+            out.append(SHARED)
+        else:
+            out.append(OWN)
+    return out
+
+
+def timelines(samples: list[Sample], end: float) -> dict[int, list[tuple[float, float, str, int | None]]]:
+    """Per window: (start, end, state, pool) segments, consecutive equal
+    states merged; the last one runs until `end`."""
+    batches: dict[float, list[Sample]] = {}
+    for smp in samples:
+        batches.setdefault(smp.t, []).append(smp)
+    out: dict[int, list] = {}
+    for t in sorted(batches):
+        batch = batches[t]
+        for smp, state in zip(batch, classify(batch)):
+            segs = out.setdefault(smp.window, [])
+            pool = smp.pool if state != PRODUCTION else None
+            if segs and segs[-1][2] == state and segs[-1][3] == pool:
+                continue
+            if segs:
+                segs[-1] = (segs[-1][0], t, segs[-1][2], segs[-1][3])
+            segs.append((t, end, state, pool))
+    for segs in out.values():
+        if segs:
+            segs[-1] = (segs[-1][0], max(end, segs[-1][0]), segs[-1][2], segs[-1][3])
+    return out
+
+
+def _quantile(values: list[float], q: float) -> float:
+    v = sorted(values)
+    if not v:
+        return 0.0
+    k = (len(v) - 1) * q
+    lo, hi = int(k), min(int(k) + 1, len(v) - 1)
+    return v[lo] + (v[hi] - v[lo]) * (k - lo)
+
+
+def load_stats(loads: list[LoadTiming]) -> dict[str, dict]:
+    """Page-load latency per routing state: n, median, p90, max (ms)."""
+    out = {}
+    for state in STATES:
+        ms = [x.ms for x in loads if x.state == state]
+        if ms:
+            out[state] = {"n": len(ms), "median": _quantile(ms, 0.5),
+                          "p90": _quantile(ms, 0.9), "max": max(ms)}
+    return out
+
+
+@dataclass
+class PoolBuild:
+    pool: int
+    start: float
+    seconds: float | None         # None -> still building when the run ended
+    ok: bool
+    reason: str = ""              # "waiting session" | "reserve" | "spare"
+    phases: list[tuple[str, float]] = field(default_factory=list)
+    error: str = ""
+
+
+@dataclass
+class BorrowCase:
+    """Case A: a window that found no free pool (not scaled yet) and borrowed one."""
+    window: int
+    borrowed: int | None
+    start: float
+    end: float | None             # moved to its own pool / dropped / None = still waiting
+    outcome: str                  # "own" | "dropped" | "waiting"
+    own_pool: int | None = None
+    waited: float | None = None   # pool_manager's figure when it handed the pool over
+
+
+@dataclass
+class LimitCase:
+    """Case B: a window left on a shared pool because the resource limit was hit."""
+    window: int
+    pool: int | None
+    since: float
+    shared_with: list[int]
+    how: str                      # "assigned while capped" | "dropped from the wait queue"
+
+
+@dataclass
+class ScalingSummary:
+    builds: list[PoolBuild]
+    borrow: list[BorrowCase]
+    limit: list[LimitCase]
+    capped: list[tuple[float, str]]        # (t, reason) each time growth got capped
+    reserve: dict                          # {"requested", "start", "reached", "end", "free", "reason"}
+    timelines: dict[int, list]
+
+
+def _arrival(segs: list, pool: int | None) -> float:
+    """When a window's timeline first reached `pool` (inf if never)."""
+    return next((sg[0] for sg in segs if sg[3] == pool), float("inf"))
+
+
+def scaling_summary(data: PoolTestData) -> ScalingSummary:
+    """Pool builds, case A (borrowed while scaling) and case B (shared at the
+    resource limit) from the samples and pool_manager's event log."""
+    starts = {}
+    builds: list[PoolBuild] = []
+    capped: list[tuple[float, str]] = []
+    handoffs: dict[str, dict] = {}
+    dropped: dict[str, float] = {}
+    intervals: list[list] = []             # [capped at, uncapped at or None]
+    for e in sorted(data.events, key=lambda e: e.get("at", 0)):
+        kind = e.get("type")
+        if kind == "build_start":
+            starts[e.get("pool")] = e
+        elif kind == "build":
+            b = starts.pop(e.get("pool"), {})
+            builds.append(PoolBuild(int(e.get("pool", 0)), float(e.get("start", e["at"])),
+                                    float(e.get("seconds", 0)), bool(e.get("ok")),
+                                    b.get("reason", ""),
+                                    [(str(n), float(sec)) for n, sec in e.get("phases", [])],
+                                    str(e.get("error", ""))))
+        elif kind == "capped":
+            capped.append((float(e["at"]), str(e.get("reason", ""))))
+            intervals.append([float(e["at"]), None])
+        elif kind == "uncapped" and intervals and intervals[-1][1] is None:
+            intervals[-1][1] = float(e["at"])
+        elif kind == "handoff":
+            handoffs[str(e.get("session"))] = e
+        elif kind == "dropped_waiting":
+            for sid in e.get("sessions", []):
+                dropped[str(sid)] = float(e["at"])
+    for pool, e in starts.items():   # started during the run, not finished
+        builds.append(PoolBuild(int(pool), float(e["at"]), None, False, e.get("reason", "")))
+    builds.sort(key=lambda b: b.start)
+
+    tl = timelines(data.samples, data.duration)
+    sid_of: dict[int, str] = {}
+    for smp in data.samples:
+        if smp.session_id:
+            sid_of[smp.window] = smp.session_id
+    borrow: list[BorrowCase] = []
+    limit: list[LimitCase] = []
+    for w, segs in sorted(tl.items()):
+        sid = sid_of.get(w, "")
+        for i, (t0, t1, state, pool) in enumerate(segs):
+            if state != BORROWED or (i and segs[i - 1][2] == BORROWED):
+                continue
+            nxt = next((sg for sg in segs[i + 1:] if sg[2] != BORROWED), None)
+            h = handoffs.get(sid)
+            if nxt is not None and nxt[2] == OWN:
+                borrow.append(BorrowCase(w, pool, t0, nxt[0], "own", nxt[3],
+                                         h.get("waited") if h else None))
+            elif nxt is not None or sid in dropped:
+                borrow.append(BorrowCase(w, pool, t0, dropped.get(sid, nxt[0] if nxt else None),
+                                         "dropped"))
+            else:
+                borrow.append(BorrowCase(w, pool, t0, None, "waiting"))
+        final = segs[-1] if segs else None
+        first = next((sg for sg in segs if sg[2] != PRODUCTION), None)
+        # Diverted while growth was capped: round-robin onto a ready pool, even
+        # when the pool's other owner is not one of the test windows.
+        capped_at_divert = first is not None and first[2] in (OWN, SHARED) and any(
+            a - 1 <= first[0] and (b is None or first[0] <= b) for a, b in intervals)
+        # Shared at the end: the round-robin newcomer is whoever reached that
+        # pool last (the first one there owned it), even if the cap predates
+        # the run and so has no event in it.
+        arrived_later = final is not None and final[2] == SHARED and any(
+            o != w and sg and sg[-1][3] == final[3] and _arrival(sg, final[3]) < _arrival(segs, final[3])
+            for o, sg in tl.items())
+        if final and (arrived_later or capped_at_divert or (sid in dropped and final[2] != OWN)):
+            others = sorted({o for o, sg in tl.items() if o != w and sg and sg[-1][3] == final[3]
+                             and sg[-1][2] in (SHARED, OWN, BORROWED)})
+            how = "dropped from the wait queue" if sid in dropped else "assigned while capped"
+            limit.append(LimitCase(w, final[3], first[0] if first else final[0], others, how))
+    return ScalingSummary(builds, borrow, limit, capped, dict(data.reserve), tl)
 
 
 @dataclass

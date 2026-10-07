@@ -171,3 +171,61 @@ class CartTests(unittest.TestCase):
                 self.assertEqual(by[slug]["type"], "simple", slug)
                 self.assertGreater(qty, 0)
         self.assertEqual(len({s for w in CART_PLAN for s, _ in w}), sum(len(w) for w in CART_PLAN))
+
+
+class ScalingTests(unittest.TestCase):
+    """Timeline, case A (borrowed while scaling) and case B (resource limit)."""
+
+    def _data(self, timeline, events=(), duration=100.0):
+        from core.pool_test_report import PoolTestData, Sample
+        samples = [Sample(t, w, f"s{w}", r, p, wt)
+                   for t, batch in timeline for w, (r, p, wt) in enumerate(batch)]
+        return PoolTestData("now", "t", "u", "", frames(*[None] * len(timeline[0][1])),
+                            duration=duration, samples=samples, events=list(events))
+
+    def test_classify(self):
+        from core.pool_test_report import BORROWED, OWN, PRODUCTION, SHARED, Sample, classify
+        batch = [Sample(0, 0, "a", "HONEYPOT", 1, False), Sample(0, 1, "b", "HONEYPOT", 1, True),
+                 Sample(0, 2, "c", "PRODUCTION", None, False), Sample(0, 3, "d", "HONEYPOT", 2, False),
+                 Sample(0, 4, "e", "HONEYPOT", 2, False)]
+        self.assertEqual(classify(batch), [OWN, BORROWED, PRODUCTION, SHARED, SHARED])
+
+    def test_borrowed_then_own_is_case_a(self):
+        from core.pool_test_report import BORROWED, OWN, scaling_summary
+        H, P = ("HONEYPOT", 1, False), ("PRODUCTION", None, False)
+        d = self._data([(0, [P, P]), (10, [H, ("HONEYPOT", 1, True)]), (40, [H, ("HONEYPOT", 2, False)])],
+                       [{"type": "build_start", "pool": 2, "reason": "waiting session", "at": 11},
+                        {"type": "build", "pool": 2, "start": 11, "seconds": 28, "ok": True, "at": 39,
+                         "phases": [["seed volumes", 10], ["WordPress start", 15]]},
+                        {"type": "handoff", "pool": 2, "session": "s1", "borrowed": 1, "waited": 29, "at": 39}])
+        s = scaling_summary(d)
+        self.assertEqual([seg[2] for seg in s.timelines[1]], ["production", BORROWED, OWN])
+        (c,) = s.borrow
+        self.assertEqual((c.window, c.borrowed, c.own_pool, c.end - c.start, c.waited), (1, 1, 2, 30, 29))
+        self.assertEqual((s.builds[0].pool, s.builds[0].reason, s.builds[0].seconds), (2, "waiting session", 28))
+        self.assertEqual(s.limit, [])
+
+    def test_newcomer_on_a_pool_at_the_limit_is_case_b(self):
+        from core.pool_test_report import scaling_summary
+        P, H = ("PRODUCTION", None, False), ("HONEYPOT", 1, False)
+        d = self._data([(0, [P, P]), (10, [H, P]), (50, [H, H])],
+                       [{"type": "capped", "reason": "resource limit reached", "at": 30}])
+        s = scaling_summary(d)
+        self.assertEqual([(c.window, c.pool, c.shared_with) for c in s.limit], [(1, 1, [0])])
+        self.assertEqual(s.capped, [(30.0, "resource limit reached")])
+
+    def test_borrower_dropped_at_the_limit(self):
+        from core.pool_test_report import scaling_summary
+        P, H = ("PRODUCTION", None, False), ("HONEYPOT", 1, False)
+        d = self._data([(0, [P, P]), (10, [H, ("HONEYPOT", 1, True)]), (30, [H, H])],
+                       [{"type": "dropped_waiting", "sessions": ["s1"], "at": 25, "reason": "limit"}])
+        s = scaling_summary(d)
+        self.assertEqual([c.outcome for c in s.borrow], ["dropped"])
+        self.assertEqual([(c.window, c.how) for c in s.limit], [(1, "dropped from the wait queue")])
+
+    def test_load_stats(self):
+        from core.pool_test_report import LoadTiming, load_stats
+        st = load_stats([LoadTiming(0, 0, "x", ms, "own") for ms in (100, 200, 300)]
+                        + [LoadTiming(0, 1, "x", 50, "")])
+        self.assertEqual(set(st), {"own"})
+        self.assertEqual((st["own"]["n"], st["own"]["median"], st["own"]["max"]), (3, 200, 300))
