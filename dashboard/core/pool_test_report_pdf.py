@@ -18,7 +18,7 @@ from core.exploit_report_pdf import (_FONT_CSS_STACK, _GREEN, _GREY, _ORANGE, _R
 from core.pool_test_report import (BORROWED, CART_LOST, EXCLUSIVE, INCOMPLETE, MERGED, OWN,
                                    PRODUCTION, SHARED, SHARED_EXPECTED, STATES, UNSTABLE,
                                    PoolTestData, ScalingSummary, Verdict, _quantile, analyze,
-                                   cart_violations, load_stats, scaling_summary)
+                                   cart_violations, load_stats, scaling_summary, usage_at)
 
 _STATUS_COLOR = {EXCLUSIVE: _GREEN, SHARED_EXPECTED: _ORANGE, INCOMPLETE: _GREY, MERGED: _RED,
                  CART_LOST: _RED, UNSTABLE: _ORANGE}
@@ -289,6 +289,7 @@ def render_pdf(data: PoolTestData, out_path: str) -> Verdict:
     scaling, _next_fig = _scaling_html(data, doc, family, 2)
     parts.append(scaling)
     parts.append(_round_robin_html(data))
+    parts.append(_scaledown_html(data))
     parts.append(_cart_section_html(data))
     parts.append(_runs_html(data))
     parts.append(_steps_html(data, doc))
@@ -436,7 +437,9 @@ def scaling_timeline_figure(data: PoolTestData, summ: ScalingSummary, family: st
     pool built during it (phases shaded), hand-offs from a finished build to
     the window that got it, and when the resource limit / pre-build happened."""
     builds = summ.builds
-    span = max([data.duration, 1.0] + [b.start + (b.seconds or 0) for b in builds])
+    removals = summ.removals
+    span = max([data.duration, 1.0] + [b.start + (b.seconds or 0) for b in builds]
+               + [r.at for r in removals])
     W, ml, mr = 900, 150, 24
     plot_w = W - ml - mr
     row_h, bar_h = 26, 18
@@ -458,6 +461,11 @@ def scaling_timeline_figure(data: PoolTestData, summ: ScalingSummary, family: st
         if r.get("end") is not None:
             markers.append((X(r["end"]), f"{r['requested']} pool(s) ready" if r.get("reached")
                             else "pre-build stopped", _PURPLE, False))
+    sd = data.scaledown or {}
+    if sd.get("requested") is not None:
+        markers.append((X(sd["requested"]), "scale-down requested", _INK, True))
+        if sd.get("done") is not None:
+            markers.append((X(sd["done"]), "scale-down done", _INK, False))
     rows_end: list[float] = []
     placed = []
     for m in markers:
@@ -473,13 +481,15 @@ def scaling_timeline_figure(data: PoolTestData, summ: ScalingSummary, family: st
     title_h, step_h = 28, 18
     band = title_h + step_h + len(rows_end) * (fm.height() + 2) + 6
     win_top = band
-    build_top = win_top + len(windows) * row_h + (28 if builds else 0)
-    plot_bottom = build_top + len(builds) * row_h + 6
+    build_top = win_top + len(windows) * row_h + (28 if builds or removals else 0)
+    plot_bottom = build_top + (len(builds) + len(removals)) * row_h + 6
     names = _phase_names(builds)
     items = [(_STATE_FILL[s], _STATE_LABEL[s]) for s in STATES]
     items += [(_phase_color(names, n), f"build: {n}") for n in names]
     if builds:
         items.append(("#b0bec5", "build: create / register"))
+    if removals:
+        items.append((_REMOVED, "pool removed (scale-down)"))
     H = int(_legend(None, ml, plot_bottom + 24, items, family, plot_w)) + 8
 
     img, p = vector_figures.new_figure(W, H)
@@ -525,10 +535,24 @@ def scaling_timeline_figure(data: PoolTestData, summ: ScalingSummary, family: st
                 _text_in(p, X(t0), X(t1), y, bar_h, f"pool {pool}", _STATE_INK[state], family)
 
     # Build rows.
-    if builds:
+    if builds or removals:
         p.setFont(QFont(family, 9, QFont.Weight.Bold))
         p.setPen(QColor(_INK))
-        p.drawText(QPointF(8, build_top - 10), "Pools built")
+        p.drawText(QPointF(8, build_top - 10), "Pools built" + (" / removed" if removals else ""))
+    for k, rm in enumerate(removals):
+        y = build_top + (len(builds) + k) * row_h
+        p.setFont(font)
+        p.setPen(QColor(_INK))
+        p.drawText(QRectF(8, y, ml - 14, bar_h), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+                   f"pool {rm.pool}")
+        x0, x1 = X(rm.at - rm.seconds), X(rm.at)
+        _bar(p, x0, max(x1, x0 + 4), y, bar_h, _REMOVED)
+        label = f"removed in {rm.seconds:.1f} s \u00b7 " + ("forced" if rm.forced else
+                                                             f"idle {rm.idle:.0f} s" if rm.idle else "idle")
+        lx = max(x1, x0 + 4) + 4
+        if lx + fm.horizontalAdvance(label) > W - 2:
+            lx = x0 - 4 - fm.horizontalAdvance(label)
+        p.drawText(QPointF(lx, y + bar_h - 5), label)
     by_pool_end = {}
     for k, b in enumerate(builds):
         y = build_top + k * row_h
@@ -580,6 +604,74 @@ def scaling_timeline_figure(data: PoolTestData, summ: ScalingSummary, family: st
 
 
 _BLUE_INK = "#1565c0"
+_REMOVED = "#6d4c41"
+
+
+def usage_figure(data: PoolTestData, summ: ScalingSummary, family: str = "Serif"):
+    """Small multiples on one time axis: memory, CPU and running pools of all
+    honeypot pool containers, with the build ends, the resource limit and the
+    scale-down marked. Separate panels, so each keeps its own honest scale."""
+    usage = sorted(data.usage, key=lambda u: u.t)
+    span = max([data.duration, 1.0] + [u.t for u in usage])
+    W, ml, mr = 900, 110, 24
+    plot_w = W - ml - mr
+    panels = [("Memory in use", lambda u: u.mem_mb, "MB", _BLUE_INK),
+              ("CPU in use", lambda u: u.cpu_percent, "% of one CPU", _BLUE_INK),
+              ("Pools running", lambda u: float(u.pools), "pools", _BLUE_INK)]
+    panel_h, gap, top = 110, 30, 56
+    H = top + len(panels) * (panel_h + gap) + 34
+    img, p = vector_figures.new_figure(W, H)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setFont(QFont(family, 12, QFont.Weight.Bold))
+    p.setPen(QColor(_INK))
+    p.drawText(20, 20, "Honeypot pool containers: resource use over the run")
+    font = QFont(family, 8)
+
+    def X(t):
+        return ml + (max(0.0, min(t, span)) / span) * plot_w
+    events = [(b.start + b.seconds, _GREEN) for b in summ.builds if b.seconds is not None and b.ok]
+    events += [(t, _RED) for t, _r in summ.capped]
+    events += [(r.at, _REMOVED) for r in summ.removals]
+    sd = data.scaledown or {}
+    for k, (title, value, unit, color) in enumerate(panels):
+        y0 = top + k * (panel_h + gap)
+        vals = [value(u) for u in usage]
+        vmax = max(vals + [1.0]) * 1.15
+        p.setFont(QFont(family, 9, QFont.Weight.Bold))
+        p.setPen(QColor(_INK))
+        p.drawText(QPointF(ml, y0 - 4), f"{title} ({unit})")
+        p.setFont(font)
+        for frac in (0.0, 0.5, 1.0):
+            y = y0 + panel_h - frac * panel_h
+            p.setPen(QPen(QColor("#e6e6e6"), 1))
+            p.drawLine(QPointF(ml, y), QPointF(ml + plot_w, y))
+            p.setPen(QColor(_MUTED))
+            lab = f"{vmax * frac:,.0f}"
+            p.drawText(QRectF(0, y - 8, ml - 8, 16), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), lab)
+        if sd.get("requested") is not None:
+            x0 = X(sd["requested"])
+            x1 = X(sd["done"] if sd.get("done") is not None else span)
+            p.fillRect(QRectF(x0, y0, max(2.0, x1 - x0), panel_h), QColor("#efebe9"))
+        for t, c in events:
+            p.setPen(QPen(QColor(c), 1, Qt.PenStyle.DashLine))
+            p.drawLine(QPointF(X(t), y0), QPointF(X(t), y0 + panel_h))
+        if len(usage) >= 2:
+            pen = QPen(QColor(color), 2)
+            p.setPen(pen)
+            pts = [QPointF(X(u.t), y0 + panel_h - (value(u) / vmax) * panel_h) for u in usage]
+            for a, b in zip(pts, pts[1:]):
+                p.drawLine(a, b)
+            p.setBrush(QColor(color))
+            p.setPen(Qt.PenStyle.NoPen)
+            for pt in (pts[0], pts[-1]):
+                p.drawEllipse(pt, 3, 3)
+        elif not usage:
+            p.setPen(QColor(_MUTED))
+            p.drawText(QRectF(ml, y0, plot_w, panel_h), int(Qt.AlignmentFlag.AlignCenter),
+                       "no resource samples (docker stats unavailable)")
+    _time_axis(p, ml, ml + plot_w, top + len(panels) * (panel_h + gap) - gap, span, family)
+    p.end()
+    return img
 
 
 def _hbar_chart(rows: list[tuple[str, float, str, str]], unit: str, title: str,
@@ -740,6 +832,12 @@ def _scaling_html(data: PoolTestData, doc: QTextDocument, family: str, fig: int)
                  f"{len(summ.limit)} window(s) share a pool for good"
                  + (f"; limit first reached at {_mmss(summ.capped[0][0])} ({summ.capped[0][1]})"
                     if summ.capped else "")))
+    sd = data.scaledown or {}
+    if sd.get("requested") is not None:
+        rows.append(("Forced scale-down at the end",
+                     f"{len(sd.get('pools_before', []))} \u2192 {len(sd.get('pools_after', []))} pool(s) "
+                     + (f"in {sd['done'] - sd['requested']:.0f} s" if sd.get("done") is not None
+                        else f"(not finished after {SCALEDOWN_TIMEOUT_TEXT})")))
     if res.get("requested"):
         took = (res.get("end") or data.duration) - res["start"]
         rows.append(("Pre-build for the delayed windows",
@@ -804,6 +902,15 @@ def _scaling_html(data: PoolTestData, doc: QTextDocument, family: str, fig: int)
             "pre-build the pools for the delayed windows.", width=640))
         fig += 1
 
+    if data.usage:
+        out.append(diagrams.figure_html(
+            doc, usage_figure(data, summ, family), "pool-usage", fig,
+            "Memory, CPU and number of running honeypot pools (eshop + database containers, "
+            "docker stats every 10 s, every 3 s around the scale-down). Dashed lines: green a pool "
+            "finished building, red the resource limit was reached, brown a pool was removed. "
+            "Shaded: the forced scale-down at the end of the run.", width=640))
+        fig += 1
+
     stats = load_stats(data.loads)
     if stats:
         rows_l, whisk = [], {}
@@ -821,6 +928,73 @@ def _scaling_html(data: PoolTestData, doc: QTextDocument, family: str, fig: int)
             "short tick: 90th percentile; line end: slowest load.", width=640))
         fig += 1
     return "".join(out), fig
+
+
+SCALEDOWN_TIMEOUT_TEXT = "5 min"
+
+
+def _scaledown_html(data: PoolTestData) -> str:
+    """Section: how pools are scaled down when idle, and what the forced
+    scale-down at the end of this run freed and how long it took."""
+    summ = scaling_summary(data)
+    sd = data.scaledown or {}
+    status = (data.pool_state or {}).get("status") or {}
+    timeout = sd.get("idle_timeout", status.get("idle_timeout"))
+    if timeout is None:
+        rule = "The idle timeout is unknown (pool_manager status not readable)."
+    elif not timeout:
+        rule = ("POOL_IDLE_TIMEOUT_SECONDS is 0: pools are never scaled down for being idle "
+                "(only on request, as below).")
+    else:
+        rule = (f"pool_manager scales down a pool once no request has reached it for "
+                f"POOL_IDLE_TIMEOUT_SECONDS = {timeout:g} s ({_mmss(timeout)}): its attackers' "
+                "assignments are dropped (a returning attacker is assigned afresh) and pools above "
+                f"the spare count ({sd.get('spares', status.get('spares', '?'))}) are removed with "
+                "their volumes, "
+                "freeing what they reserved. Compose-declared pools are only freed, never removed.")
+    out = ['<h2 style="color:#222;">Scale-down</h2>',
+           f'<p style="color:#555;">{_esc(rule)} Waiting that long is not practical in a test, so '
+           'the run ends by forcing it: the windows stop sending requests, their sessions are '
+           'released, and pool_manager removes the pools that are no longer needed at once. Other '
+           'sessions\' pools are not touched.</p>']
+    if sd.get("requested") is None:
+        out.append('<p style="color:#555;">The forced scale-down did not run.</p>')
+        return "".join(out)
+    before = usage_at(data.usage, sd["requested"])
+    after = usage_at(data.usage, (sd.get("done") or data.duration) + 2, after=True) or \
+        usage_at(data.usage, data.duration)
+    removed = [r for r in summ.removals if r.at >= sd["requested"] - 1]
+    per = sd.get("mem_per_pool")
+    nb, na = len(sd.get("pools_before", [])), len(sd.get("pools_after", []))
+    rows = [("Requested at", _mmss(sd["requested"])),
+            ("Sessions released", str(sd.get("sessions", 0))),
+            ("Finished", f"after {sd['done'] - sd['requested']:.1f} s" if sd.get("done") is not None
+             else f"not within {SCALEDOWN_TIMEOUT_TEXT}"),
+            ("Pools", f"{nb} \u2192 {na} ({', '.join(map(str, sd.get('pools_before', []))) or '-'} "
+                      f"\u2192 {', '.join(map(str, sd.get('pools_after', []))) or '-'})"),
+            ("Pools removed", ", ".join(f"pool {r.pool} ({r.seconds:.1f} s)" for r in removed) or "none"
+             + (" (the compose-declared pools cover the spare count; nothing above it was running)"
+                if not removed else ""))]
+    if per:
+        rows.append(("Reserved by container limits",
+                     f"{nb * per:,.0f} MB / {nb * sd.get('cpus_per_pool', 0):g} CPUs \u2192 "
+                     f"{na * per:,.0f} MB / {na * sd.get('cpus_per_pool', 0):g} CPUs"))
+    if before and after:
+        rows += [("Memory in use (measured)", f"{before.mem_mb:,.0f} MB \u2192 {after.mem_mb:,.0f} MB "
+                  f"({after.mem_mb - before.mem_mb:+,.0f} MB)"),
+                 ("CPU in use (measured)", f"{before.cpu_percent:.0f} % \u2192 {after.cpu_percent:.0f} %"),
+                 ("Containers running", f"{before.containers} \u2192 {after.containers}")]
+    else:
+        rows.append(("Measured use", "no resource samples around the scale-down"))
+    out.append('<table width="100%" cellspacing="0" cellpadding="4" border="1" '
+               'style="border-collapse:collapse; color:#333;">'
+               + "".join(f'<tr><td width="32%"><b>{_esc(k)}</b></td><td>{_esc(v)}</td></tr>' for k, v in rows)
+               + '</table>')
+    idle = [r for r in summ.removals if not r.forced]
+    if idle:
+        out.append('<p style="color:#555;">Also removed during the run for being idle: '
+                   + _esc(", ".join(f"pool {r.pool} (idle {r.idle:.0f} s)" for r in idle)) + '.</p>')
+    return "".join(out)
 
 
 def _round_robin_html(data: PoolTestData) -> str:

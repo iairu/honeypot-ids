@@ -60,6 +60,16 @@ STATUS_KEY = "honeypot_pool:status"
 # resource-limit transitions), newest last, capped to EVENTS_MAX.
 EVENTS_KEY = "honeypot_pool:events"
 EVENTS_MAX = 500
+# Scale-down. pool_router stamps LAST_SEEN_KEY (pool -> epoch) whenever it routes
+# a request to a pool. DIRTY_KEY holds pools an attacker has used. A client may
+# ask for an immediate scale-down: RELEASE_KEY lists session ids whose pools to
+# give up now, SCALEDOWN_KEY (flag, TTL) removes unowned runtime pools down to
+# the spare count without waiting for the idle timeout. The manager deletes
+# both once done and logs "scaledown_done".
+LAST_SEEN_KEY = "honeypot_pool:last_seen"
+DIRTY_KEY = "honeypot_pool:dirty"
+RELEASE_KEY = "honeypot_pool:release"
+SCALEDOWN_KEY = "honeypot_pool:scaledown_now"
 PW_PREFIX = "honeypot_pool:pw:"
 SESSION_KEY_PREFIX = "honeypot_pool_session:"
 
@@ -81,6 +91,15 @@ MAX_CPUS = float(os.environ.get("POOL_MAX_CPUS", "0") or 0)
 POOL_MEM_MB, POOL_CPUS = pl.pool_cost(MODE)
 # Pools built at the same time while sessions wait for one.
 PARALLEL_BUILDS = max(1, int(os.environ.get("POOL_PARALLEL_BUILDS", "2")))
+# Scale down pools no request has reached for this long (seconds; 0 = never).
+# At least 600: nginx caches a session's pool for 300 s, so a shorter timeout
+# could remove a pool a cached session is about to use.
+MIN_IDLE_TIMEOUT_S = 600
+IDLE_TIMEOUT_S = float(os.environ.get("POOL_IDLE_TIMEOUT_SECONDS", "1800") or 0)
+if 0 < IDLE_TIMEOUT_S < MIN_IDLE_TIMEOUT_S:
+    print(f"pool_manager: POOL_IDLE_TIMEOUT_SECONDS={IDLE_TIMEOUT_S:g} raised to "
+          f"{MIN_IDLE_TIMEOUT_S}", flush=True)
+    IDLE_TIMEOUT_S = MIN_IDLE_TIMEOUT_S
 # Host limits for starting another pool. A WordPress pool reserves ~1.5 GB (eshop
 # 1 GB + database 512 MB limits), a database-only pool 512 MB.
 MIN_FREE_MEM_MB = float(os.environ.get(
@@ -175,6 +194,8 @@ class Manager:
 
     def register_ready(self, n: int, owned: bool = False) -> None:
         self.redis.sadd(READY_KEY, n)
+        # Idle time counts from registration until a request reaches the pool.
+        self.redis.hset(LAST_SEEN_KEY, str(n), f"{time.time():.3f}")
         if owned:
             log(f"pool {n} is ready (owned)")
             return
@@ -491,6 +512,8 @@ class Manager:
         if n <= STATIC_COUNT:
             raise ValueError("static pools are owned by docker compose")
         self.unregister(n)
+        self.redis.hdel(LAST_SEEN_KEY, str(n))
+        self.redis.srem(DIRTY_KEY, n)
         for c in self.docker.containers.list(all=True, filters={"label": f"honeypot.pool={n}"}):
             c.remove(force=True, v=True)
         for v in self.docker.volumes.list(filters={"label": f"honeypot.pool={n}"}):
@@ -547,6 +570,77 @@ class Manager:
         """Every pool that exists or is being built, compose-declared included."""
         return ready | self.runtime_pools() | self.in_flight | set(range(1, STATIC_COUNT + 1))
 
+    # ---- scale-down ------------------------------------------------------
+
+    def release_sessions(self, sids, reason: str, pool: int | None = None) -> dict[int, list[str]]:
+        """Drop these sessions' pool assignments (and their place in the wait
+        queue). Returns pool -> released session ids."""
+        out: dict[int, list[str]] = {}
+        for sid in sids:
+            key = SESSION_KEY_PREFIX + sid
+            v = self.redis.get(key)
+            n = int(v) if v is not None and v.isdigit() else pool
+            if pool is None or n == pool:
+                self.redis.delete(key)
+            self.redis.zrem(WAITING_KEY, sid)
+            if n is not None:
+                self.redis.srem(OWNER_PREFIX + str(n), sid)
+                out.setdefault(n, []).append(sid)
+        for n, released in out.items():
+            self.event("released", pool=n, sessions=released, reason=reason)
+            log(f"pool {n}: released {len(released)} session(s) ({reason})")
+        return out
+
+    def scale_down(self, spares: int) -> None:
+        """Release pools idle past the timeout, remove the runtime pools that are
+        no longer needed, and serve a client's forced scale-down request."""
+        forced_sids = list(self.redis.smembers(RELEASE_KEY))
+        forced = bool(self.redis.exists(SCALEDOWN_KEY))
+        released: dict[int, list[str]] = {}
+        if forced_sids:
+            released = self.release_sessions(forced_sids, "released on request")
+            self.redis.srem(RELEASE_KEY, *forced_sids)
+        now = time.time()
+        seen = self.redis.hgetall(LAST_SEEN_KEY)
+        dirty = {int(x) for x in self.redis.smembers(DIRTY_KEY) if x.isdigit()}
+        pools = {}
+        for n in sorted(int(x) for x in self.redis.smembers(READY_KEY)):
+            if n in self.in_flight:
+                continue
+            owned = bool(self.redis.scard(OWNER_PREFIX + str(n)))
+            if owned and n not in dirty:
+                self.redis.sadd(DIRTY_KEY, n)
+                dirty.add(n)
+            if str(n) not in seen:   # adopted after a restart: idle from now on
+                self.redis.hset(LAST_SEEN_KEY, str(n), f"{now:.3f}")
+                seen[str(n)] = str(now)
+            pools[n] = {"owned": owned, "last_seen": float(seen[str(n)]), "dirty": n in dirty}
+        release, destroy = pl.scaledown_plan(pools, STATIC_COUNT, spares, now, IDLE_TIMEOUT_S,
+                                             forced=forced)
+        for n in release:
+            self.release_sessions(self.redis.smembers(OWNER_PREFIX + str(n)),
+                                  f"idle for {now - pools[n]['last_seen']:.0f} s", pool=n)
+            if n not in destroy:
+                self.hand_off_or_free(n)
+        for n in destroy:
+            started = time.time()
+            idle = round(now - pools[n]["last_seen"], 3)
+            self.destroy(n)
+            self.event("scaledown", pool=n, idle=idle,
+                       forced=not (IDLE_TIMEOUT_S > 0 and idle >= IDLE_TIMEOUT_S),
+                       seconds=round(time.time() - started, 3), mem_mb=POOL_MEM_MB, cpus=POOL_CPUS)
+        # Pools given up on request that stay: back to the free set (or to a
+        # session waiting for a pool).
+        for n in released:
+            if n in pools and n not in destroy and not self.redis.scard(OWNER_PREFIX + str(n)):
+                self.hand_off_or_free(n)
+        if forced:
+            ready = self.redis.scard(READY_KEY)
+            self.redis.delete(SCALEDOWN_KEY)
+            self.event("scaledown_done", removed=destroy, pools=ready,
+                       reserved_mb=ready * POOL_MEM_MB, reserved_cpus=ready * POOL_CPUS)
+            log(f"forced scale-down done: removed {destroy or 'nothing'}, {ready} pool(s) left")
+
     def reserve(self) -> int:
         """Extra unowned pools a client asked for (RESERVE_KEY), 0 if none."""
         v = self.redis.get(RESERVE_KEY)
@@ -572,12 +666,14 @@ class Manager:
         self.release_idle_pools()
         self.drain_wakeups()
 
+        spares = max(SPARES, self.reserve())
+        self.scale_down(spares)
+
         ready = {int(x) for x in self.redis.smembers(READY_KEY)}
         free = self.redis.zcard(FREE_KEY)
         waiting = self.prune_waiting()
         in_flight = len(self.in_flight)
         pools = self.all_pools(ready)
-        spares = max(SPARES, self.reserve())
         room, reason = pl.budget_room(len(pools), POOL_MEM_MB, POOL_CPUS,
                                       MAX_MEMORY_MB, MAX_CPUS, MAX_POOLS)
         start = pl.pools_to_start(free, in_flight, waiting, spares, room, PARALLEL_BUILDS)
@@ -589,7 +685,8 @@ class Manager:
             "building": {str(n): round(t, 3) for n, t in self.build_started.items()},
             "max_pools": MAX_POOLS, "max_memory_mb": MAX_MEMORY_MB, "max_cpus": MAX_CPUS,
             "mem_per_pool": POOL_MEM_MB, "cpus_per_pool": POOL_CPUS,
-            "parallel": PARALLEL_BUILDS, "capped": reason}), ex=int(POLL_SECONDS * 6))
+            "parallel": PARALLEL_BUILDS, "idle_timeout": IDLE_TIMEOUT_S,
+            "capped": reason}), ex=int(POLL_SECONDS * 6))
         self.set_capped(reason)
         if reason:
             # The resource limit is reached: the router now assigns every new
@@ -616,7 +713,8 @@ class Manager:
     def run(self) -> None:
         log(f"started (project {PROJECT}, mode {MODE}, spares {SPARES}, max pools {MAX_POOLS}, "
             f"budget {MAX_MEMORY_MB:g} MB / {MAX_CPUS:g} CPUs (0 = none), "
-            f"{POOL_MEM_MB} MB / {POOL_CPUS:g} CPUs per pool, {PARALLEL_BUILDS} parallel builds)")
+            f"{POOL_MEM_MB} MB / {POOL_CPUS:g} CPUs per pool, {PARALLEL_BUILDS} parallel builds, "
+            f"idle timeout {IDLE_TIMEOUT_S:g} s (0 = never))")
         while True:
             try:
                 self.reconcile()

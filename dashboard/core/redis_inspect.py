@@ -378,7 +378,10 @@ def pool_state(remote: RemoteConfig | None, timeout: float = 15.0) -> dict:
             "reused_assignments": int(reused) if reused.isdigit() else 0,
             # pool_manager's own view: budget, room for more pools, builds in
             # progress ({pool: start epoch}); {} when the manager is not running.
-            "status": status if isinstance(status, dict) else {}}
+            "status": status if isinstance(status, dict) else {},
+            # A forced scale-down (request_scaledown) pool_manager has not finished.
+            "scaledown_pending": _run_redis_cli(
+                remote, "EXISTS", "honeypot_pool:scaledown_now", timeout=timeout).strip() == "1"}
 
 
 def server_time(remote: RemoteConfig | None, timeout: float = 10.0) -> float:
@@ -413,3 +416,15 @@ def set_pool_reserve(remote: RemoteConfig | None, pools: int, ttl: int = 1800,
                        timeout=timeout)
     else:
         _run_redis_cli(remote, "DEL", "honeypot_pool:reserve", timeout=timeout)
+
+
+def request_scaledown(remote: RemoteConfig | None, session_ids: list[str], ttl: int = 600,
+                      timeout: float = 10.0) -> None:
+    """Ask pool_manager to scale down now instead of after
+    POOL_IDLE_TIMEOUT_SECONDS: drop these sessions' pool assignments, then
+    remove unowned runtime pools down to the spare count. Other sessions'
+    pools are left alone. pool_manager deletes the request when done."""
+    if session_ids:
+        _run_redis_cli(remote, "SADD", "honeypot_pool:release", *session_ids, timeout=timeout)
+    _run_redis_cli(remote, "SET", "honeypot_pool:scaledown_now", "1", "EX", str(ttl),
+                   timeout=timeout)

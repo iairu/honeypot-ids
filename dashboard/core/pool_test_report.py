@@ -249,6 +249,16 @@ class LoadTiming:
 
 
 @dataclass
+class UsageSample:
+    """All honeypot pool containers' resource use at one moment of the run."""
+    t: float
+    containers: int
+    pools: int
+    mem_mb: float
+    cpu_percent: float
+
+
+@dataclass
 class PoolTestData:
     generated_at: str
     target_label: str
@@ -268,6 +278,10 @@ class PoolTestData:
     events: list[dict] = field(default_factory=list)  # pool_manager events, `at` rebased
     marks: list[tuple[float, str]] = field(default_factory=list)   # (t, step title)
     reserve: dict = field(default_factory=dict)       # see ScalingSummary.reserve
+    usage: list[UsageSample] = field(default_factory=list)
+    # The forced scale-down at the end: {"requested", "done" (None = timed out),
+    # "sessions", "pools_before", "pools_after", "idle_timeout"}
+    scaledown: dict = field(default_factory=dict)
 
 
 def classify(batch: list[Sample]) -> list[str]:
@@ -365,6 +379,15 @@ class LimitCase:
 
 
 @dataclass
+class PoolRemoval:
+    pool: int
+    at: float                     # removal finished
+    seconds: float                # time to remove its containers and volumes
+    idle: float | None            # seconds since a request last reached it
+    forced: bool                  # requested scale-down, not the idle timeout
+
+
+@dataclass
 class ScalingSummary:
     builds: list[PoolBuild]
     borrow: list[BorrowCase]
@@ -372,6 +395,15 @@ class ScalingSummary:
     capped: list[tuple[float, str]]        # (t, reason) each time growth got capped
     reserve: dict                          # {"requested", "start", "reached", "end", "free", "reason"}
     timelines: dict[int, list]
+    removals: list[PoolRemoval] = field(default_factory=list)
+    released: list[tuple[float, int, int, str]] = field(default_factory=list)  # (t, pool, sessions, reason)
+
+
+def usage_at(usage: list[UsageSample], t: float, after: bool = False) -> UsageSample | None:
+    """The last sample at or before `t` (or, with after=True, the first at or after it)."""
+    if after:
+        return next((u for u in sorted(usage, key=lambda u: u.t) if u.t >= t), None)
+    return next((u for u in sorted(usage, key=lambda u: -u.t) if u.t <= t), None)
 
 
 def _arrival(segs: list, pool: int | None) -> float:
@@ -388,6 +420,8 @@ def scaling_summary(data: PoolTestData) -> ScalingSummary:
     handoffs: dict[str, dict] = {}
     dropped: dict[str, float] = {}
     intervals: list[list] = []             # [capped at, uncapped at or None]
+    removals: list[PoolRemoval] = []
+    released: list[tuple[float, int, int, str]] = []
     for e in sorted(data.events, key=lambda e: e.get("at", 0)):
         kind = e.get("type")
         if kind == "build_start":
@@ -406,6 +440,13 @@ def scaling_summary(data: PoolTestData) -> ScalingSummary:
             intervals[-1][1] = float(e["at"])
         elif kind == "handoff":
             handoffs[str(e.get("session"))] = e
+        elif kind == "scaledown":
+            removals.append(PoolRemoval(int(e.get("pool", 0)), float(e["at"]),
+                                        float(e.get("seconds", 0)),
+                                        e.get("idle"), bool(e.get("forced"))))
+        elif kind == "released":
+            released.append((float(e["at"]), int(e.get("pool", 0)),
+                             len(e.get("sessions", [])), str(e.get("reason", ""))))
         elif kind == "dropped_waiting":
             for sid in e.get("sessions", []):
                 dropped[str(sid)] = float(e["at"])
@@ -452,7 +493,8 @@ def scaling_summary(data: PoolTestData) -> ScalingSummary:
                              and sg[-1][2] in (SHARED, OWN, BORROWED)})
             how = "dropped from the wait queue" if sid in dropped else "assigned while capped"
             limit.append(LimitCase(w, final[3], first[0] if first else final[0], others, how))
-    return ScalingSummary(builds, borrow, limit, capped, dict(data.reserve), tl)
+    return ScalingSummary(builds, borrow, limit, capped, dict(data.reserve), tl,
+                          removals, released)
 
 
 @dataclass

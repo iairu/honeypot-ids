@@ -148,6 +148,58 @@ def collect_live(target: Target, timeout: float = 12.0) -> list[ContainerResourc
     return results
 
 
+# Honeypot pool containers: compose-declared ("<project>-honeypot_eshop_2-1",
+# "<project>-honeypot_database-1" = pool 1 of the database layer) and the ones
+# pool_manager creates ("honeypot_eshop_5"), which compose ps never lists.
+_POOL_CONTAINER_RE = re.compile(r"(?:^|-)honeypot_(eshop|database)(?:_(\d+))?(?:-\d+)?$")
+
+
+def pool_container(name: str) -> tuple[str, int] | None:
+    """("eshop" | "database", pool number) for a honeypot pool container name."""
+    m = _POOL_CONTAINER_RE.search(name)
+    return (m.group(1), int(m.group(2) or 1)) if m else None
+
+
+@dataclass
+class PoolUsage:
+    """What all honeypot pool containers use at one moment."""
+    containers: int = 0
+    pools: int = 0
+    mem_bytes: int = 0
+    cpu_percent: float = 0.0     # sum over containers (100 = one CPU busy)
+    per_pool_mem: dict = None    # pool -> bytes
+
+
+def parse_pool_usage(stats_lines: str) -> PoolUsage:
+    """PoolUsage from `docker stats --format '{{json .}}'` lines."""
+    out = PoolUsage(per_pool_mem={})
+    for line in stats_lines.splitlines():
+        try:
+            st = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        kind = pool_container(st.get("Name", ""))
+        if kind is None:
+            continue
+        mem = _to_bytes((st.get("MemUsage", "") or "").partition("/")[0])
+        out.containers += 1
+        out.mem_bytes += mem
+        out.cpu_percent += _percent(st.get("CPUPerc", ""))
+        out.per_pool_mem[kind[1]] = out.per_pool_mem.get(kind[1], 0) + mem
+    out.pools = len(out.per_pool_mem)
+    return out
+
+
+def collect_pool_usage(target: Target, timeout: float = 20.0) -> PoolUsage:
+    """Memory/CPU of every running honeypot pool container, runtime ones included."""
+    text = _run(
+        target,
+        "ids=$(docker ps -q --filter name=honeypot_eshop --filter name=honeypot_database); "
+        "[ -n \"$ids\" ] && docker stats --no-stream --format '{{json .}}' $ids || true",
+        timeout=timeout)
+    return parse_pool_usage(text)
+
+
 # Sentinel from FastSampler._resolve(): the PID docker reported is not that
 # container on this host.
 _FOREIGN = object()

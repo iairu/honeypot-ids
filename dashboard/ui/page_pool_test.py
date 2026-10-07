@@ -37,8 +37,9 @@ from core.exploits import EXPLOIT_PRESETS
 from core import pool_evidence
 from core.pool_test_report import (CART_PLAN, FALLBACK_EXPLOITS, MAX_ATTEMPTS, MAX_WINDOWS,
                                     MIN_WINDOWS, CartState, Decision, ExploitRun, FrameResult,
-                                    LoadTiming, PoolTestData, Sample, StepResult, classify,
-                                    parse_cart, parse_decision, window_plan)
+                                    LoadTiming, PoolTestData, Sample, StepResult, UsageSample,
+                                    classify, parse_cart, parse_decision, window_plan)
+from core.resource_stats import collect_pool_usage
 from core.state import AppState
 from ui.browser_widget import BrowserWidget
 
@@ -62,6 +63,9 @@ assert len(FRAMES) == MAX_WINDOWS
 
 # Windows per row before the frames wrap onto a second row.
 ROW_MAX = 5
+
+# How long the report waits for pool_manager to finish the forced scale-down.
+SCALEDOWN_TIMEOUT_S = 300
 
 # How long the report waits for pool_manager to build a pool for every window
 # that is still borrowing one (a WordPress pool takes a few minutes).
@@ -109,6 +113,34 @@ class _Job(QThread):
             self.result = self._fn()
         except Exception as e:  # noqa: BLE001 -- handed back to the GUI thread
             self.error = e
+
+
+class _UsageSampler(QThread):
+    """Samples the honeypot pool containers' memory/CPU every `interval`
+    seconds for the whole report run, so the PDF can show resource use going
+    up while pools are built and down again at the scale-down."""
+
+    def __init__(self, target, t0: float, parent=None):
+        super().__init__(parent)
+        self._target, self._t0 = target, t0
+        self.interval = 10.0
+        self.samples: list[UsageSample] = []
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:
+        while not self._stop:
+            started = time.time()
+            try:
+                u = collect_pool_usage(self._target)
+                self.samples.append(UsageSample(started - self._t0, u.containers, u.pools,
+                                                u.mem_bytes / 2 ** 20, u.cpu_percent))
+            except Exception:  # noqa: BLE001 -- a gap in the curve, not a failed run
+                pass
+            while not self._stop and time.time() - started < self.interval:
+                self.msleep(200)
 
 
 def frame_identity(base_user_agent: str, index: int) -> tuple[str, str]:
@@ -590,6 +622,8 @@ class PoolTestPage(QWidget):
             "per batch of new pools)."
             + (f" The last {self._delayed()} window(s) attack only after pools were pre-built "
                "for them." if self._delayed() else "")
+            + " At the end the windows' sessions are released and the pools they no longer "
+            "need are scaled down at once (instead of after POOL_IDLE_TIMEOUT_SECONDS)."
             + "\n\nContinue?",
         ) != QMessageBox.StandardButton.Yes:
             return
@@ -840,6 +874,59 @@ class PoolTestPage(QWidget):
             "share the ready pools round-robin instead.",
             actions, decisions, [self._grab(b) for b in self.browsers], self._read_carts())
 
+    def _forced_scaledown(self, n: int, total_steps: int, total: int,
+                          sampler: _UsageSampler) -> dict:
+        """End of the run: release the windows' sessions and have pool_manager
+        scale down right away, rather than after POOL_IDLE_TIMEOUT_SECONDS,
+        sampling resource use before, during and after."""
+        remote = self._remote()
+        self._progress(f"Step {n}/{total_steps}: forced scale-down — stopping the windows' "
+                       "traffic", n, total)
+        # No more requests from the windows: one would re-assign its bound session.
+        self._load_all(["about:blank"] * len(self.browsers))
+        sids = [sid for sid in self._session_ids[:self._count] if sid]
+        try:
+            before = self._blocking(lambda: redis_inspect.pool_state(remote))
+        except Exception:  # noqa: BLE001
+            before = {}
+        sampler.interval = 3.0
+        self._spin(4000)                    # a resource sample just before
+        requested = self._now()
+        self._blocking(lambda: redis_inspect.request_scaledown(remote, sids))
+        start, state, done = time.monotonic(), before, None
+        while True:
+            if self._cancelled:
+                raise _Cancelled()
+            self._spin(2000)
+            try:
+                state = self._blocking(lambda: redis_inspect.pool_state(remote))
+            except Exception:  # noqa: BLE001
+                continue
+            elapsed = int(time.monotonic() - start)
+            if not state.get("scaledown_pending"):
+                done = self._now()
+                break
+            if elapsed >= SCALEDOWN_TIMEOUT_S:
+                break
+            self._progress(f"Step {n}/{total_steps}: forced scale-down — {len(state.get('ready', []))} "
+                           f"pool(s) left ({elapsed // 60}:{elapsed % 60:02d})", n, total)
+        self._spin(8000)                    # resource samples after the removal
+        try:
+            state = self._blocking(lambda: redis_inspect.pool_state(remote))
+        except Exception:  # noqa: BLE001
+            pass
+        for i, browser in enumerate(self.browsers):   # later manual use starts afresh
+            browser.clear_cookies()
+            self._session_ids[i] = ""
+            self._style_decision(i, Decision())
+        status = (before.get("status") or {}) if before else {}
+        return {"requested": requested, "done": done, "sessions": len(sids),
+                "pools_before": before.get("ready", []) if before else [],
+                "pools_after": state.get("ready", []) if state else [],
+                "idle_timeout": status.get("idle_timeout"), "spares": status.get("spares"),
+                "mem_per_pool": status.get("mem_per_pool"),
+                "cpus_per_pool": status.get("cpus_per_pool")}
+
     def _run_scenario(self, total_unused, _total, preset) -> PoolTestData | None:
         remote, target = self._remote(), target_for("edge", self.state)
         count, delayed = self._count, self._delayed()
@@ -850,7 +937,7 @@ class PoolTestPage(QWidget):
         # open, fill carts, one attack per immediate window, scale-up, [pre-build,
         # delayed attack, scale-up], second exploit, cart page
         total_steps = 2 + len(now_windows) + (1 if now_windows else 0) \
-            + (3 if later_windows else 0) + 2
+            + (3 if later_windows else 0) + 2 + 1      # ... + forced scale-down
         total = total_steps + 3
         self._progress("Resetting test sessions...", 0, total)
         self._blocking(self._reset_threat_state)
@@ -875,6 +962,18 @@ class PoolTestPage(QWidget):
         self._t0 = time.time()
         self._samples, self._loads, self._pending_loads, self._marks = [], [], [], []
         self._reserve = {}
+        sampler = _UsageSampler(target, self._t0, self)
+        sampler.start()
+        try:
+            return self._run_steps(remote, target, baseline, offset, sampler, count, delayed,
+                                   now_windows, later_windows, cart_plan, plan, total_steps, total)
+        finally:
+            sampler.stop()
+            sampler.wait(30000)
+            self._t0 = 0.0
+
+    def _run_steps(self, remote, target, baseline, offset, sampler, count, delayed,
+                   now_windows, later_windows, cart_plan, plan, total_steps, total):
 
         shop = self._base_url() + "/"
         results: list[StepResult] = []
@@ -984,15 +1083,28 @@ class PoolTestPage(QWidget):
                 [self._grab(b) for b in self.browsers], self._read_carts()))
         except _Cancelled:
             return None
-        finally:
-            duration = self._now()
-            self._t0 = 0.0
 
+        # Evidence and the registry first: the scale-down removes containers.
         self._progress("Reading what each honeypot container saw...", total - 2, total)
         try:
             pool_state = self._blocking(lambda: redis_inspect.pool_state(remote))
         except Exception:  # noqa: BLE001 -- the report says the state was unreadable
             pool_state = {}
+        final = results[-1].decisions
+        pools = list(dict.fromkeys(d.pool for d in final if d.pool is not None))
+        pools += [n for n in pool_state.get("ready", []) if n not in pools][:max(0, count + 3 - len(pools))]
+        evidence = self._blocking(lambda: pool_evidence.collect(target, pools, baseline))
+        frames = [FrameResult(
+            label=FRAMES[i][0], user_agent=b.profile.httpUserAgent(),
+            language=b.profile.httpAcceptLanguage(), url=b.view.url().toString(),
+            session_id=final[i].session_id, pool=final[i].pool,
+            screenshot=results[-1].shots[i]) for i, b in enumerate(self.browsers)]
+
+        try:
+            scaledown = self._forced_scaledown(step + 1, total_steps, total, sampler)
+        except _Cancelled:
+            return None
+        duration = self._now()
         try:
             raw_events = self._blocking(lambda: redis_inspect.pool_events(remote))
         except Exception:  # noqa: BLE001 -- the latency section says so
@@ -1007,15 +1119,6 @@ class PoolTestPage(QWidget):
             if "start" in e:
                 e["start"] = float(e["start"]) - offset - t0
             events.append(e)
-        final = results[-1].decisions
-        pools = list(dict.fromkeys(d.pool for d in final if d.pool is not None))
-        pools += [n for n in pool_state.get("ready", []) if n not in pools][:max(0, count + 3 - len(pools))]
-        evidence = self._blocking(lambda: pool_evidence.collect(target, pools, baseline))
-        frames = [FrameResult(
-            label=FRAMES[i][0], user_agent=b.profile.httpUserAgent(),
-            language=b.profile.httpAcceptLanguage(), url=b.view.url().toString(),
-            session_id=final[i].session_id, pool=final[i].pool,
-            screenshot=results[-1].shots[i]) for i, b in enumerate(self.browsers)]
         return PoolTestData(
             generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             target_label=target.label, base_url=self._base_url(),
@@ -1023,7 +1126,8 @@ class PoolTestPage(QWidget):
             pool_state=pool_state, steps=results, runs=runs, evidence=evidence,
             since=baseline.get("since", ""), duration=duration, delayed=delayed,
             samples=list(self._samples), loads=list(self._loads), events=events,
-            marks=list(self._marks), reserve=dict(self._reserve))
+            marks=list(self._marks), reserve=dict(self._reserve),
+            usage=list(sampler.samples), scaledown=scaledown)
 
     def reset_sessions(self) -> None:
         for browser in self.browsers:

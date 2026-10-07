@@ -91,3 +91,38 @@ def idle_action(is_runtime_pool: bool, can_grow: bool, at_max: bool) -> str:
     if is_runtime_pool and can_grow and not at_max:
         return "recycle"
     return "reuse"
+
+
+def scaledown_plan(pools: dict[int, dict], static_count: int, spares: int, now: float,
+                   idle_timeout: float, forced: bool = False) -> tuple[list[int], list[int]]:
+    """Which ready pools to scale down. `pools` maps pool number ->
+    {"owned": bool, "last_seen": epoch of the last request routed to it,
+    "dirty": bool (an attacker used it)}.
+
+    Returns (release, destroy):
+      release  owned pools nobody has used for `idle_timeout` seconds: their
+               sessions' assignments are dropped (a returning session is
+               assigned afresh), so the pool is unowned from then on;
+      destroy  runtime pools (number > static_count) to remove: every released
+               one (it is dirty; the spare logic rebuilds a clean one if
+               needed), then unowned ones idle past the timeout -- any unowned
+               one when `forced` -- used ones first, highest number first,
+               while more than `spares` unowned pools would remain.
+    Compose-declared pools are never destroyed. idle_timeout <= 0 disables the
+    idle part (forced still applies)."""
+    def idle(n: int) -> bool:
+        return idle_timeout > 0 and now - pools[n]["last_seen"] >= idle_timeout
+
+    release = sorted(n for n, p in pools.items() if p["owned"] and idle(n))
+    destroy = [n for n in release if n > static_count]
+    unowned = [n for n, p in pools.items() if not p["owned"] or n in release]
+    keep = len([n for n in unowned if n not in destroy])
+    candidates = sorted((n for n in unowned
+                         if n > static_count and n not in destroy and (forced or idle(n))),
+                        key=lambda n: (not pools[n].get("dirty"), -n))
+    for n in candidates:
+        if keep <= spares:
+            break
+        destroy.append(n)
+        keep -= 1
+    return release, destroy

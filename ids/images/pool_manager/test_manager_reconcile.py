@@ -35,6 +35,7 @@ class Reconcile(unittest.TestCase):
         manager.MAX_CPUS = 0
         manager.SPARES = 1
         manager.PARALLEL_BUILDS = 2
+        manager.IDLE_TIMEOUT_S = 0
         self.r = redis.Redis(host=HOST, port=int(os.environ.get("REDIS_TEST_PORT", "6379")),
                              decode_responses=True)
         self.r.flushall()
@@ -248,6 +249,54 @@ class Reconcile(unittest.TestCase):
         self.r.delete(self.m.RESERVE_KEY)
         self.run_reconcile()
         self.assertEqual(len(self.started), 3)        # back to POOL_SPARES: nothing more
+
+    def build_runtime_pools(self, k):
+        """Static pools owned by s0.., then k runtime pools each owned by r0.."""
+        self.run_reconcile()
+        for i in range(self.STATIC):
+            self.assign(f"s{i}")
+        for i in range(k):
+            self.assign(f"r{i}")
+            self.run_reconcile()
+        self.run_reconcile()
+
+    def test_forced_scaledown_releases_sessions_and_removes_pools(self):
+        self.build_runtime_pools(2)
+        before = {int(x) for x in self.r.smembers(self.m.READY_KEY)}
+        self.mgr.destroy = lambda n: (self.mgr.destroyed.append(n), self.mgr.unregister(n),
+                                      self.r.hdel(self.m.LAST_SEEN_KEY, str(n)))
+        sids = [f"s{i}" for i in range(self.STATIC)] + ["r0", "r1"]
+        self.r.sadd(self.m.RELEASE_KEY, *sids)
+        self.r.set(self.m.SCALEDOWN_KEY, 1, ex=60)
+        self.run_reconcile()
+        after = {int(x) for x in self.r.smembers(self.m.READY_KEY)}
+        runtime_before = {n for n in before if n > self.STATIC}
+        # The released compose-declared pools are free again and cover
+        # POOL_SPARES, so every runtime pool goes -- the unused spare too.
+        self.assertEqual(set(self.mgr.destroyed), runtime_before)
+        self.assertEqual(after, set(range(1, self.STATIC + 1)))
+        self.assertEqual(self.r.zcard(self.m.FREE_KEY), len(after))   # nobody owns anything
+        for sid in sids:
+            self.assertIsNone(self.r.get(self.m.SESSION_KEY_PREFIX + sid))
+        self.assertFalse(self.r.exists(self.m.SCALEDOWN_KEY))
+        self.assertEqual(len(self.events("scaledown_done")), 1)
+        self.assertTrue(all(e["forced"] for e in self.events("scaledown")))
+
+    def test_idle_pools_scale_down_after_the_timeout(self):
+        self.m.IDLE_TIMEOUT_S = 1800
+        self.build_runtime_pools(2)
+        self.mgr.destroy = lambda n: (self.mgr.destroyed.append(n), self.mgr.unregister(n))
+        old = time.time() - 4000
+        for n in self.r.smembers(self.m.READY_KEY):
+            self.r.hset(self.m.LAST_SEEN_KEY, n, old)
+        self.r.hset(self.m.LAST_SEEN_KEY, "1", time.time())     # pool 1 still in use
+        self.run_reconcile()
+        self.assertEqual(self.r.get(self.m.SESSION_KEY_PREFIX + "s0"), "1")   # untouched
+        self.assertIsNone(self.r.get(self.m.SESSION_KEY_PREFIX + "r0"))       # released
+        self.assertTrue(self.mgr.destroyed)
+        self.assertTrue(all(n > self.STATIC for n in self.mgr.destroyed))
+        self.assertFalse(any(e["forced"] for e in self.events("scaledown")))
+        self.m.IDLE_TIMEOUT_S = 0
 
     def test_expired_waiting_session_gets_no_pool(self):
         self.run_reconcile()

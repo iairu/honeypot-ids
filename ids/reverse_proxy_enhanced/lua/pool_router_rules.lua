@@ -50,6 +50,9 @@ _M.COUNTER_KEY = "honeypot_pool:counter"
 _M.PROVISION_KEY = "honeypot_pool:provision"
 _M.CAPPED_KEY = "honeypot_pool:capped"
 _M.WAITING_KEY = "honeypot_pool:waiting"
+-- HASH pool number -> epoch seconds a request was last routed to it; pool_manager
+-- scales down pools nobody has used for POOL_IDLE_TIMEOUT_SECONDS.
+_M.LAST_SEEN_KEY = "honeypot_pool:last_seen"
 
 -- Most sessions that may wait for a pool at once (oldest dropped beyond it;
 -- also bounds the set when pool_manager is not running at all).

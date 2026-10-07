@@ -91,6 +91,10 @@ local LOCAL_CACHE_TTL = 300
 -- so the move pool_manager makes once that pool is ready is seen quickly.
 local PENDING_CACHE_TTL = 3
 
+-- A pool's last-access time is written to Redis at most this often (seconds)
+-- per nginx instance; pool_manager's idle timeout is minutes, not seconds.
+local TOUCH_INTERVAL = 10
+
 -- Prefix used in ngx.shared.honeypot_routes for cached pool assignments.
 local LOCAL_CACHE_KEY_PREFIX = "pool_session:"
 
@@ -202,6 +206,18 @@ local function find_healthy_pool(preferred_pool)
     return candidate
 end
 
+-- Record that a request was just routed to pool_num (throttled through the
+-- shared dict, so Redis sees one write per pool per TOUCH_INTERVAL).
+local function touch_pool(pool_num)
+    local dict = ngx.shared.honeypot_routes
+    if not dict or not pool_num or pool_num < 1 then return end
+    if not dict:add("pool_touch:" .. pool_num, true, TOUCH_INTERVAL) then return end
+    local red = _G.redis_pool.get_connection()
+    if not red then return end
+    red:hset(rules.LAST_SEEN_KEY, tostring(pool_num), string.format("%.3f", ngx.now()))
+    _G.redis_pool.close_connection(red)
+end
+
 -- ---------------------------------------------------------------------------
 -- Public API
 -- ---------------------------------------------------------------------------
@@ -253,7 +269,7 @@ end
 ---
 --- @param  owner  string  The session id that owns the pool.
 --- @return integer  The assigned pool number.
-function _M.get_or_assign_pool(owner)
+local function get_or_assign_pool(owner)
     if not owner or owner == "" then
         ngx.log(ngx.WARN, "[POOL] Empty session id supplied; defaulting to pool 1")
         return 1
@@ -332,6 +348,12 @@ function _M.get_or_assign_pool(owner)
     end
 
     return find_healthy_pool(pool_num)
+end
+
+function _M.get_or_assign_pool(owner)
+    local pool_num = get_or_assign_pool(owner)
+    touch_pool(pool_num)
+    return pool_num
 end
 
 --- Extend the TTL of a session's pool assignment without changing the pool number.

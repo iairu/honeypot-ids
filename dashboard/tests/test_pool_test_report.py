@@ -229,3 +229,32 @@ class ScalingTests(unittest.TestCase):
                         + [LoadTiming(0, 1, "x", 50, "")])
         self.assertEqual(set(st), {"own"})
         self.assertEqual((st["own"]["n"], st["own"]["median"], st["own"]["max"]), (3, 200, 300))
+
+
+class ScaledownReportTests(unittest.TestCase):
+    def test_pool_usage_parses_compose_and_runtime_containers(self):
+        import json
+        from core.resource_stats import parse_pool_usage
+        lines = "\n".join(json.dumps(x) for x in [
+            {"Name": "honeypot-ids-system-v1-honeypot_eshop_2-1", "MemUsage": "512MiB / 1GiB", "CPUPerc": "10.5%"},
+            {"Name": "honeypot-ids-system-v1-honeypot_database_2-1", "MemUsage": "256MiB / 512MiB", "CPUPerc": "1.5%"},
+            {"Name": "honeypot_eshop_5", "MemUsage": "100MiB / 1GiB", "CPUPerc": "3%"},
+            {"Name": "honeypot-ids-system-v1-honeypot_database-1", "MemUsage": "64MiB / 512MiB", "CPUPerc": "0%"},
+            {"Name": "honeypot-ids-system-v1-production_eshop-1", "MemUsage": "900MiB / 1GiB", "CPUPerc": "50%"},
+        ]) + "\nnot json"
+        u = parse_pool_usage(lines)
+        self.assertEqual((u.containers, u.pools), (4, 3))
+        self.assertEqual(u.per_pool_mem[2], 768 * 2 ** 20)
+        self.assertAlmostEqual(u.cpu_percent, 15.0)
+
+    def test_removals_and_usage_lookup(self):
+        from core.pool_test_report import PoolTestData, UsageSample, scaling_summary, usage_at
+        d = PoolTestData("now", "t", "u", "", [], duration=60, events=[
+            {"type": "released", "pool": 4, "sessions": ["a", "b"], "reason": "released on request", "at": 40},
+            {"type": "scaledown", "pool": 4, "idle": 3, "forced": True, "seconds": 2.5, "at": 42}],
+            usage=[UsageSample(t, 2, 1, 100.0 * t, 0) for t in (0, 30, 45)])
+        s = scaling_summary(d)
+        self.assertEqual([(r.pool, r.seconds, r.forced) for r in s.removals], [(4, 2.5, True)])
+        self.assertEqual(s.released, [(40.0, 4, 2, "released on request")])
+        self.assertEqual(usage_at(d.usage, 40).t, 30)
+        self.assertEqual(usage_at(d.usage, 40, after=True).t, 45)

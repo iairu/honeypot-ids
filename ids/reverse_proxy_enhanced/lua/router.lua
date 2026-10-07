@@ -307,16 +307,21 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
                     .. "allowing production | Score: ", threat_result.score)
             return routing_decision
         end
-        -- Re-use the pool number that was stored when the session was first
-        -- flagged.  If the session pre-dates pooling (no honeypot_pool field)
-        -- fall back to a fresh pool assignment so the IP is properly tracked.
+        -- The session's Redis pool assignment decides the pool, not the copy
+        -- stored in the session when it was first flagged: pool_manager moves
+        -- a session that borrowed a pool (scale-up) to the pool built for it,
+        -- and releases the pools of sessions idle past POOL_IDLE_TIMEOUT_SECONDS
+        -- (scale-down; a returning session then gets a fresh assignment).
+        -- get_or_assign_pool is served from the local cache on most requests
+        -- and also skips an unhealthy pool. The stored copy is only updated
+        -- when the assignment really changed, never to a temporary fallback.
         local pool_router = require "pool_router"
-        local pool_num = session_data.honeypot_pool
-        if not pool_num then
-            pool_num = pool_router.get_or_assign_pool(pool_owner)
-            -- Persist pool number back into session on next update_session call.
+        local pool_num = pool_router.get_or_assign_pool(pool_owner)
+        local assigned = pool_router.get_pool_assignment(pool_owner) or pool_num
+        if assigned ~= session_data.honeypot_pool then
             routing_decision.update_session = true
-            routing_decision.session_data   = { honeypot_pool = pool_num }
+            routing_decision.session_data   = routing_decision.session_data or {}
+            routing_decision.session_data.honeypot_pool = assigned
         end
         -- Always refresh the TTL so an active attack session is never evicted.
         pool_router.refresh_assignment_ttl(pool_owner)
@@ -357,6 +362,9 @@ function _M.decide_route(session_data, threat_result, remote_ip, session_id)
         -- field the rest of the time, not a spurious Redis write.
         routing_decision.session_data = routing_decision.session_data or {}
         routing_decision.session_data.honeypot_reason = session_data.honeypot_reason
+        -- X-Honeypot-Pool (and the database layer's X-Honeypot-DB) read it from here.
+        routing_decision.session_data.honeypot_pool = routing_decision.session_data.honeypot_pool
+            or assigned
 
         routing_decision.target   = "honeypot"
         routing_decision.upstream = pool_router.get_upstream_for_pool(pool_num)

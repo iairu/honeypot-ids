@@ -61,6 +61,38 @@ class BudgetRoom(unittest.TestCase):
         self.assertEqual(pl.budget_room(5, 1536, 1.5, 3072, 0, 10)[0], 0)
 
 
+class ScaledownPlan(unittest.TestCase):
+    NOW = 10_000.0
+
+    def pools(self, **spec):
+        """pool -> (owned, seconds since last access, dirty)."""
+        return {int(k[1:]): {"owned": o, "last_seen": self.NOW - ago, "dirty": d}
+                for k, (o, ago, d) in spec.items()}
+
+    def test_idle_owned_runtime_pool_is_released_and_destroyed(self):
+        p = self.pools(p1=(True, 5000, True), p4=(True, 5000, True), p5=(True, 10, True))
+        self.assertEqual(pl.scaledown_plan(p, 3, 1, self.NOW, 1800), ([1, 4], [4]))
+
+    def test_unowned_spares_go_down_to_the_spare_count(self):
+        p = self.pools(p1=(False, 5000, False), p4=(False, 5000, False), p5=(False, 5000, False))
+        self.assertEqual(pl.scaledown_plan(p, 3, 1, self.NOW, 1800), ([], [5, 4]))
+        self.assertEqual(pl.scaledown_plan(p, 3, 2, self.NOW, 1800), ([], [5]))
+
+    def test_recent_spares_stay_unless_forced(self):
+        p = self.pools(p1=(True, 5, True), p4=(False, 5, True), p5=(False, 5, False))
+        self.assertEqual(pl.scaledown_plan(p, 3, 1, self.NOW, 1800), ([], []))
+        # Forced: the used one goes first, the clean one stays as the spare.
+        self.assertEqual(pl.scaledown_plan(p, 3, 1, self.NOW, 1800, forced=True), ([], [4]))
+
+    def test_static_pools_are_never_destroyed(self):
+        p = self.pools(p1=(False, 9000, True), p2=(False, 9000, True), p3=(False, 9000, True))
+        self.assertEqual(pl.scaledown_plan(p, 3, 0, self.NOW, 1800, forced=True), ([], []))
+
+    def test_zero_timeout_disables_idle_scaledown(self):
+        p = self.pools(p4=(True, 99999, True), p5=(False, 99999, False), p6=(False, 99999, False))
+        self.assertEqual(pl.scaledown_plan(p, 3, 1, self.NOW, 0), ([], []))
+
+
 class StaleOwners(unittest.TestCase):
     def test_expired_and_moved_owners_are_stale(self):
         owners = {"a", "b", "c"}
