@@ -18,13 +18,45 @@ def next_pool_number(existing: set[int], static_count: int = STATIC_POOL_COUNT) 
     return n
 
 
-def spares_needed(free: int, in_flight: int, spares_wanted: int,
-                  total_pools: int, max_pools: int) -> int:
-    """How many more pools to start so `spares_wanted` unowned pools are ready
-    (or on their way), without ever exceeding `max_pools` in total."""
-    want = spares_wanted - free - in_flight
-    room = max_pools - total_pools - in_flight
-    return max(0, min(want, room))
+def pool_cost(mode: str) -> tuple[int, float]:
+    """(memory MB, CPUs) one pool reserves, from its containers' limits:
+    WordPress layer = eshop (1024 MB, 1 CPU) + database (512 MB, 0.5 CPU);
+    database layer = the database alone."""
+    return (1536, 1.5) if mode == "wordpress" else (512, 0.5)
+
+
+def budget_room(total_pools: int, mem_per_pool: float, cpus_per_pool: float,
+                max_memory_mb: float, max_cpus: float, max_pools: int) -> tuple[int, str]:
+    """How many more pools fit in the resource budget, and what limits it once
+    nothing fits ("" while there is room). A limit of 0 means unlimited; the
+    pool count is always capped by `max_pools`. `total_pools` counts every pool
+    that exists or is being built, compose-declared ones included."""
+    room = max_pools - total_pools
+    reason = f"pool limit reached: {total_pools} of POOL_MAX={max_pools} pools"
+    if max_memory_mb > 0 and mem_per_pool > 0:
+        fit = int(max_memory_mb // mem_per_pool) - total_pools
+        if fit < room:
+            room = fit
+            reason = (f"resource limit reached: {total_pools} pools reserve "
+                      f"{total_pools * mem_per_pool:.0f} MB of POOL_MAX_MEMORY_MB={max_memory_mb:g}")
+    if max_cpus > 0 and cpus_per_pool > 0:
+        fit = int(max_cpus / cpus_per_pool + 1e-9) - total_pools
+        if fit < room:
+            room = fit
+            reason = (f"resource limit reached: {total_pools} pools reserve "
+                      f"{total_pools * cpus_per_pool:g} CPUs of POOL_MAX_CPUS={max_cpus:g}")
+    room = max(0, room)
+    return room, ("" if room else reason)
+
+
+def pools_to_start(free: int, in_flight: int, waiting: int, spares_wanted: int,
+                   room: int, parallel: int) -> int:
+    """Pools to start now so every session waiting for a pool of its own gets
+    one, plus `spares_wanted` unowned pools for the next attackers. Pools being
+    built already count; never more than `room` (resource budget) and never
+    more than `parallel` builds at once."""
+    want = waiting + spares_wanted - free - in_flight
+    return max(0, min(want, room, parallel - in_flight))
 
 
 def stale_owners(owners: set[str], ip_assignments: dict[str, int | None],

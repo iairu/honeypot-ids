@@ -31,34 +31,46 @@ class Reconcile(unittest.TestCase):
         self.m = manager
         manager.STATIC_COUNT = self.STATIC
         manager.MAX_POOLS = 10
+        manager.MAX_MEMORY_MB = 0
+        manager.MAX_CPUS = 0
+        manager.SPARES = 1
+        manager.PARALLEL_BUILDS = 2
         self.r = redis.Redis(host=HOST, port=int(os.environ.get("REDIS_TEST_PORT", "6379")),
                              decode_responses=True)
         self.r.flushall()
         with mock.patch.object(manager.Manager, "__init__", lambda s: None):
             self.mgr = manager.Manager()
         self.mgr.redis = self.r
-        self.mgr.in_flight = None
+        self.mgr.in_flight = set()
         self.mgr.backoff_until = 0.0
-        self.mgr.worker = None
         self.mgr.docker = mock.MagicMock()
         self.mgr.static_pool_up = lambda n: True
         self.mgr.runtime_pools = lambda: set()
         self.mgr.pool_container_healthy = lambda n: True
         self.started = []
 
-        def fake_thread(n):
+        # Builds finish when finish_builds() is called (synchronously).
+        self.building = []
+
+        def fake_start(n):
             self.started.append(n)
-            self.mgr.register_ready(n)
-            self.mgr.in_flight = None
-        self.mgr._provision_thread = fake_thread
+            self.mgr.in_flight.add(n)
+            self.building.append(n)
+        self.mgr.start_build = fake_start
         self.mgr.can_grow = lambda: (True, "")
         self.mgr.destroyed = []
         self.mgr.destroy = lambda n: (self.mgr.destroyed.append(n), self.mgr.unregister(n))
 
-    def run_reconcile(self):
+    def run_reconcile(self, finish=True):
         self.mgr.reconcile()
-        if self.mgr.worker:
-            self.mgr.worker.join(2)
+        if finish:
+            self.finish_builds()
+
+    def finish_builds(self):
+        while self.building:
+            n = self.building.pop(0)
+            self.mgr.register_ready(n)
+            self.mgr.in_flight.discard(n)
 
     def static_ids(self):
         return [str(i) for i in range(1, self.STATIC + 1)]
@@ -139,6 +151,65 @@ class Reconcile(unittest.TestCase):
         self.run_reconcile()
         self.assertEqual(self.mgr.destroyed, [])
         self.assertIn(str(n), self.r.zrange(self.m.FREE_KEY, 0, -1))
+
+    def assign(self, sid):
+        """What pool_router does for a new session (ASSIGN_SCRIPT, via EVAL)."""
+        script = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                                   "reverse_proxy_enhanced", "lua", "pool_router_rules.lua")).read()
+        script = script.split("_M.ASSIGN_SCRIPT = [[", 1)[1].split("]]", 1)[0]
+        pool, mode = self.r.eval(script, 7, self.m.SESSION_KEY_PREFIX + sid, self.m.FREE_KEY,
+                                 self.m.READY_KEY, "honeypot_pool:counter", self.m.PROVISION_KEY,
+                                 self.m.CAPPED_KEY, self.m.WAITING_KEY, sid, 86400, 200)
+        return int(pool), mode
+
+    def test_scales_one_pool_per_waiting_session_and_hands_it_over(self):
+        self.run_reconcile()
+        for i in range(self.STATIC):
+            self.assertEqual(self.assign(f"s{i}")[1], "exclusive")
+        waiting = [f"w{i}" for i in range(3)]
+        borrowed = {sid: self.assign(sid) for sid in waiting}
+        self.assertTrue(all(m == "pending" for _p, m in borrowed.values()))
+        self.run_reconcile(finish=False)
+        self.assertEqual(len(self.started), 2)          # PARALLEL_BUILDS at a time
+        self.finish_builds()
+        self.run_reconcile()                            # remaining waiter + 1 spare
+        self.run_reconcile()
+        own = {sid: int(self.r.get(self.m.SESSION_KEY_PREFIX + sid)) for sid in waiting}
+        self.assertEqual(len(set(own.values())), 3)
+        self.assertTrue(all(p > self.STATIC for p in own.values()))
+        for sid, p in own.items():
+            self.assertEqual(self.r.smembers(self.m.OWNER_PREFIX + str(p)), {sid})
+            self.assertNotIn(sid, self.r.smembers(self.m.OWNER_PREFIX + str(borrowed[sid][0])))
+        self.assertEqual(self.r.zcard(self.m.WAITING_KEY), 0)
+        self.assertEqual(self.r.zcard(self.m.FREE_KEY), 1)   # the spare
+        self.assertGreater(self.r.ttl(self.m.SESSION_KEY_PREFIX + "w0"), 0)
+        self.assertEqual(self.assign("w0"), (own["w0"], "existing"))
+
+    def test_resource_budget_caps_scaling_then_round_robin(self):
+        cost = self.m.POOL_MEM_MB
+        self.m.MAX_MEMORY_MB = cost * (self.STATIC + 1)   # room for one more pool
+        self.run_reconcile()
+        for i in range(self.STATIC):
+            self.assign(f"s{i}")
+        for i in range(3):
+            self.assign(f"w{i}")
+        self.run_reconcile()
+        self.run_reconcile()
+        self.assertEqual(self.started, [self.STATIC + 1])
+        self.assertIn("POOL_MAX_MEMORY_MB", self.r.get(self.m.CAPPED_KEY))
+        self.assertEqual(int(self.r.get(self.m.SESSION_KEY_PREFIX + "w0")), self.STATIC + 1)
+        self.assertEqual(self.r.zcard(self.m.WAITING_KEY), 0)  # the rest stay round-robin
+        self.assertEqual(self.assign("late")[1], "shared")
+
+    def test_expired_waiting_session_gets_no_pool(self):
+        self.run_reconcile()
+        for i in range(self.STATIC):
+            self.assign(f"s{i}")
+        self.assign("gone")
+        self.r.delete(self.m.SESSION_KEY_PREFIX + "gone")
+        self.run_reconcile()
+        self.assertEqual(self.r.zcard(self.m.WAITING_KEY), 0)
+        self.assertEqual(self.started, [self.STATIC + 1])   # just the spare
 
 
 class ReconcileDatabaseLayer(Reconcile):

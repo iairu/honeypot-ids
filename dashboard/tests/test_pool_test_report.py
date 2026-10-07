@@ -51,6 +51,11 @@ class VerdictTests(unittest.TestCase):
         f[1].session_id = ""
         self.assertEqual(analyze(f, state()).status, INCOMPLETE)
 
+    def test_shared_while_pools_are_still_being_built_is_expected(self):
+        v = analyze(frames(1, 2, 1), state(ready=(1, 2), owners={1: 2, 2: 1}) | {"free": [3], "waiting": 1})
+        self.assertEqual(v.status, SHARED_EXPECTED)
+        self.assertIn("waiting", " ".join(v.findings))
+
     def test_unreadable_state_never_justifies_sharing(self):
         self.assertFalse(sharing_justified({}))
         self.assertEqual(analyze(frames(1, 1, 2), {}).status, SHARED_UNEXPECTED)
@@ -69,6 +74,10 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(parse_decision("s", "", "").route, "PRODUCTION")
         self.assertEqual(parse_decision("", "", "").route, "NO SESSION")
         self.assertEqual(parse_decision("s", "not json", "").route, "PRODUCTION")
+        w = parse_decision("s", '{"honeypot_bound": true}', "1", "7")
+        self.assertTrue(w.waiting)
+        self.assertIn("borrowed", w.text())
+        self.assertFalse(parse_decision("s", "", "", "7").waiting)   # no pool, nothing borrowed
 
     def test_pool_change_between_steps_is_unstable(self):
         from core.pool_test_report import Decision, StepResult, UNSTABLE
@@ -76,6 +85,14 @@ class DecisionTests(unittest.TestCase):
         v = analyze(frames(1, 2, 3), state(free=[4]), [mk(1, 2, 3), mk(1, 3, 3)])
         self.assertEqual(v.status, UNSTABLE)
         self.assertEqual(analyze(frames(1, 2, 3), state(free=[4]), [mk(1, 2, 3)]).status, EXCLUSIVE)
+
+    def test_move_off_a_borrowed_pool_is_not_a_violation(self):
+        from core.pool_test_report import Decision, StepResult, sticky_violations
+        borrowed = StepResult("attack", "", [], [Decision("s", "HONEYPOT", 90, "", 1, waiting=True)])
+        own = StepResult("scale", "", [], [Decision("s", "HONEYPOT", 90, "", 4)])
+        moved = StepResult("again", "", [], [Decision("s", "HONEYPOT", 90, "", 5)])
+        self.assertEqual(sticky_violations([borrowed, own]), [])
+        self.assertEqual(len(sticky_violations([borrowed, own, moved])), 1)
 
 
 class PlanTests(unittest.TestCase):
@@ -90,6 +107,18 @@ class PlanTests(unittest.TestCase):
             self.assertEqual(by_cve[cve].method, "GET", cve)
             self.assertEqual(by_cve[cve].headers, {}, cve)
         self.assertFalse(set(planned) & set(FALLBACK_EXPLOITS))
+
+    def test_window_plan_covers_every_window_count(self):
+        from core.pool_test_report import (CART_PLAN, EXPLOIT_PLAN, MAX_WINDOWS, MIN_WINDOWS,
+                                           window_plan)
+        self.assertEqual(window_plan(3), EXPLOIT_PLAN)
+        self.assertGreaterEqual(len(CART_PLAN), MAX_WINDOWS)
+        for n in range(MIN_WINDOWS, MAX_WINDOWS + 1):
+            plan = window_plan(n)
+            self.assertEqual(len(plan), n)
+            firsts = [a for a, _b in plan]
+            self.assertEqual(len(firsts), len(set(firsts)), f"{n} windows: first exploits repeat")
+            self.assertTrue(all(a != b for a, b in plan))
 
 
 class EvidenceTests(unittest.TestCase):

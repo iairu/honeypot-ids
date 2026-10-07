@@ -10,8 +10,10 @@
 --      no other IP owns ("exclusive"), and the same IP always keeps its pool.
 --   2. Each exclusive assignment queues a wake-up for pool_manager, which is
 --      what builds the next spare pool.
---   3. When no pool is free (all owned, or pool_manager is capped by host
---      resources) new IPs reuse ready pools in strict round-robin ("shared").
+--   3. When no pool is free and pool_manager may still grow, a new session
+--      borrows a ready pool round-robin and joins the waiting queue
+--      ("pending"); once growth is capped (resource limit reached) new
+--      sessions reuse ready pools in strict round-robin for good ("shared").
 --   4. A pool pool_manager registers later (a new spare) is picked up by the
 --      next attacker; stale/unready entries in the free set are never handed out.
 --   5. No ready pool at all -> {0, "none"} rather than a made-up pool.
@@ -37,6 +39,23 @@ local function new_redis()
     end
     local cmds = {}
     function cmds.GET(k) return kv[k] or false end
+    function cmds.EXISTS(k) return kv[k] and 1 or 0 end
+    function cmds.ZSCORE(k, m)
+        local sc = zsets[k] and zsets[k][tostring(m)]
+        return sc and tostring(sc) or false
+    end
+    function cmds.ZREMRANGEBYRANK(k, a, b)
+        local items = sorted_zset(zsets[k] or {})
+        local n = #items
+        if a < 0 then a = n + a end
+        if b < 0 then b = n + b end
+        local removed = 0
+        for i = math.max(a, 0) + 1, math.min(b, n - 1) + 1 do
+            zsets[k][items[i].m] = nil
+            removed = removed + 1
+        end
+        return removed
+    end
     function cmds.SET(k, v, ex, t) kv[k] = v; if ex == "EX" then ttl[k] = tonumber(t) end return "OK" end
     function cmds.EXPIRE(k, t) ttl[k] = tonumber(t); return 1 end
     function cmds.INCR(k) kv[k] = tostring((tonumber(kv[k]) or 0) + 1); return tonumber(kv[k]) end
@@ -79,8 +98,9 @@ local function new_redis()
     end
     function r.assign(ip, ttl_s)
         env.KEYS = { "honeypot_pool_session:" .. ip, rules.FREE_KEY, rules.READY_KEY,
-                     rules.COUNTER_KEY, rules.PROVISION_KEY }
-        env.ARGV = { ip, tostring(ttl_s or 86400) }
+                     rules.COUNTER_KEY, rules.PROVISION_KEY, rules.CAPPED_KEY,
+                     rules.WAITING_KEY }
+        env.ARGV = { ip, tostring(ttl_s or 86400), tostring(r.max_waiting or rules.MAX_WAITING) }
         local res = run_script()
         return res[1], res[2]
     end
@@ -123,11 +143,42 @@ do
     check("4th attacker gets the new spare exclusively", p == 4 and m == "exclusive")
 end
 
-print("== no free pool (all owned / host capped): strict round-robin reuse ==")
+print("== no free pool while scaling up: borrow round-robin, wait for own pool ==")
+do
+    local r = new_redis()
+    for n = 1, 3 do r.add_pool(n) end
+    for i = 1, 3 do r.assign("10.0.5." .. i) end
+    local got, modes = {}, {}
+    for i = 4, 7 do
+        local p, m = r.assign("10.0.5." .. i)
+        got[#got + 1] = p
+        modes[m] = true
+    end
+    check("mode is 'pending' while growth is not capped", modes.pending and not modes.shared)
+    check("pending sessions borrow pools round-robin 1,2,3,1", table.concat(got, ",") == "1,2,3,1")
+    local w = r.zsets[rules.WAITING_KEY] or {}
+    check("every pending session is queued, in arrival order",
+          w["10.0.5.4"] and w["10.0.5.7"] and w["10.0.5.4"] < w["10.0.5.7"])
+    local p, m = r.assign("10.0.5.5")
+    check("a waiting session stays 'pending' on its borrowed pool", p == 2 and m == "pending")
+    r.zsets[rules.WAITING_KEY]["10.0.5.5"] = nil      -- pool_manager handed it pool 4
+    r.kv["honeypot_pool_session:10.0.5.5"] = "4"
+    p, m = r.assign("10.0.5.5")
+    check("after the hand-off it is 'existing' on its own pool", p == 4 and m == "existing")
+    r.max_waiting = 2
+    r.assign("10.0.5.8")
+    local count = 0
+    for _ in pairs(r.zsets[rules.WAITING_KEY]) do count = count + 1 end
+    check("waiting queue is bounded (oldest dropped)", count == 2
+          and r.zsets[rules.WAITING_KEY]["10.0.5.8"] and not r.zsets[rules.WAITING_KEY]["10.0.5.4"])
+end
+
+print("== no free pool and growth capped (resource limit): strict round-robin reuse ==")
 do
     local r = new_redis()
     for n = 1, 3 do r.add_pool(n) end
     for i = 1, 3 do r.assign("10.0.2." .. i) end
+    r.kv[rules.CAPPED_KEY] = "resource limit reached"
     local got = {}
     for i = 4, 9 do
         local p, m = r.assign("10.0.2." .. i)
@@ -135,6 +186,7 @@ do
         if m ~= "shared" then got.bad = true end
     end
     check("reuse mode is 'shared'", not got.bad)
+    check("capped sessions do not wait for a pool", next(r.zsets[rules.WAITING_KEY] or {}) == nil)
     check("reuse cycles 1,2,3,1,2,3", table.concat(got, ",") == "1,2,3,1,2,3")
     r.assign("10.0.2.10")
     check("reuse still queues a wake-up (manager may be able to build more later)",

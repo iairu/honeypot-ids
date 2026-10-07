@@ -1,10 +1,17 @@
-"""pool_manager: keeps a spare honeypot pool ready for the next attacker.
+"""pool_manager: scales the honeypot pools with the number of attacker sessions.
 
-A pool is a honeypot_eshop_N (WordPress) + honeypot_database_N (MySQL) pair.
-pool_router.lua gives each new attacker session a free ready pool exclusively and
-queues a wake-up on honeypot_pool:provision; this service then builds an
-additional pool so one is always waiting. See pool_router_rules.lua for the
-Redis key schema both sides share.
+A pool is a honeypot_eshop_N (WordPress) + honeypot_database_N (MySQL) pair,
+each database seeded from production. pool_router.lua gives each new attacker
+session a free ready pool exclusively. When none is free, the session borrows a
+ready pool round-robin and joins honeypot_pool:waiting; this service then
+builds one pool per waiting session (POOL_PARALLEL_BUILDS at a time), plus
+POOL_SPARES unowned ones, and moves each waiting session to its own pool as
+soon as that pool is healthy. Growth stops at the resource budget
+(POOL_MAX_MEMORY_MB / POOL_MAX_CPUS, reserved by the pools' container limits),
+at POOL_MAX pools, or when the host itself runs short; the service then sets
+honeypot_pool:capped and the router assigns every further session to the ready
+pools round-robin. See pool_router_rules.lua for the Redis key schema both
+sides share.
 
 Two honeypot layers, chosen with POOL_MODE:
   wordpress (default)  pool = honeypot_eshop_N + honeypot_database_N. Pools 1-3
@@ -41,6 +48,7 @@ FREE_KEY = "honeypot_pool:free"
 OWNER_PREFIX = "honeypot_pool:owner:"
 PROVISION_KEY = "honeypot_pool:provision"
 CAPPED_KEY = "honeypot_pool:capped"
+WAITING_KEY = "honeypot_pool:waiting"
 PW_PREFIX = "honeypot_pool:pw:"
 SESSION_KEY_PREFIX = "honeypot_pool_session:"
 
@@ -55,6 +63,13 @@ SPARES = int(os.environ.get("POOL_SPARES", "1"))
 MAX_POOLS = int(os.environ.get("POOL_MAX", "10"))
 READY_TIMEOUT_S = int(os.environ.get("POOL_READY_TIMEOUT_SECONDS", "900"))
 RETRY_BACKOFF_S = int(os.environ.get("POOL_RETRY_BACKOFF_SECONDS", "60"))
+# Resource budget for all pools together (compose-declared ones included), as
+# reserved by their containers' memory/CPU limits; 0 = no budget, POOL_MAX only.
+MAX_MEMORY_MB = float(os.environ.get("POOL_MAX_MEMORY_MB", "0") or 0)
+MAX_CPUS = float(os.environ.get("POOL_MAX_CPUS", "0") or 0)
+POOL_MEM_MB, POOL_CPUS = pl.pool_cost(MODE)
+# Pools built at the same time while sessions wait for one.
+PARALLEL_BUILDS = max(1, int(os.environ.get("POOL_PARALLEL_BUILDS", "2")))
 # Host limits for starting another pool. A WordPress pool reserves ~1.5 GB (eshop
 # 1 GB + database 512 MB limits), a database-only pool 512 MB.
 MIN_FREE_MEM_MB = float(os.environ.get(
@@ -96,8 +111,7 @@ class Manager:
         self.mysql_password = env_required("MYSQL_PASSWORD")
         self.host_paths = self._own_mount_sources()
         self.image = self.docker.containers.get(socket.gethostname()).image
-        self.worker: threading.Thread | None = None
-        self.in_flight: int | None = None
+        self.in_flight: set[int] = set()   # pools being built (one thread each)
         self.backoff_until = 0.0
 
     # ---- discovery -------------------------------------------------------
@@ -147,9 +161,20 @@ class Manager:
 
     def register_ready(self, n: int, owned: bool = False) -> None:
         self.redis.sadd(READY_KEY, n)
-        if not owned:
-            self.redis.zadd(FREE_KEY, {str(n): n}, nx=True)
-        log(f"pool {n} is ready ({'owned' if owned else 'free'})")
+        if owned:
+            log(f"pool {n} is ready (owned)")
+            return
+        sid = self.hand_off_or_free(n)
+        log(f"pool {n} is ready ("
+            + (f"handed to waiting session {sid[:8]}..." if sid else "free") + ")")
+
+    def hand_off_or_free(self, n: int) -> str | None:
+        """Give unowned pool n to the session that has waited longest for a pool
+        of its own (moving it off the pool it borrowed), or put n in the free
+        set when nobody waits. Returns the session id it went to."""
+        sid = self.redis.eval(HANDOFF_SCRIPT, 3, WAITING_KEY, FREE_KEY, READY_KEY,
+                              str(n), SESSION_KEY_PREFIX, OWNER_PREFIX)
+        return sid or None
 
     def unregister(self, n: int) -> None:
         self.redis.srem(READY_KEY, n)
@@ -172,7 +197,7 @@ class Manager:
         if MODE != "wordpress":
             return
         for n in self.runtime_pools():
-            if self.in_flight == n or self.redis.exists(PW_PREFIX + str(n)):
+            if n in self.in_flight or self.redis.exists(PW_PREFIX + str(n)):
                 continue
             try:
                 env = self.docker.containers.get(f"honeypot_eshop_{n}").attrs["Config"]["Env"]
@@ -187,7 +212,7 @@ class Manager:
         """After a manager restart: re-register pools created earlier that are
         still healthy (Redis may have been wiped, which loses ready/free)."""
         for n in sorted(self.runtime_pools()):
-            if self.in_flight == n or self.redis.sismember(READY_KEY, n):
+            if n in self.in_flight or self.redis.sismember(READY_KEY, n):
                 continue
             if self.pool_container_healthy(n):
                 self.register_ready(n, owned=bool(self.redis.scard(OWNER_PREFIX + str(n))))
@@ -245,8 +270,9 @@ class Manager:
                 log(f"pool {n}: all attackers gone, recycling")
                 self.destroy(n)   # the spare logic rebuilds a clean one
             else:
-                self.redis.zadd(FREE_KEY, {str(n): n}, nx=True)
-                log(f"pool {n}: all attackers gone, reusing as it is")
+                sid = self.hand_off_or_free(n)
+                log(f"pool {n}: all attackers gone, reusing as it is"
+                    + (f" (handed to waiting session {sid[:8]}...)" if sid else ""))
 
     # ---- provisioning ----------------------------------------------------
 
@@ -441,7 +467,11 @@ class Manager:
                 log(f"pool {n}: cleanup after failure also failed: {e2}")
             self.backoff_until = time.time() + RETRY_BACKOFF_S
         finally:
-            self.in_flight = None
+            self.in_flight.discard(n)
+
+    def start_build(self, n: int) -> None:
+        self.in_flight.add(n)
+        threading.Thread(target=self._provision_thread, args=(n,), daemon=True).start()
 
     # ---- main loop -------------------------------------------------------
 
@@ -450,6 +480,18 @@ class Manager:
         while self.redis.lpop(PROVISION_KEY) is not None:
             n += 1
         return n
+
+    def prune_waiting(self) -> int:
+        """Drop waiting sessions whose assignment has expired; returns how many
+        still wait for a pool of their own."""
+        for sid in self.redis.zrange(WAITING_KEY, 0, -1):
+            if not self.redis.exists(SESSION_KEY_PREFIX + sid):
+                self.redis.zrem(WAITING_KEY, sid)
+        return self.redis.zcard(WAITING_KEY)
+
+    def all_pools(self, ready: set[int]) -> set[int]:
+        """Every pool that exists or is being built, compose-declared included."""
+        return ready | self.runtime_pools() | self.in_flight | set(range(1, STATIC_COUNT + 1))
 
     def reconcile(self) -> None:
         self.adopt_static_pools()
@@ -460,22 +502,37 @@ class Manager:
 
         ready = {int(x) for x in self.redis.smembers(READY_KEY)}
         free = self.redis.zcard(FREE_KEY)
-        in_flight = 0 if self.in_flight is None else 1
-        need = pl.spares_needed(free, in_flight, SPARES, len(ready), MAX_POOLS)
-        if need <= 0 or in_flight or time.time() < self.backoff_until:
-            return
-        ok, reason = self.can_grow()
-        if not ok:
+        waiting = self.prune_waiting()
+        in_flight = len(self.in_flight)
+        pools = self.all_pools(ready)
+        room, reason = pl.budget_room(len(pools), POOL_MEM_MB, POOL_CPUS,
+                                      MAX_MEMORY_MB, MAX_CPUS, MAX_POOLS)
+        start = pl.pools_to_start(free, in_flight, waiting, SPARES, room, PARALLEL_BUILDS)
+        if not reason and start > 0:
+            ok, reason = self.can_grow()
+        if reason:
+            # The resource limit is reached: the router now assigns every new
+            # session round-robin for good. Sessions already waiting keep their
+            # borrowed pool, except as many as pools are still being built.
             self.redis.set(CAPPED_KEY, reason, ex=int(POLL_SECONDS * 6))
+            self.redis.zremrangebyrank(WAITING_KEY, in_flight, -1)
             return
         self.redis.delete(CAPPED_KEY)
-        n = pl.next_pool_number(ready | self.runtime_pools(), STATIC_COUNT)
-        self.in_flight = n
-        self.worker = threading.Thread(target=self._provision_thread, args=(n,), daemon=True)
-        self.worker.start()
+        if start <= 0 or time.time() < self.backoff_until:
+            return
+        if waiting:
+            log(f"{waiting} session(s) waiting for a pool of their own; "
+                f"building {start} more ({in_flight} already building, room for {room})")
+        taken = set(pools)
+        for _ in range(start):
+            n = pl.next_pool_number(taken, STATIC_COUNT)
+            taken.add(n)
+            self.start_build(n)
 
     def run(self) -> None:
-        log(f"started (project {PROJECT}, mode {MODE}, spares {SPARES}, max pools {MAX_POOLS})")
+        log(f"started (project {PROJECT}, mode {MODE}, spares {SPARES}, max pools {MAX_POOLS}, "
+            f"budget {MAX_MEMORY_MB:g} MB / {MAX_CPUS:g} CPUs (0 = none), "
+            f"{POOL_MEM_MB} MB / {POOL_CPUS:g} CPUs per pool, {PARALLEL_BUILDS} parallel builds)")
         while True:
             try:
                 self.reconcile()
@@ -483,6 +540,41 @@ class Manager:
                 log(f"reconcile error: {e}")
             time.sleep(POLL_SECONDS)
 
+
+# Hands a newly ready (or newly idle) pool to the session that has waited
+# longest for one of its own: the session's assignment moves from the pool it
+# borrowed to this one (TTL kept), and the borrowed pool goes back to the free
+# set if nobody else owns it. Sessions whose assignment expired are skipped.
+# With nobody waiting the pool becomes free. Atomic, so pool_router's
+# ASSIGN_SCRIPT never sees a half-moved session.
+#   KEYS: waiting ZSET, free ZSET, ready SET
+#   ARGV: pool number, session key prefix, owner key prefix
+HANDOFF_SCRIPT = r"""
+local n = ARGV[1]
+while true do
+  local popped = redis.call('ZPOPMIN', KEYS[1])
+  if not popped or #popped == 0 then break end
+  local sid = popped[1]
+  local skey = ARGV[2] .. sid
+  local old = redis.call('GET', skey)
+  if old then
+    if old ~= n then
+      local ttl = redis.call('TTL', skey)
+      redis.call('SET', skey, n)
+      if ttl > 0 then redis.call('EXPIRE', skey, ttl) end
+      redis.call('SREM', ARGV[3] .. old, sid)
+      if redis.call('SCARD', ARGV[3] .. old) == 0 and redis.call('SISMEMBER', KEYS[3], old) == 1 then
+        redis.call('ZADD', KEYS[2], 'NX', tonumber(old), old)
+      end
+    end
+    redis.call('SADD', ARGV[3] .. n, sid)
+    redis.call('ZREM', KEYS[2], n)
+    return sid
+  end
+end
+redis.call('ZADD', KEYS[2], 'NX', tonumber(n), n)
+return false
+"""
 
 # Same steps as honeypot_db_init in docker-compose.db-proxy.yml, for one database.
 CLONE_SCRIPT = r"""

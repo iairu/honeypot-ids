@@ -338,21 +338,25 @@ def flush_threat_state(remote: RemoteConfig | None, timeout: float = 15.0) -> in
 
 
 def session_decision_raw(remote: RemoteConfig | None, session_id: str,
-                         timeout: float = 15.0) -> tuple[str, str]:
-    """(session:<id> JSON, honeypot_pool_session:<id> value) in one redis-cli
-    call; an empty string where the key does not exist."""
-    script = "return {redis.call('GET', KEYS[1]) or '', redis.call('GET', KEYS[2]) or ''}"
-    out = _run_redis_cli(remote, "EVAL", script, "2", f"session:{session_id}",
-                         f"honeypot_pool_session:{session_id}", timeout=timeout)
+                         timeout: float = 15.0) -> tuple[str, str, str]:
+    """(session:<id> JSON, honeypot_pool_session:<id> value, the session's score
+    in honeypot_pool:waiting -- set while it borrows a pool until its own is
+    built) in one redis-cli call; an empty string where there is none."""
+    script = ("return {redis.call('GET', KEYS[1]) or '', redis.call('GET', KEYS[2]) or '', "
+              "redis.call('ZSCORE', KEYS[3], ARGV[1]) or ''}")
+    out = _run_redis_cli(remote, "EVAL", script, "3", f"session:{session_id}",
+                         f"honeypot_pool_session:{session_id}", "honeypot_pool:waiting",
+                         session_id, timeout=timeout)
     lines = out.split("\n")
-    lines += [""] * (2 - len(lines))
-    return lines[0].strip(), lines[1].strip()
+    lines += [""] * (3 - len(lines))
+    return lines[0].strip(), lines[1].strip(), lines[2].strip()
 
 
 def pool_state(remote: RemoteConfig | None, timeout: float = 15.0) -> dict:
     """Snapshot of the honeypot pool registry: ready pools, free (unowned)
-    pools, per-pool owner counts, and why pool_manager is not growing the pool
-    (the `capped` reason), if it is not."""
+    pools, per-pool owner counts, sessions waiting for a pool that is being
+    built for them, and why pool_manager is not growing the pool (the `capped`
+    reason), if it is not."""
     def ints(text: str) -> list[int]:
         return sorted(int(x) for x in text.split() if x.strip().isdigit())
     ready = ints(_run_redis_cli(remote, "SMEMBERS", "honeypot_pool:ready", timeout=timeout))
@@ -363,5 +367,7 @@ def pool_state(remote: RemoteConfig | None, timeout: float = 15.0) -> dict:
                                        timeout=timeout).strip() or 0)
     capped = _run_redis_cli(remote, "GET", "honeypot_pool:capped", timeout=timeout).strip()
     reused = _run_redis_cli(remote, "GET", "honeypot_pool:counter", timeout=timeout).strip()
+    waiting = _run_redis_cli(remote, "ZCARD", "honeypot_pool:waiting", timeout=timeout).strip()
     return {"ready": ready, "free": free, "owners": owners, "capped": capped,
+            "waiting": int(waiting) if waiting.isdigit() else 0,
             "reused_assignments": int(reused) if reused.isdigit() else 0}

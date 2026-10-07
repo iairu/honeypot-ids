@@ -34,14 +34,24 @@ local _M = {}
 --   honeypot_pool:owner:<N>  SET   IPs currently assigned to pool N
 --   honeypot_pool:counter    INT   round-robin counter (reuse path)
 --   honeypot_pool:provision  LIST  "an attacker was just assigned" wake-ups
---   honeypot_pool:capped     STR   set (with TTL) by pool_manager while the
---                                  host is too loaded to start another pool
+--   honeypot_pool:capped     STR   set (with TTL) by pool_manager while no
+--                                  further pool may be started (resource
+--                                  budget / POOL_MAX reached, host too loaded)
+--   honeypot_pool:waiting    ZSET  sessions sharing a pool only until the pool
+--                                  being built for them is ready (score =
+--                                  arrival order); pool_manager hands each new
+--                                  pool to the oldest waiting session
 _M.READY_KEY = "honeypot_pool:ready"
 _M.FREE_KEY = "honeypot_pool:free"
 _M.OWNER_PREFIX = "honeypot_pool:owner:"
 _M.COUNTER_KEY = "honeypot_pool:counter"
 _M.PROVISION_KEY = "honeypot_pool:provision"
 _M.CAPPED_KEY = "honeypot_pool:capped"
+_M.WAITING_KEY = "honeypot_pool:waiting"
+
+-- Most sessions that may wait for a pool at once (oldest dropped beyond it;
+-- also bounds the set when pool_manager is not running at all).
+_M.MAX_WAITING = 200
 
 -- Pools 1..STATIC_POOL_COUNT are declared in docker-compose.yml with a
 -- matching nginx `upstream honeypot_backend_N` block. Higher numbers are
@@ -56,18 +66,26 @@ _M.MAX_POOL_NUMBER = 64
 ---
 --- KEYS[1] = honeypot_pool_session:<SID> ARGV[1] = session id (the pool owner)
 --- KEYS[2] = free ZSET               ARGV[2] = assignment TTL (seconds)
---- KEYS[3] = ready SET
+--- KEYS[3] = ready SET               ARGV[3] = max waiting sessions
 --- KEYS[4] = round-robin counter
 --- KEYS[5] = provision LIST
+--- KEYS[6] = capped STR
+--- KEYS[7] = waiting ZSET
 ---
---- 1. IP already assigned          -> keep its pool ("existing"), refresh TTL.
---- 2. A free ready pool exists     -> that pool becomes the IP's alone
+--- 1. Session already assigned     -> keep its pool ("existing", or "pending"
+---                                    while it still waits for a pool of its
+---                                    own), refresh TTL.
+--- 2. A free ready pool exists     -> that pool becomes the session's alone
 ---                                    ("exclusive"), and a wake-up is queued so
 ---                                    pool_manager builds the next spare.
---- 3. No free pool (all owned, or the host is too loaded to build more)
----                                 -> reuse: round-robin over the ready pools
----                                    ("shared"); still queues a wake-up.
---- 4. No ready pool at all         -> returns {0, "none"}.
+--- 3. No free pool, growth allowed -> the pool set is scaling up: the session
+---                                    borrows a ready pool round-robin for now
+---                                    and joins the waiting queue ("pending");
+---                                    pool_manager builds a pool for it and
+---                                    moves the session there once it is ready.
+--- 4. No free pool, growth capped  -> the resource limit is reached: reuse a
+---    (capped key set)                ready pool round-robin for good ("shared").
+--- 5. No ready pool at all         -> returns {0, "none"}.
 ---
 --- Returns {pool_number, mode}.
 _M.ASSIGN_SCRIPT = [[
@@ -75,6 +93,9 @@ local ttl = tonumber(ARGV[2])
 local existing = redis.call('GET', KEYS[1])
 if existing then
   redis.call('EXPIRE', KEYS[1], ttl)
+  if redis.call('ZSCORE', KEYS[7], ARGV[1]) then
+    return {tonumber(existing), 'pending'}
+  end
   return {tonumber(existing), 'existing'}
 end
 local pool, mode
@@ -97,7 +118,14 @@ if not pool then
   table.sort(nums)
   local c = redis.call('INCR', KEYS[4])
   pool = nums[((c - 1) % #nums) + 1]
-  mode = 'shared'
+  if redis.call('EXISTS', KEYS[6]) == 1 then
+    mode = 'shared'
+  else
+    mode = 'pending'
+    redis.call('ZADD', KEYS[7], c, ARGV[1])
+    local max_waiting = tonumber(ARGV[3]) or 200
+    redis.call('ZREMRANGEBYRANK', KEYS[7], 0, -(max_waiting + 1))
+  end
 end
 redis.call('SET', KEYS[1], tostring(pool), 'EX', ttl)
 redis.call('SADD', 'honeypot_pool:owner:' .. pool, ARGV[1])

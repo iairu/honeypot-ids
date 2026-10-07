@@ -20,11 +20,17 @@
 --     honeypot_pool:provision; pool_manager then builds an additional
 --     honeypot_eshop_N + honeypot_database_N pair so one is ready for the next
 --     attacker.
---   - REUSE under resource pressure: if no pool is free (all owned, or
---     pool_manager has capped growth because the host is low on memory/CPU/
---     disk), the new session is assigned to an existing ready pool in strict
---     round-robin order and shares it. That is the only case in which two
---     attackers share a pool.
+--   - SCALE-UP: if no pool is free but pool_manager may still grow (below its
+--     resource budget), the session borrows a ready pool round-robin for the
+--     moment and joins honeypot_pool:waiting; pool_manager builds pools for
+--     the waiting sessions (several in parallel) and moves each one to its
+--     own pool as soon as that pool is healthy. Pending sessions are cached
+--     locally for a few seconds only, so the move takes effect quickly.
+--   - REUSE at the resource limit: once pool_manager has capped growth
+--     (resource budget / POOL_MAX reached, or the host is low on memory/CPU/
+--     disk), a new session is assigned to an existing ready pool in strict
+--     round-robin order and shares it for good. That is the only case in
+--     which two attackers end up sharing a pool.
 --   - Once assigned, the session->pool mapping lives in Redis with a 24-hour TTL so
 --     the same attacker always hits the same fake environment across sessions.
 --   - A fast per-request local cache (ngx.shared.honeypot_routes) avoids Redis
@@ -37,7 +43,7 @@
 --     traffic continues to flow rather than returning errors.
 --
 -- REDIS KEY SCHEMA: see pool_router_rules.lua (honeypot_pool:ready / :free /
---   :owner:<N> / :counter / :provision / :capped) plus
+--   :owner:<N> / :counter / :provision / :capped / :waiting) plus
 --   honeypot_pool_session:<SID> -> pool number, TTL POOL_ASSIGNMENT_TTL.
 --
 -- SHARED DICT USAGE:
@@ -81,6 +87,10 @@ local POOL_ASSIGNMENT_TTL = 86400
 -- Keeps Redis round-trips off the hot path for known sessions.
 local LOCAL_CACHE_TTL = 300
 
+-- Local cache TTL for a session still waiting for a pool of its own: short,
+-- so the move pool_manager makes once that pool is ready is seen quickly.
+local PENDING_CACHE_TTL = 3
+
 -- Prefix used in ngx.shared.honeypot_routes for cached pool assignments.
 local LOCAL_CACHE_KEY_PREFIX = "pool_session:"
 
@@ -115,14 +125,14 @@ local function get_from_local_cache(owner)
 end
 
 -- Store the pool number for owner in the local shared dict.
-local function set_local_cache(owner, pool_num)
+local function set_local_cache(owner, pool_num, ttl)
     local dict = ngx.shared.honeypot_routes
     if not dict then return end
 
     local ok, err, forcible = dict:set(
         LOCAL_CACHE_KEY_PREFIX .. owner,
         tostring(pool_num),
-        LOCAL_CACHE_TTL
+        ttl or LOCAL_CACHE_TTL
     )
     if not ok then
         ngx.log(ngx.WARN,
@@ -269,10 +279,13 @@ function _M.get_or_assign_pool(owner)
 
     if existing_pool and existing_pool ~= ngx.null then
         -- Assignment already exists in Redis; restore it to local cache and return.
+        -- A session still waiting for its own pool is cached only briefly.
         local pool_num = clamp_pool(existing_pool)
+        local waiting = red:zscore(rules.WAITING_KEY, owner)
         _G.redis_pool.close_connection(red)
 
-        set_local_cache(owner, pool_num)
+        set_local_cache(owner, pool_num,
+            (waiting and waiting ~= ngx.null) and PENDING_CACHE_TTL or nil)
 
         ngx.log(ngx.INFO,
             "[POOL] Restored existing assignment for session ", owner, " → pool ", pool_num)
@@ -281,11 +294,14 @@ function _M.get_or_assign_pool(owner)
 
     -- 3. Brand-new session: one atomic EVAL hands out a free ready pool exclusively
     --    (and queues a spare-pool wake-up for pool_manager), or -- when no pool
-    --    is free -- reuses a ready pool round-robin. See ASSIGN_SCRIPT.
+    --    is free -- borrows a ready pool round-robin while one is built for it
+    --    ("pending"), or shares one for good at the resource limit ("shared").
+    --    See ASSIGN_SCRIPT.
     local res, eval_err = red:eval(
-        rules.ASSIGN_SCRIPT, 5,
+        rules.ASSIGN_SCRIPT, 7,
         redis_key, rules.FREE_KEY, rules.READY_KEY, rules.COUNTER_KEY, rules.PROVISION_KEY,
-        owner, POOL_ASSIGNMENT_TTL)
+        rules.CAPPED_KEY, rules.WAITING_KEY,
+        owner, POOL_ASSIGNMENT_TTL, rules.MAX_WAITING)
     _G.redis_pool.close_connection(red)
 
     local pool_num = type(res) == "table" and tonumber(res[1]) or nil
@@ -299,12 +315,16 @@ function _M.get_or_assign_pool(owner)
     pool_num = clamp_pool(pool_num)
 
     -- Populate local cache to avoid Redis on the next request from this session.
-    set_local_cache(owner, pool_num)
+    set_local_cache(owner, pool_num, mode == "pending" and PENDING_CACHE_TTL or nil)
 
     if mode == "shared" then
         ngx.log(ngx.WARN,
-            "[POOL] NEW assignment (SHARED, no free pool: capped or all owned): session ",
+            "[POOL] NEW assignment (SHARED, resource limit reached): session ",
             owner, " -> pool ", pool_num)
+    elseif mode == "pending" then
+        ngx.log(ngx.INFO,
+            "[POOL] NEW assignment (PENDING, scaling up): session ", owner,
+            " borrows pool ", pool_num, " until its own pool is built")
     else
         ngx.log(ngx.INFO,
             "[POOL] NEW assignment (", mode, "): session ", owner, " -> pool ", pool_num,
@@ -370,6 +390,7 @@ function _M.get_pool_stats()
     local free = red:zrange(rules.FREE_KEY, 0, -1)
     local capped = red:get(rules.CAPPED_KEY)
     local pending = red:llen(rules.PROVISION_KEY)
+    local waiting = red:zcard(rules.WAITING_KEY)
     local pools = {}
     local free_set = {}
     for _, n in ipairs(type(free) == "table" and free or {}) do free_set[tonumber(n)] = true end
@@ -391,6 +412,7 @@ function _M.get_pool_stats()
         pool_count          = #pools,
         reuse_assignments   = total_assignments,
         spare_requests      = tonumber(pending) or 0,
+        waiting_sessions    = tonumber(waiting) or 0,
         growth_capped       = (capped and capped ~= ngx.null) and capped or false,
         pools               = pools,
     }

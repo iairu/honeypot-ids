@@ -2,9 +2,11 @@
 tested on its own; the rendering is core/pool_test_report_pdf.py).
 
 The property under test: by default there is ONE malicious session per
-honeypot pool. Two sessions only share a pool when none is free to give --
-growth is capped (pool_manager low on memory/CPU/disk) or every ready pool is
-already owned -- and the router then reuses the ready pools round-robin.
+honeypot pool. The pools scale with the number of attacker sessions: a session
+that finds no free pool borrows one round-robin until pool_manager has built its
+own, then moves there. Two sessions only keep sharing a pool once growth is
+capped (the pools' resource budget or POOL_MAX is reached, or the host is low on
+memory/CPU/disk) -- the router then reuses the ready pools round-robin.
 analyze() turns the frames' session -> pool observations plus the Redis pool
 registry into a verdict on exactly that.
 """
@@ -29,11 +31,34 @@ FALLBACK_EXPLOITS = ["CVE-2024-27956", "CVE-2022-0739", "CVE-2024-2879", "CVE-20
                      "GENERIC-WP-001"]
 MAX_ATTEMPTS = 3
 
+# How many test windows the Pool test page can run side by side.
+MIN_WINDOWS, MAX_WINDOWS = 3, 10
+
 # What each window puts in its cart before anything is attacked: (product slug,
 # quantity). Simple products only, so a plain ?add-to-cart= request is enough.
 CART_PLAN = [[("ceramic-pour-over-dripper", 1), ("paper-filters-size-02", 2)],
              [("hand-burr-coffee-grinder", 1), ("stainless-milk-pitcher", 1)],
-             [("enamel-camp-mug", 2), ("fernhill-canvas-tote", 1)]]
+             [("enamel-camp-mug", 2), ("fernhill-canvas-tote", 1)],
+             [("gooseneck-electric-kettle", 1), ("logo-cap", 2)],
+             [("digital-brew-scale", 1)],
+             [("glass-french-press", 1), ("barista-apron", 1)],
+             [("glass-bean-canister", 2)],
+             [("double-wall-glass-cups", 2)],
+             [("insulated-travel-tumbler", 1)],
+             [("coffee-lover-gift-box", 1), ("pour-over-starter-kit", 1)]]
+
+
+def window_plan(windows: int) -> list[tuple[str, str]]:
+    """(first, second) exploit per window. Windows A-C use EXPLOIT_PLAN; further
+    windows open with a fallback exploit (a different one each while they last)
+    and run one of A-C's second exploits afterwards -- separate sessions, so a
+    repeat across windows does not matter there."""
+    plan = list(EXPLOIT_PLAN[:windows])
+    for w in range(len(plan), windows):
+        k = w - len(EXPLOIT_PLAN)
+        plan.append((FALLBACK_EXPLOITS[k % len(FALLBACK_EXPLOITS)],
+                     EXPLOIT_PLAN[k % len(EXPLOIT_PLAN)][1]))
+    return plan
 
 EXCLUSIVE = "exclusive"
 SHARED_EXPECTED = "shared_expected"
@@ -63,6 +88,7 @@ class Decision:
     score: int | None = None
     reason: str = ""
     pool: int | None = None
+    waiting: bool = False         # borrowing `pool` until its own pool is built
 
     def text(self) -> str:
         if self.route == "NO SESSION":
@@ -70,6 +96,8 @@ class Decision:
         out = f"Routed to {self.route}"
         if self.pool is not None:
             out += f" \u2022 pool {self.pool}"
+            if self.waiting:
+                out += " (borrowed, own pool being built)"
         if self.score is not None:
             out += f" \u2022 score {self.score}"
         if self.reason and self.route == "HONEYPOT":
@@ -77,9 +105,11 @@ class Decision:
         return out
 
 
-def parse_decision(session_id: str, session_json: str, pool_text: str) -> Decision:
-    """Decision from the session:<id> record and honeypot_pool_session:<id>
-    value (either may be empty/unparseable -> that part is simply unknown)."""
+def parse_decision(session_id: str, session_json: str, pool_text: str,
+                   waiting_text: str = "") -> Decision:
+    """Decision from the session:<id> record, honeypot_pool_session:<id> value
+    and the session's score in honeypot_pool:waiting (any may be empty or
+    unparseable -> that part is simply unknown)."""
     if not session_id:
         return Decision()
     try:
@@ -96,7 +126,7 @@ def parse_decision(session_id: str, session_json: str, pool_text: str) -> Decisi
         route="HONEYPOT" if bound else "PRODUCTION",
         score=int(score) if isinstance(score, (int, float)) else None,
         reason=str(rec.get("honeypot_reason") or ""),
-        pool=pool)
+        pool=pool, waiting=pool is not None and bool(waiting_text.strip()))
 
 
 @dataclass
@@ -162,17 +192,20 @@ class StepResult:
 
 
 def sticky_violations(steps: list[StepResult]) -> list[str]:
-    """A session bound to a pool must keep that pool for the rest of the run."""
+    """A session bound to a pool must keep that pool for the rest of the run.
+    The one allowed move: off a pool it only borrowed (waiting) while its own
+    was being built."""
     out = []
-    seen: dict[int, int] = {}
+    seen: dict[int, Decision] = {}
     for step in steps:
         for i, d in enumerate(step.decisions):
             if d.pool is None:
                 continue
-            if i in seen and seen[i] != d.pool:
-                out.append(f"Window {i + 1} moved from pool {seen[i]} to pool {d.pool} "
+            prev = seen.get(i)
+            if prev is not None and prev.pool != d.pool and not prev.waiting:
+                out.append(f"Window {i + 1} moved from pool {prev.pool} to pool {d.pool} "
                            f"during '{step.title}'.")
-            seen[i] = d.pool
+            seen[i] = d
     return out
 
 
@@ -211,11 +244,12 @@ class Verdict:
 
 
 def sharing_justified(state: dict) -> bool:
-    """Whether the registry explains sessions sharing a pool: growth capped, or
-    no free pool and every ready pool already owned (round-robin reuse)."""
+    """Whether the registry explains sessions sharing a pool: growth capped,
+    sessions still waiting for pools being built, or no free pool and every
+    ready pool already owned (round-robin reuse)."""
     if not state:
         return False
-    if state.get("capped"):
+    if state.get("capped") or state.get("waiting"):
         return True
     owners = state.get("owners", {})
     ready = state.get("ready", [])
@@ -278,14 +312,21 @@ def analyze(frames: list[FrameResult], state: dict, steps: list[StepResult] | No
 
     findings = [f"Pool {n} is shared by {', '.join(labels)}." for n, labels in sorted(shared.items())]
     if sharing_justified(state):
-        reason = (f"pool growth is capped ({state.get('capped')})" if state.get("capped")
-                  else "no free pool was left, so new attackers were assigned to the "
-                       "ready pools round-robin")
+        if state.get("capped"):
+            reason = (f"pool growth is capped ({state.get('capped')}), so further attackers "
+                      "were assigned to the ready pools round-robin")
+        elif state.get("waiting"):
+            reason = (f"{state.get('waiting')} session(s) were still waiting for the pool "
+                      "pool_manager was building for them when the run ended")
+        else:
+            reason = ("no free pool was left, so new attackers were assigned to the "
+                      "ready pools round-robin")
         return Verdict(SHARED_EXPECTED, "Pools are shared, as expected under resource pressure",
                        findings + [f"This is the designed fallback: {reason}."] + moved + cart_issues, by_pool)
     free = state.get("free", []) if state else []
     findings.append(
-        "Sharing is only the designed fallback when no pool is free or growth is capped, "
+        "Sharing is only the designed fallback while pools are being built or once growth "
+        "is capped, "
         + (f"but spare pool(s) {', '.join(map(str, free))} were free and growth is not capped."
            if free else "but the registry shows no reason for it (state unavailable or pools missing)."))
     return Verdict(SHARED_UNEXPECTED, "Pools are shared although free pools exist",

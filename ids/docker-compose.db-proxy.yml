@@ -285,6 +285,12 @@ services:
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
       - POOL_SPARES=${POOL_SPARES:-1}
       - POOL_MAX=${POOL_MAX:-10}
+      # Resource budget for all pools together (by their containers' limits);
+      # pools are built per attacker session until it is reached, then new
+      # sessions share the ready pools round-robin. 0 = no budget.
+      - POOL_MAX_MEMORY_MB=${POOL_MAX_MEMORY_MB:-12288}
+      - POOL_MAX_CPUS=${POOL_MAX_CPUS:-12}
+      - POOL_PARALLEL_BUILDS=${POOL_PARALLEL_BUILDS:-2}
       # Host limits for building another pool; below them the router reuses the
       # existing pools round-robin. Empty = the built-in default.
       - POOL_MIN_FREE_MEM_MB=${POOL_MIN_FREE_MEM_MB:-1024}

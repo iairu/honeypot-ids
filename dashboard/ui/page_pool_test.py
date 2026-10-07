@@ -1,4 +1,4 @@
-"""Pool test page: three embedded browsers, each its own attacker session,
+"""Pool test page: 3 to 10 embedded browsers, each its own attacker session,
 to see how the honeypot pool receives several attackers at once.
 
 Every frame is a BrowserWidget, i.e. its own off-the-record profile and so its
@@ -6,33 +6,39 @@ own cookie jar -- the proxy hands each one a separate signed session cookie.
 Cookies alone are not enough, though: a request that arrives WITHOUT a cookie
 is matched to an existing session by a passive fingerprint (TLS hello,
 User-Agent, Accept-Language, client IP; see session_identity_rules.lua), and
-three frames of one app on one machine would otherwise share all of it, so the
-second and third frames would be folded into the first frame's session. Each
+frames of one app on one machine would otherwise share all of it, so every
+frame after the first would be folded into the first frame's session. Each
 frame therefore gets its own User-Agent suffix and Accept-Language, which is
-what makes the proxy see three different clients.
+what makes the proxy see different clients.
 
 "Attack" sends the same exploit request from the frame; once the score tips,
-the session is bound to a honeypot pool. The pool summary (from the Redis
-pool registry) shows how many pools are ready and how many sessions each owns.
+the session is bound to a honeypot pool. The pools scale with the number of
+attacker sessions (pool_manager builds one per session until its resource
+limit, then the rest share round-robin), so a window may borrow a pool for a
+while and then move to its own. The pool summary (from the Redis pool
+registry) shows how many pools are ready, how many sessions each owns and how
+many still wait for theirs.
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime
 
 from PyQt6.QtCore import QEventLoop, Qt, QThread, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
-    QProgressBar, QPushButton, QSplitter, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QSpinBox, QSplitter, QVBoxLayout, QWidget,
 )
 
 from core import redis_inspect
 from core.docker_ctl import target_for
 from core.exploits import EXPLOIT_PRESETS
 from core import pool_evidence
-from core.pool_test_report import (CART_PLAN, EXPLOIT_PLAN, FALLBACK_EXPLOITS, MAX_ATTEMPTS,
-                                    CartState, Decision, ExploitRun, FrameResult, PoolTestData,
-                                    StepResult, parse_cart, parse_decision)
+from core.pool_test_report import (CART_PLAN, FALLBACK_EXPLOITS, MAX_ATTEMPTS, MAX_WINDOWS,
+                                    MIN_WINDOWS, CartState, Decision, ExploitRun, FrameResult,
+                                    PoolTestData, StepResult, parse_cart, parse_decision,
+                                    window_plan)
 from core.state import AppState
 from ui.browser_widget import BrowserWidget
 
@@ -44,7 +50,22 @@ FRAMES = [
     ("Attacker A", "en-US,en;q=0.9"),
     ("Attacker B", "de-DE,de;q=0.9"),
     ("Attacker C", "fr-FR,fr;q=0.9"),
+    ("Attacker D", "es-ES,es;q=0.9"),
+    ("Attacker E", "it-IT,it;q=0.9"),
+    ("Attacker F", "nl-NL,nl;q=0.9"),
+    ("Attacker G", "pl-PL,pl;q=0.9"),
+    ("Attacker H", "sv-SE,sv;q=0.9"),
+    ("Attacker I", "cs-CZ,cs;q=0.9"),
+    ("Attacker J", "sk-SK,sk;q=0.9"),
 ]
+assert len(FRAMES) == MAX_WINDOWS
+
+# Windows per row before the frames wrap onto a second row.
+ROW_MAX = 5
+
+# How long the report waits for pool_manager to build a pool for every window
+# that is still borrowing one (a WordPress pool takes a few minutes).
+SCALE_TIMEOUT_S = 900
 
 
 # Reads the shop's own cart (WooCommerce Store API) from inside a window, so the
@@ -113,15 +134,24 @@ class PoolTestPage(QWidget):
         layout.addWidget(title)
 
         intro = QLabel(
-            "Three browsers, three separate sessions (own cookies, own User-Agent and "
+            "3 to 10 browsers, each a separate session (own cookies, own User-Agent and "
             "language, so the proxy cannot merge them). Open the shop in each, then attack "
             "from several at once and check that every attacker lands in a honeypot pool "
-            "of their own.")
+            "of their own: the pools scale with the attacker sessions until the resource "
+            "limit, after which the remaining sessions share the pools round-robin.")
         intro.setWordWrap(True)
         intro.setStyleSheet("color: #aaaaaa;")
         layout.addWidget(intro)
 
         bar = QHBoxLayout()
+        bar.addWidget(QLabel("Windows:"))
+        self.count_spin = QSpinBox()
+        self.count_spin.setRange(MIN_WINDOWS, MAX_WINDOWS)
+        self.count_spin.setValue(MIN_WINDOWS)
+        self.count_spin.setToolTip(
+            "How many browser windows (separate attacker sessions) to run side by side.")
+        self.count_spin.valueChanged.connect(self.set_window_count)
+        bar.addWidget(self.count_spin)
         self.preset_combo = QComboBox()
         for p in self._presets:
             self.preset_combo.addItem(f"{p.cve} — {p.name}")
@@ -174,49 +204,104 @@ class PoolTestPage(QWidget):
         row.addWidget(self.refresh_btn)
         layout.addLayout(row)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.browsers: list[BrowserWidget] = []
+        # Frames are created on demand and only hidden (cookies cleared) when the
+        # window count goes down, so a QWebEngine profile is never torn down
+        # while its page is alive. Up to ROW_MAX per row, then a second row.
+        self._rows = QSplitter(Qt.Orientation.Vertical)
+        self._row_splitters = [QSplitter(Qt.Orientation.Horizontal) for _ in range(2)]
+        for row in self._row_splitters:
+            self._rows.addWidget(row)
+        layout.addWidget(self._rows, stretch=1)
+        self._count = 0
+        self._boxes: list[QGroupBox] = []
+        self._all_browsers: list[BrowserWidget] = []
+        self._all_decisions: list[QLabel] = []
+        self._all_carts: list[QLabel] = []
         # Per frame: the session id from the SERVERID cookie the proxy set it
         # ("<id>.<mac>"), kept up to date from the profile's cookie store.
-        self._session_ids = [""] * len(FRAMES)
-        self.decision_labels: list[QLabel] = []
-        self.cart_labels: list[QLabel] = []
-        for i, (label, _lang) in enumerate(FRAMES):
-            browser = BrowserWidget()
-            ua, lang = frame_identity(browser.profile.httpUserAgent(), i)
-            browser.profile.setHttpUserAgent(ua)
-            browser.profile.setHttpAcceptLanguage(lang)
-            self.browsers.append(browser)
-            store = browser.profile.cookieStore()
-            store.cookieAdded.connect(lambda c, n=i: self._on_cookie(n, c))
-            store.cookieRemoved.connect(lambda c, n=i: self._on_cookie_removed(n, c))
-            store.loadAllCookies()
-
-            box = QGroupBox(label)
-            box_layout = QVBoxLayout(box)
-            box_layout.setContentsMargins(4, 4, 4, 4)
-            attack_btn = QPushButton(f"Attack from {label[-1]}")
-            attack_btn.clicked.connect(lambda _=False, n=i: self.attack(n))
-            box_layout.addWidget(attack_btn)
-            box_layout.addWidget(browser, stretch=1)
-            decision = QLabel("Routing: no session yet")
-            decision.setWordWrap(True)
-            decision.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            box_layout.addWidget(decision)
-            self.decision_labels.append(decision)
-            self._style_decision(i, Decision())
-            cart = QLabel("Cart: —")
-            cart.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            cart.setStyleSheet("QLabel { color: #cfcfcf; padding: 2px 8px; border: 1px solid #555; border-radius: 4px; }")
-            box_layout.addWidget(cart)
-            self.cart_labels.append(cart)
-            splitter.addWidget(box)
-        layout.addWidget(splitter, stretch=1)
+        self._session_ids = [""] * MAX_WINDOWS
+        self.set_window_count(MIN_WINDOWS)
 
         # Keeps the labels under the frames current while browsing by hand.
         self._poll = QTimer(self)
         self._poll.setInterval(3000)
         self._poll.timeout.connect(self.refresh_decisions)
+
+    # ---- frames ----
+
+    @property
+    def browsers(self) -> list[BrowserWidget]:
+        return self._all_browsers[:self._count]
+
+    @property
+    def decision_labels(self) -> list[QLabel]:
+        return self._all_decisions[:self._count]
+
+    @property
+    def cart_labels(self) -> list[QLabel]:
+        return self._all_carts[:self._count]
+
+    def _add_frame(self) -> None:
+        i = len(self._boxes)
+        label = FRAMES[i][0]
+        browser = BrowserWidget()
+        ua, lang = frame_identity(browser.profile.httpUserAgent(), i)
+        browser.profile.setHttpUserAgent(ua)
+        browser.profile.setHttpAcceptLanguage(lang)
+        store = browser.profile.cookieStore()
+        store.cookieAdded.connect(lambda c, n=i: self._on_cookie(n, c))
+        store.cookieRemoved.connect(lambda c, n=i: self._on_cookie_removed(n, c))
+        store.loadAllCookies()
+
+        box = QGroupBox(label)
+        box_layout = QVBoxLayout(box)
+        box_layout.setContentsMargins(4, 4, 4, 4)
+        attack_btn = QPushButton(f"Attack from {label[-1]}")
+        attack_btn.clicked.connect(lambda _=False, n=i: self.attack(n))
+        box_layout.addWidget(attack_btn)
+        box_layout.addWidget(browser, stretch=1)
+        decision = QLabel("Routing: no session yet")
+        decision.setWordWrap(True)
+        decision.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        box_layout.addWidget(decision)
+        cart = QLabel("Cart: —")
+        cart.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cart.setStyleSheet("QLabel { color: #cfcfcf; padding: 2px 8px; border: 1px solid #555; border-radius: 4px; }")
+        box_layout.addWidget(cart)
+        self._boxes.append(box)
+        self._all_browsers.append(browser)
+        self._all_decisions.append(decision)
+        self._all_carts.append(cart)
+        self._row_splitters[0].addWidget(box)
+
+    def set_window_count(self, n: int) -> None:
+        """Show `n` frames. Frames beyond it are hidden and their session
+        dropped (cookies cleared, page blanked), so they stop counting."""
+        if self._exporting:
+            return
+        n = max(MIN_WINDOWS, min(MAX_WINDOWS, n))
+        while len(self._boxes) < n:
+            self._add_frame()
+        for i in range(n, self._count):
+            self._all_browsers[i].clear_cookies()
+            self._all_browsers[i].navigate("about:blank")
+            self._session_ids[i] = ""
+        self._count = n
+        per_row = n if n <= ROW_MAX else (n + 1) // 2
+        for i, box in enumerate(self._boxes):
+            if i >= n:
+                box.hide()
+                continue
+            self._row_splitters[0 if i < per_row else 1].addWidget(box)
+            box.show()
+            self._style_decision(i, Decision())
+        self._row_splitters[1].setVisible(n > per_row)
+        for row in self._row_splitters:
+            row.setSizes([1000 if not w.isHidden() else 0
+                          for w in (row.widget(k) for k in range(row.count()))])
+        self._rows.setSizes([1000, 1000 if n > per_row else 0])
+        if self.count_spin.value() != n:
+            self.count_spin.setValue(n)
 
     def _base_url(self) -> str:
         return _default_eshop_url(self.state).rstrip("/")
@@ -312,8 +397,8 @@ class PoolTestPage(QWidget):
                 if not sid:
                     out.append(Decision())
                     continue
-                raw, pool = redis_inspect.session_decision_raw(remote, sid)
-                out.append(parse_decision(sid, raw, pool))
+                raw, pool, waiting = redis_inspect.session_decision_raw(remote, sid)
+                out.append(parse_decision(sid, raw, pool, waiting))
             return out
         return read()
 
@@ -321,7 +406,7 @@ class PoolTestPage(QWidget):
         """Async refresh of the labels (skipped while a read or an export runs)."""
         if self._exporting or self._job is not None or not self.isVisible():
             return
-        sids = list(self._session_ids)
+        sids = self._session_ids[:self._count]
         job = _Job(lambda: self._fetch_decisions(sids), self)
         self._job = job
 
@@ -355,7 +440,7 @@ class PoolTestPage(QWidget):
         QTimer.singleShot(ms, loop.quit)
         loop.exec()
 
-    # ---- report export (progress bar, all three frames move every step) ----
+    # ---- report export (progress bar, all frames move every step) ----
 
     def _cancel_report(self) -> None:
         self._cancelled = True
@@ -419,7 +504,7 @@ class PoolTestPage(QWidget):
         self._spin(1500)
         decisions: list[Decision] = []
         for _ in range(4):
-            sids = list(self._session_ids)
+            sids = self._session_ids[:self._count]
             decisions = self._blocking(lambda s=sids: self._fetch_decisions(s))
             if not need_sessions or all(d.session_id for d in decisions):
                 break
@@ -442,7 +527,9 @@ class PoolTestPage(QWidget):
             self, "Reset test sessions?",
             "The report starts from a clean slate: this machine's own sessions and honeypot "
             "pool assignments are removed first (the same reset as 'Unpoison host IP' on "
-            "the Exploits page), then the three windows each run a different exploit.\n\nContinue?",
+            f"the Exploits page), then the {self._count} windows each run their own exploit, "
+            "and the run waits for the honeypot pools to scale up to them (a few minutes "
+            "per batch of new pools).\n\nContinue?",
         ) != QMessageBox.StandardButton.Yes:
             return
 
@@ -455,7 +542,7 @@ class PoolTestPage(QWidget):
         self.cancel_btn.setEnabled(True)
         self.progress_row.setVisible(True)
         for w in (self.export_btn, self.open_all_btn, self.attack_all_btn, self.reset_btn,
-                  self.refresh_btn):
+                  self.refresh_btn, self.count_spin):
             w.setEnabled(False)
 
         error, data = "", None
@@ -466,7 +553,7 @@ class PoolTestPage(QWidget):
 
         self.progress_row.setVisible(False)
         for w in (self.export_btn, self.open_all_btn, self.attack_all_btn, self.reset_btn,
-                  self.refresh_btn):
+                  self.refresh_btn, self.count_spin):
             w.setEnabled(True)
         self._exporting = False
         self._poll.start()
@@ -512,7 +599,8 @@ class PoolTestPage(QWidget):
         """Exploits for one window: its primary and secondary choice, then the
         fallbacks, as presets (those that divert within MAX_ATTEMPTS only)."""
         by_cve = {p.cve: p for p in EXPLOIT_PRESETS}
-        return [by_cve[c] for c in (*EXPLOIT_PLAN[window], *FALLBACK_EXPLOITS) if c in by_cve]
+        plan = window_plan(self._count)[window]
+        return [by_cve[c] for c in dict.fromkeys((*plan, *FALLBACK_EXPLOITS)) if c in by_cve]
 
     def _attack_step(self, n: int, total_steps: int, window: int, queue: list,
                      used: set[str], runs: list[ExploitRun]) -> StepResult:
@@ -521,8 +609,9 @@ class PoolTestPage(QWidget):
         queue is tried -- so the window is guaranteed an exploit that does."""
         label = FRAMES[window][0]
         shop = self._base_url() + "/"
-        preset = next(p for p in queue if p.cve not in used)
-        replaced = preset.cve != EXPLOIT_PLAN[window][0]
+        # Prefer an exploit no other window ran; with many windows they may repeat.
+        preset = next((p for p in queue if p.cve not in used), queue[0])
+        replaced = preset.cve != window_plan(self._count)[window][0]
         decisions: list[Decision] = []
         while True:
             used.add(preset.cve)
@@ -555,12 +644,67 @@ class PoolTestPage(QWidget):
         actions[window] = f"Opens {preset.cve} ({attempts} attempt(s))"
         return StepResult(f"{label} attacks with {preset.cve}",
                           f"{preset.name}. The session must be bound to a pool no other "
-                          "window has, and the others must stay on production.",
+                          "window has -- or, when no pool is free, borrow one until the pool "
+                          "being built for it is ready -- and the windows that have not "
+                          "attacked yet must stay on production.",
                           actions, decisions, [self._grab(b) for b in self.browsers], self._read_carts())
+
+    def _wait_for_scaling(self, n: int, total_steps: int, total: int) -> StepResult:
+        """Wait until pool_manager has built a pool for every window that is
+        still borrowing one (or growth is capped and it never will), then show
+        every window on the shop again."""
+        remote = self._remote()
+        before = self._settled_decisions(need_sessions=True)
+        start = time.monotonic()
+        decisions, state = before, {}
+        while True:
+            if self._cancelled:
+                raise _Cancelled()
+            sids = self._session_ids[:self._count]
+            decisions = self._blocking(lambda s=sids: self._fetch_decisions(s))
+            try:
+                state = self._blocking(lambda: redis_inspect.pool_state(remote))
+            except Exception:  # noqa: BLE001 -- keep waiting on the decisions alone
+                state = {}
+            for i, d in enumerate(decisions):
+                self._style_decision(i, d)
+            waiting = [FRAMES[i][0][-1] for i, d in enumerate(decisions) if d.waiting]
+            elapsed = int(time.monotonic() - start)
+            if not waiting or elapsed >= SCALE_TIMEOUT_S:
+                break
+            note = f" — growth capped: {state['capped']}" if state.get("capped") else ""
+            self._progress(f"Step {n}/{total_steps}: pools scale up — window(s) "
+                           f"{', '.join(waiting)} wait for their own pool "
+                           f"({elapsed // 60}:{elapsed % 60:02d}){note}", n, total)
+            self._spin(3000)
+        self._load_all([self._base_url() + "/"] * len(self.browsers))
+        self._spin(700)
+        decisions = self._settled_decisions(need_sessions=True)
+        for i, d in enumerate(decisions):
+            self._style_decision(i, d)
+        actions = []
+        for b, d in zip(before, decisions):
+            if b.pool is not None and d.pool is not None and b.pool != d.pool:
+                actions.append(f"Moved from borrowed pool {b.pool} to its own pool {d.pool}")
+            elif d.waiting:
+                actions.append(f"Still borrowing pool {d.pool} (timed out)")
+            else:
+                actions.append("Browses the shop")
+        return StepResult(
+            "Honeypot pools scale up",
+            "Windows that found no free pool borrowed a ready one round-robin while "
+            "pool_manager built a pool (eshop + seeded database) for each of them, and must "
+            "now each be in their own. Once the resource limit is reached no more pools are "
+            "built and the remaining windows keep sharing the ready pools round-robin.",
+            actions, decisions, [self._grab(b) for b in self.browsers], self._read_carts())
 
     def _run_scenario(self, total_unused, _total, preset) -> PoolTestData | None:
         remote, target = self._remote(), target_for("edge", self.state)
-        total_steps = 7
+        count = self._count
+        cart_plan = CART_PLAN[:count]
+        plan = window_plan(count)
+        # open, fill carts, one attack per window, scale-up, second exploit, cart page
+        total_steps = count + 5
         total = total_steps + 3
         self._progress("Resetting test sessions...", 0, total)
         self._blocking(self._reset_threat_state)
@@ -589,17 +733,17 @@ class PoolTestPage(QWidget):
             for i, d in enumerate(decisions):
                 self._style_decision(i, d)
             results.append(StepResult(
-                "All windows open the shop", "Three new sessions, all routed to production.",
+                "All windows open the shop", f"{count} new sessions, all routed to production.",
                 ["Browses the shop"] * len(self.browsers), decisions,
                 [self._grab(b) for b in self.browsers], self._read_carts()))
 
             # Step 2: every window fills its own cart, while still on production.
             self._progress(f"Step 2/{total_steps}: every window fills its cart", 2, total)
-            slugs = sorted({slug for plan in CART_PLAN for slug, _q in plan})
+            slugs = sorted({slug for items in cart_plan for slug, _q in items})
             ids = self._blocking(lambda: product_ids(self._base_url(), slugs))
-            for k in range(max(len(plan) for plan in CART_PLAN)):
-                urls = [f"{self._base_url()}/?add-to-cart={ids[plan[k][0]]}&quantity={plan[k][1]}"
-                        if k < len(plan) else shop for plan in CART_PLAN]
+            for k in range(max(len(items) for items in cart_plan)):
+                urls = [f"{self._base_url()}/?add-to-cart={ids[items[k][0]]}&quantity={items[k][1]}"
+                        if k < len(items) else shop for items in cart_plan]
                 self._load_all(urls)
                 self._spin(500)
             decisions = self._settled_decisions(need_sessions=True)
@@ -609,24 +753,26 @@ class PoolTestPage(QWidget):
                 "Every window fills its cart",
                 "Each window adds its own products. These carts are the baseline: they must "
                 "look exactly the same after the session is routed to a honeypot pool.",
-                ["Adds " + ", ".join(f"{slug} \u00d7 {q}" for slug, q in plan) for plan in CART_PLAN],
+                ["Adds " + ", ".join(f"{slug} \u00d7 {q}" for slug, q in items) for items in cart_plan],
                 decisions, [self._grab(b) for b in self.browsers], self._read_carts()))
 
-            queues = [self._exploit_queue(i) for i in range(len(self.browsers))]
-            for w in range(len(self.browsers)):
+            queues = [self._exploit_queue(i) for i in range(count)]
+            for w in range(count):
                 results.append(self._attack_step(w + 3, total_steps, w, queues[w], used, runs))
 
-            # Final step: every window runs a SECOND, different exploit at once.
+            step = count + 3
+            self._progress(f"Step {step}/{total_steps}: pools scale up", step, total)
+            results.append(self._wait_for_scaling(step, total_steps, total))
+
+            # Every window runs a SECOND exploit it has not run yet, all at once.
             self._progress(f"Step {total_steps - 1}/{total_steps}: all windows run a second exploit",
                            total_steps - 1, total)
             by_cve = {p.cve: p for p in EXPLOIT_PRESETS}
             second = []
-            for w in range(len(self.browsers)):
-                pick = next((by_cve[c] for c in (EXPLOIT_PLAN[w][1], *FALLBACK_EXPLOITS)
-                             if c in by_cve and c not in used), None)
-                second.append(pick)
-                if pick:
-                    used.add(pick.cve)
+            for w in range(count):
+                own = {r.cve for r in runs if r.window == FRAMES[w][0][-1]}
+                second.append(next((by_cve[c] for c in (plan[w][1], *FALLBACK_EXPLOITS)
+                                    if c in by_cve and c not in own), None))
             self._load_all([self._base_url() + p.path if p else shop for p in second])
             self._spin(700)
             decisions = self._settled_decisions(need_sessions=True)
@@ -665,8 +811,8 @@ class PoolTestPage(QWidget):
         except Exception:  # noqa: BLE001 -- the report says the state was unreadable
             pool_state = {}
         final = results[-1].decisions
-        pools = [d.pool for d in final if d.pool is not None]
-        pools += [n for n in pool_state.get("ready", []) if n not in pools][:max(0, 6 - len(pools))]
+        pools = list(dict.fromkeys(d.pool for d in final if d.pool is not None))
+        pools += [n for n in pool_state.get("ready", []) if n not in pools][:max(0, count + 3 - len(pools))]
         evidence = self._blocking(lambda: pool_evidence.collect(target, pools, baseline))
         frames = [FrameResult(
             label=FRAMES[i][0], user_agent=b.profile.httpUserAgent(),
@@ -704,8 +850,12 @@ class PoolTestPage(QWidget):
                     owners = ", ".join(f"pool {n}: {c} session(s)"
                                        for n, c in sorted(info["owners"].items()))
                     text = f"Ready pools: {info['ready'] or 'none'} — owners: {owners or 'none'}"
+                    if info.get("waiting"):
+                        text += (f" — scaling up: {info['waiting']} session(s) borrow a pool "
+                                 "until theirs is built")
                     if info["capped"]:
-                        text += f" — pool growth capped: {info['capped']}"
+                        text += (f" — pool growth capped: {info['capped']} (further sessions "
+                                 "share the ready pools round-robin)")
                     self.pool_label.setText(text)
             job.deleteLater()
         job.finished.connect(done)

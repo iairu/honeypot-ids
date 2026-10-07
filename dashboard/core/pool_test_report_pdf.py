@@ -149,9 +149,11 @@ def _steps_html(data: PoolTestData, doc: QTextDocument) -> str:
     if not data.steps:
         return ""
     out = ['<h2 style="color:#222;">Step by step</h2>',
-           '<p style="color:#555;">All three windows move in every step. An attacker\'s pool '
+           '<p style="color:#555;">All windows move in every step. An attacker\'s pool '
            'must appear in their own step, differ from the earlier ones, and never change '
-           'afterwards.</p>']
+           'afterwards &ndash; except once, from a pool it only borrowed while its own was '
+           'being built to that new pool.</p>']
+    shot_w = max(56, 615 // max(1, len(data.frames)))
     for n, step in enumerate(data.steps, start=1):
         head = "".join(f'<th>{_esc(f.label)}</th>' for f in data.frames)
         acts = "".join(f'<td style="font-size:8pt; color:#555;">{_esc(a)}</td>' for a in step.actions)
@@ -164,7 +166,7 @@ def _steps_html(data: PoolTestData, doc: QTextDocument) -> str:
                 continue
             key = f"report://step{n}frame{i}"
             doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl(key), shot)
-            imgs += f'<td><img src="{key}" width="205"/></td>'
+            imgs += f'<td><img src="{key}" width="{shot_w}"/></td>'
         out.append(
             f'<h3 style="color:#222;">Step {n}: {_esc(step.title)}</h3>'
             f'<p style="color:#555;">{_esc(step.detail)}</p>'
@@ -257,13 +259,15 @@ def render_pdf(data: PoolTestData, out_path: str) -> Verdict:
              '<h2 style="color:#222;">What is being tested</h2>',
              '<p style="color:#555;">Attackers are told apart by session, not by address. '
              'Each test window has its own cookie jar and its own User-Agent and language, so '
-             'the proxy sees three separate attackers. By default every malicious session is '
-             'given a honeypot pool <b>of its own</b>: the router hands a new attacker a free '
-             'ready pool no other session owns, and pool_manager builds a spare after each '
-             'assignment. Two attackers only share a pool when none is free &ndash; growth is '
-             'capped because the host is short of memory, CPU or disk, or every ready pool is '
-             'already owned &ndash; and the router then reuses the ready pools in strict '
-             'round-robin order.</p>']
+             f'the proxy sees {len(data.frames)} separate attackers. By default every malicious '
+             'session is given a honeypot pool <b>of its own</b> (an eshop container with its own '
+             'seeded database): the router hands a new attacker a free ready pool no other '
+             'session owns, and the pools scale with the attacker sessions &ndash; a session '
+             'that finds no free pool borrows one round-robin while pool_manager builds one for '
+             'it, then moves there. Scaling stops at the configured resource limit '
+             '(POOL_MAX_MEMORY_MB / POOL_MAX_CPUS / POOL_MAX) or when the host is short of '
+             'memory, CPU or disk; from then on further attackers share the ready pools in '
+             'strict round-robin order.</p>']
     parts.append(diagrams.figure_html(
         doc, routing_figure(data, verdict, family), "pool-routing", 1,
         "One arrow per test window, from its session to the honeypot pool the router bound "

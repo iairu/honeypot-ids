@@ -295,6 +295,7 @@ This schema was reconstructed by reading all ~10 Lua files that touch either sto
 | `honeytoken:<token_id>` | string (JSON) | 2592000s (30d) | `honeytoken_handler.lua` | `honeytoken_handler.lua` |
 | `honeypot_pool_ip:<ip>` | string (pool number) | 86400s (24h), refreshed on every hit | `pool_router.lua` | `pool_router.lua` — sticky pool assignment |
 | `honeypot_pool:counter` | string (int, `INCR`) | none | `pool_router.lua` | `pool_router.lua` — round-robin pool assignment |
+| `honeypot_pool:waiting` | sorted set (session id, score = arrival order) | none, capped to 200 members | `pool_router.lua` (session borrowed a pool while scaling up) | `pool_manager` — hands each newly built pool to the longest-waiting session; dropped once growth is capped |
 | `admin_access_logs` | list | none, capped to 1000 via `LTRIM` | `admin_handler.lua` | `admin_handler.lua` (`LRANGE`, last 100, for the admin log view) |
 | `vulnerability_events` | list | none, capped to 1000 via `LTRIM` | `vulnerability_handler.lua` | **nothing** — write-only forensic trail |
 | `vulnerability_scans` | list | none, capped to 1000 via `LTRIM` | `vulnerability_handler.lua` | **nothing** — write-only forensic trail |
