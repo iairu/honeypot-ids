@@ -282,6 +282,31 @@ class Reconcile(unittest.TestCase):
         self.assertEqual(len(self.events("scaledown_done")), 1)
         self.assertTrue(all(e["forced"] for e in self.events("scaledown")))
 
+    def test_forced_scaledown_waits_for_a_pool_still_being_built(self):
+        self.build_runtime_pools(1)
+        self.mgr.destroy = lambda n: (self.mgr.destroyed.append(n), self.mgr.unregister(n),
+                                      self.r.hdel(self.m.LAST_SEEN_KEY, str(n)))
+        late = self.STATIC + 5                      # a spare started before the request
+        self.started.clear()
+        self.mgr.in_flight.add(late)
+        self.building.append(late)
+        sids = [f"s{i}" for i in range(self.STATIC)] + ["r0"]
+        self.r.sadd(self.m.RELEASE_KEY, *sids)
+        self.r.set(self.m.SCALEDOWN_KEY, 1, ex=60)
+        self.run_reconcile(finish=False)
+        self.assertTrue(self.r.exists(self.m.SCALEDOWN_KEY))      # not done yet
+        self.assertEqual(self.events("scaledown_done"), [])
+        self.assertEqual(self.started, [])                        # no new spare meanwhile
+        self.finish_builds()                                      # the late pool lands
+        self.run_reconcile()
+        self.assertFalse(self.r.exists(self.m.SCALEDOWN_KEY))
+        self.assertIn(late, self.mgr.destroyed)
+        done = self.events("scaledown_done")
+        self.assertEqual(len(done), 1)
+        self.assertEqual(sorted(done[0]["removed"]), sorted(self.mgr.destroyed))
+        self.assertEqual({int(x) for x in self.r.smembers(self.m.READY_KEY)},
+                         set(range(1, self.STATIC + 1)))
+
     def test_idle_pools_scale_down_after_the_timeout(self):
         self.m.IDLE_TIMEOUT_S = 1800
         self.build_runtime_pools(2)
@@ -307,6 +332,15 @@ class Reconcile(unittest.TestCase):
         self.run_reconcile()
         self.assertEqual(self.r.zcard(self.m.WAITING_KEY), 0)
         self.assertEqual(self.started, [self.STATIC + 1])   # just the spare
+
+    def test_startup_removes_half_built_pools(self):
+        built, half = self.STATIC + 1, self.STATIC + 2
+        self.mgr.runtime_pools = lambda: {built, half}
+        self.mgr.pool_container_healthy = lambda n: n == built
+        self.mgr.remove_partial_pools()
+        self.assertEqual(self.mgr.destroyed, [half])
+        self.run_reconcile()                        # the healthy one is adopted
+        self.assertIn(str(built), self.r.smembers(self.m.READY_KEY))
 
 
 class ReconcileDatabaseLayer(Reconcile):

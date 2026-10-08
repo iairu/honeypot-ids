@@ -191,12 +191,24 @@ def parse_pool_usage(stats_lines: str) -> PoolUsage:
 
 
 def collect_pool_usage(target: Target, timeout: float = 20.0) -> PoolUsage:
-    """Memory/CPU of every running honeypot pool container, runtime ones included."""
+    """Memory/CPU of every running honeypot pool container, runtime ones included.
+
+    `docker stats` fails outright when one of the listed containers is removed
+    before it answers -- which is exactly what happens while pools are scaled
+    down -- and the sample would then read as zero pools. So the container list
+    is read again and the call retried a few times; if it still fails (or the
+    command could not run at all) this raises instead of reporting zero."""
     text = _run(
         target,
+        "for try in 1 2 3; do "
         "ids=$(docker ps -q --filter name=honeypot_eshop --filter name=honeypot_database); "
-        "[ -n \"$ids\" ] && docker stats --no-stream --format '{{json .}}' $ids || true",
+        "[ -z \"$ids\" ] && { echo none; exit 0; }; "
+        "out=$(docker stats --no-stream --format '{{json .}}' $ids 2>/dev/null) "
+        "&& { printf '%s\\n' \"$out\"; exit 0; }; "
+        "done; exit 1",
         timeout=timeout)
+    if not text.strip():
+        raise RuntimeError("docker stats for the honeypot pool containers failed")
     return parse_pool_usage(text)
 
 

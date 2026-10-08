@@ -145,6 +145,7 @@ class Manager:
         self.backoff_until = 0.0
         self.build_started: dict[int, float] = {}
         self.capped_reason = ""
+        self.forced_removed: list[int] = []   # removed so far by an unfinished forced scale-down
         self._local = threading.local()    # per build thread: phase timings
 
     # ---- discovery -------------------------------------------------------
@@ -162,10 +163,14 @@ class Manager:
     def runtime_pools(self) -> set[int]:
         """Numbers of pools this service created (by label), running or not."""
         out = set()
-        for c in self.docker.containers.list(all=True, filters={"label": "honeypot.pool"}):
+        # sparse: labels straight from the list call. A full list inspects each
+        # container in turn and fails (aborting the whole reconcile pass) when
+        # a short-lived build helper is removed in between.
+        for c in self.docker.containers.list(all=True, sparse=True,
+                                             filters={"label": "honeypot.pool"}):
             try:
-                out.add(int(c.labels["honeypot.pool"]))
-            except ValueError:
+                out.add(int((c.attrs.get("Labels") or {})["honeypot.pool"]))
+            except (KeyError, ValueError):
                 pass
         return out
 
@@ -266,6 +271,17 @@ class Manager:
                 if item.startswith("WORDPRESS_DB_PASSWORD="):
                     self.redis.set(PW_PREFIX + str(n), item.split("=", 1)[1])
                     log(f"pool {n}: restored database password in Redis")
+
+    def remove_partial_pools(self) -> None:
+        """At start-up: remove runtime pools a previous run left half-built (the
+        manager was restarted mid-build, e.g. by `docker compose up`). Nothing
+        is building in this process yet, so a runtime pool that is not healthy
+        will never be registered -- it would only hold memory and count
+        against the resource budget for good."""
+        for n in sorted(self.runtime_pools()):
+            if n > STATIC_COUNT and not self.pool_container_healthy(n):
+                log(f"pool {n}: left half-built by an earlier run, removing")
+                self.destroy(n)
 
     def adopt_runtime_pools(self) -> None:
         """After a manager restart: re-register pools created earlier that are
@@ -445,7 +461,18 @@ class Manager:
             network=self._net("honeypot_network"),
             caps=["DAC_OVERRIDE", "CHOWN", "FOWNER", "SETGID", "SETUID"])
 
-        # 5. the WordPress container itself
+        # 5. production's current catalog (pages, posts, products), the same
+        #    sync honeypot_content_sync runs every few minutes -- done now so
+        #    the pool never serves the install-time snapshot's stale content.
+        self._run_helper(
+            MYSQL_IMAGE, ["bash", "/scripts/replicate_content_to_honeypot.sh", "--once", str(n)],
+            binds={self.host_paths["/scripts"]: ("/scripts", "ro")},
+            labels=labels, what="content sync", entrypoint=[],
+            environment={"MYSQL_PASSWORD": self.mysql_password, "POOL_DB_PASSWORD": password},
+            network=self._net("honeypot_network"),
+            extra_networks=[self._net("production_network")])
+
+        # 6. the WordPress container itself
         wp = self.docker.containers.create(
             WORDPRESS_IMAGE, name=wp_name, labels=labels, detach=True,
             command=["sh", "-c", WP_START_SCRIPT],
@@ -596,6 +623,11 @@ class Manager:
         no longer needed, and serve a client's forced scale-down request."""
         forced_sids = list(self.redis.smembers(RELEASE_KEY))
         forced = bool(self.redis.exists(SCALEDOWN_KEY))
+        # Pools being built as this pass starts. A build thread registers its
+        # pool as ready a moment before it leaves in_flight, so this one
+        # snapshot decides both what is skipped now and whether a forced
+        # scale-down has to wait for another pass.
+        building = set(self.in_flight)
         released: dict[int, list[str]] = {}
         if forced_sids:
             released = self.release_sessions(forced_sids, "released on request")
@@ -605,7 +637,7 @@ class Manager:
         dirty = {int(x) for x in self.redis.smembers(DIRTY_KEY) if x.isdigit()}
         pools = {}
         for n in sorted(int(x) for x in self.redis.smembers(READY_KEY)):
-            if n in self.in_flight:
+            if n in building:
                 continue
             owned = bool(self.redis.scard(OWNER_PREFIX + str(n)))
             if owned and n not in dirty:
@@ -634,12 +666,25 @@ class Manager:
         for n in released:
             if n in pools and n not in destroy and not self.redis.scard(OWNER_PREFIX + str(n)):
                 self.hand_off_or_free(n)
-        if forced:
-            ready = self.redis.scard(READY_KEY)
-            self.redis.delete(SCALEDOWN_KEY)
-            self.event("scaledown_done", removed=destroy, pools=ready,
-                       reserved_mb=ready * POOL_MEM_MB, reserved_cpus=ready * POOL_CPUS)
-            log(f"forced scale-down done: removed {destroy or 'nothing'}, {ready} pool(s) left")
+        if not forced:
+            self.forced_removed = []
+            return
+        removed = getattr(self, "forced_removed", []) + destroy
+        if building:
+            # A pool still being built (a spare started before the request)
+            # would land after "done" and stay until the idle timeout: keep
+            # the request open, no new spares meanwhile (see reconcile), and
+            # remove it on the pass after it is registered.
+            self.forced_removed = removed
+            log(f"forced scale-down: waiting for pool(s) {sorted(building)} "
+                "still being built")
+            return
+        self.forced_removed = []
+        ready = self.redis.scard(READY_KEY)
+        self.redis.delete(SCALEDOWN_KEY)
+        self.event("scaledown_done", removed=removed, pools=ready,
+                   reserved_mb=ready * POOL_MEM_MB, reserved_cpus=ready * POOL_CPUS)
+        log(f"forced scale-down done: removed {removed or 'nothing'}, {ready} pool(s) left")
 
     def reserve(self) -> int:
         """Extra unowned pools a client asked for (RESERVE_KEY), 0 if none."""
@@ -668,6 +713,10 @@ class Manager:
 
         spares = max(SPARES, self.reserve())
         self.scale_down(spares)
+        if self.redis.exists(SCALEDOWN_KEY):
+            # A forced scale-down is still finishing: build only for sessions
+            # waiting for a pool, no spares it would then have to remove.
+            spares = 0
 
         ready = {int(x) for x in self.redis.smembers(READY_KEY)}
         free = self.redis.zcard(FREE_KEY)
@@ -715,6 +764,10 @@ class Manager:
             f"budget {MAX_MEMORY_MB:g} MB / {MAX_CPUS:g} CPUs (0 = none), "
             f"{POOL_MEM_MB} MB / {POOL_CPUS:g} CPUs per pool, {PARALLEL_BUILDS} parallel builds, "
             f"idle timeout {IDLE_TIMEOUT_S:g} s (0 = never))")
+        try:
+            self.remove_partial_pools()
+        except Exception as e:  # noqa: BLE001
+            log(f"removing half-built pools failed: {e}")
         while True:
             try:
                 self.reconcile()
@@ -788,9 +841,12 @@ for i in $(seq 1 60); do
   mysqladmin ping -h"$DB_HOST" -u"$DB_USER" -p"$OLD_PASSWORD" 2>&1 | grep -q 'mysqld is alive' && break
   sleep 2
 done
+# ALTER USER takes effect at once. No FLUSH PRIVILEGES: it needs the RELOAD
+# privilege, which the database's own user does not have, so it failed every
+# build after the password had already been changed.
 if ! mysql -h"$DB_HOST" -u"$DB_USER" -p"$NEW_PASSWORD" -e 'SELECT 1' >/dev/null 2>&1; then
   mysql -h"$DB_HOST" -u"$DB_USER" -p"$OLD_PASSWORD" \
-    -e "ALTER USER '$DB_USER'@'%' IDENTIFIED BY '$NEW_PASSWORD'; FLUSH PRIVILEGES;" || exit 1
+    -e "ALTER USER '$DB_USER'@'%' IDENTIFIED BY '$NEW_PASSWORD';" || exit 1
 fi
 failed=0
 for f in $(ls /migrations/*.sql | sort); do

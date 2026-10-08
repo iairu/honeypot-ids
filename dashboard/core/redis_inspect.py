@@ -424,7 +424,10 @@ def request_scaledown(remote: RemoteConfig | None, session_ids: list[str], ttl: 
     POOL_IDLE_TIMEOUT_SECONDS: drop these sessions' pool assignments, then
     remove unowned runtime pools down to the spare count. Other sessions'
     pools are left alone. pool_manager deletes the request when done."""
-    if session_ids:
-        _run_redis_cli(remote, "SADD", "honeypot_pool:release", *session_ids, timeout=timeout)
-    _run_redis_cli(remote, "SET", "honeypot_pool:scaledown_now", "1", "EX", str(ttl),
-                   timeout=timeout)
+    # One EVAL, so pool_manager never sees the sessions to release without the
+    # scale-down flag: it would release them in an ordinary pass and remove
+    # nothing, and the forced pass after it would then have nothing to report.
+    script = ("for i = 2, #ARGV do redis.call('SADD', KEYS[1], ARGV[i]) end "
+              "redis.call('SET', KEYS[2], '1', 'EX', ARGV[1]) return 1")
+    _run_redis_cli(remote, "EVAL", script, "2", "honeypot_pool:release",
+                   "honeypot_pool:scaledown_now", str(ttl), *session_ids, timeout=timeout)

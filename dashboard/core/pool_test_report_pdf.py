@@ -965,13 +965,17 @@ def _scaledown_html(data: PoolTestData) -> str:
         usage_at(data.usage, data.duration)
     removed = [r for r in summ.removals if r.at >= sd["requested"] - 1]
     per = sd.get("mem_per_pool")
-    nb, na = len(sd.get("pools_before", [])), len(sd.get("pools_after", []))
+    # Pools still being built when the scale-down was requested count too:
+    # pool_manager waits for them and removes them as well if not needed.
+    building = [n for n in sd.get("building_before", []) if n not in sd.get("pools_before", [])]
+    nb, na = len(sd.get("pools_before", [])) + len(building), len(sd.get("pools_after", []))
     rows = [("Requested at", _mmss(sd["requested"])),
             ("Sessions released", str(sd.get("sessions", 0))),
             ("Finished", f"after {sd['done'] - sd['requested']:.1f} s" if sd.get("done") is not None
              else f"not within {SCALEDOWN_TIMEOUT_TEXT}"),
-            ("Pools", f"{nb} \u2192 {na} ({', '.join(map(str, sd.get('pools_before', []))) or '-'} "
-                      f"\u2192 {', '.join(map(str, sd.get('pools_after', []))) or '-'})"),
+            ("Pools", f"{nb} \u2192 {na} ({', '.join(map(str, sd.get('pools_before', []))) or '-'}"
+                      + (f" + {', '.join(map(str, building))} being built" if building else "")
+                      + f" \u2192 {', '.join(map(str, sd.get('pools_after', []))) or '-'})"),
             ("Pools removed", ", ".join(f"pool {r.pool} ({r.seconds:.1f} s)" for r in removed) or "none"
              + (" (the compose-declared pools cover the spare count; nothing above it was running)"
                 if not removed else ""))]

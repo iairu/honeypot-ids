@@ -387,10 +387,14 @@ $WP plugin activate woocommerce
 $WP plugin activate elementor
 
 log "Configuring WooCommerce base settings..."
-$WP option update woocommerce_store_address "60 29th Street"
-$WP option update woocommerce_store_city "San Francisco"
-$WP option update woocommerce_default_country "US:CA"
-$WP option update woocommerce_store_postcode "94110"
+# The storefront mu-plugin (fernhill-storefront.php) pins the store address
+# with pre_option_ filters, which makes `option update` fail for these keys on
+# a fresh install ("Could not update option"). The shop shows the mu-plugin's
+# values either way, so a refused update is not an error.
+$WP option update woocommerce_store_address "60 29th Street" || true
+$WP option update woocommerce_store_city "San Francisco" || true
+$WP option update woocommerce_default_country "US:CA" || true
+$WP option update woocommerce_store_postcode "94110" || true
 $WP option update woocommerce_currency "USD"
 $WP option update woocommerce_price_thousand_sep ","
 $WP option update woocommerce_price_decimal_sep "."

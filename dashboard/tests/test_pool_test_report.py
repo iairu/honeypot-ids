@@ -61,9 +61,6 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(analyze(frames(1, 1, 2), {}).status, SHARED_UNEXPECTED)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class DecisionTests(unittest.TestCase):
     def test_parse_decision(self):
@@ -258,3 +255,22 @@ class ScaledownReportTests(unittest.TestCase):
         self.assertEqual(s.released, [(40.0, 4, 2, "released on request")])
         self.assertEqual(usage_at(d.usage, 40).t, 30)
         self.assertEqual(usage_at(d.usage, 40, after=True).t, 45)
+
+
+class ProductIds(unittest.TestCase):
+    def test_reads_ids_by_slug_from_the_store_api(self):
+        from core.pool_test_report import parse_product_ids
+        body = '[{"id": 178, "slug": "logo-cap"}, {"id": 136, "slug": "ceramic-pour-over-dripper"}]'
+        self.assertEqual(parse_product_ids(body, ["ceramic-pour-over-dripper", "logo-cap"]),
+                         {"ceramic-pour-over-dripper": 136, "logo-cap": 178})
+
+    def test_missing_product_or_unreadable_response_raises(self):
+        from core.pool_test_report import parse_product_ids
+        with self.assertRaises(RuntimeError):
+            parse_product_ids('[{"id": 1, "slug": "a"}]', ["a", "b"])
+        with self.assertRaises(RuntimeError):
+            parse_product_ids("<html>", ["a"])
+
+
+if __name__ == "__main__":
+    unittest.main()

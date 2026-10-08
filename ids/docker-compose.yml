@@ -301,7 +301,7 @@ services:
           echo \"  \$$HOST already uses its pool-specific password\"
           return 0
         fi
-        if mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" -e \"ALTER USER '\$$MYSQL_USER'@'%' IDENTIFIED BY '\$$NEW_PASS'; FLUSH PRIVILEGES;\" 2>/dev/null; then
+        if mysql -h\"\$$HOST\" -u\"\$$MYSQL_USER\" -p\"\$$MYSQL_PASSWORD\" -e \"ALTER USER '\$$MYSQL_USER'@'%' IDENTIFIED BY '\$$NEW_PASS';\" 2>/dev/null; then
           echo \"  Rotated \$$HOST to its pool-specific password\"
         else
           echo \"  WARNING: could not set pool-specific password for \$$HOST (neither old nor new password worked)\"

@@ -84,6 +84,12 @@ log() {
 # MYSQL_PASSWORD with production; pools 2/3 were rotated to their own
 # password by honeypot_db_migration -- see docker-compose.yml).
 pool_password() {
+    # One-shot mode (see the bottom of this file): pool_manager passes the new
+    # pool's password directly; it is not registered anywhere yet.
+    if [ -n "${POOL_DB_PASSWORD:-}" ]; then
+        echo "$POOL_DB_PASSWORD"
+        return
+    fi
     case "$1" in
         1) echo "$MYSQL_PASSWORD" ;;
         2) echo "$MYSQL_PASSWORD_POOL_2" ;;
@@ -256,6 +262,26 @@ sync_cycle() {
         sleep 2
     done
 }
+
+# One-shot: `replicate_content_to_honeypot.sh --once N` mirrors production's
+# content into pool N a single time and exits non-zero if that failed. Used by
+# pool_manager while it builds a pool, BEFORE the pool is registered as ready:
+# its database starts from the install-time snapshot of production, so without
+# this a new pool would serve a stale catalog (and a diverted visitor's cart,
+# rebuilt from product IDs, would come up empty) until the next cycle above.
+if [ "${1:-}" = "--once" ] && [ -n "${2:-}" ]; then
+    if ! build_sync_sql; then
+        exit 0      # production has no content yet: nothing to mirror
+    fi
+    db_host=$(pool_host "$2")
+    if mysql -h "$db_host" -u"$MYSQL_USER" -p"$(pool_password "$2")" "$MYSQL_DATABASE" \
+            < "$WORKDIR/content_sync.sql"; then
+        log "pool $2 ($db_host): initial content replication complete"
+        exit 0
+    fi
+    log "pool $2 ($db_host): initial content replication FAILED"
+    exit 1
+fi
 
 log "honeypot content sync starting -- interval ${REPLICATION_INTERVAL_SECONDS}s"
 
