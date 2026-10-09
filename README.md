@@ -76,10 +76,36 @@ python3 -m venv venv
 This opens the dashboard. On first launch the wizard asks, per project (`ids` and `siem`), whether it
 runs locally or on a remote host, then walks through its `.env` and optional certificate generation.
 
-**Typical remote setup:** Settings → fill in host, SSH user, key and remote path → *Test connection* →
-*Upload entire project to remote…* (this sends the `.env` too) → Services → *Start*. The Services and
-Health pages then show that host's containers. The full feature list is in
-[`dashboard/README.md`](dashboard/README.md).
+**Typical remote setup:** Connectors & Config → fill in host, SSH user, key and remote path →
+*Test connection* → *Upload entire project to remote…* (this sends the `.env` too) → Workloads →
+*Start*. The Workloads and Global Visualization pages then show that host's containers. The full
+feature list is in [`dashboard/README.md`](dashboard/README.md).
+
+### Screenshots
+
+The navigation is grouped into Monitor, Threat Operations, Manage and Reporting. **Global
+Visualization** is the live topology map of every container in both stacks:
+
+![Global Visualization, Console Dark theme](docs/screenshots/dashboard-global-visualization.png)
+
+The default theme follows the system's light/dark preference (Console Dark / Console Light);
+Solarized and High Contrast themes are available under Connectors & Config:
+
+![Global Visualization, Console Light theme](docs/screenshots/dashboard-global-visualization-light.png)
+
+**Knowledge Base** holds the glossary, guided labs and a threat brief per attack preset;
+**Reporting** exports the implementation chapter, architecture overview and exploit / CVE matrix
+as PDFs:
+
+| Knowledge Base | Reporting |
+|---|---|
+| ![Knowledge Base](docs/screenshots/dashboard-knowledge-base.png) | ![Reporting](docs/screenshots/dashboard-reporting.png) |
+
+In a small window the navigation folds behind the ☰ button and each page scrolls on its own:
+
+<p align="center">
+  <img src="docs/screenshots/dashboard-narrow-window.png" alt="Dashboard in a narrow window" width="480">
+</p>
 
 ## Manual setup (no dashboard)
 

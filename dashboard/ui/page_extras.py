@@ -36,7 +36,7 @@ class ExtrasPage(QWidget):
             "exploit report:<br/>"
             "&bull; <b>Implementation chapter</b> &ndash; the project's more interesting "
             "algorithms, pulled from the source and condensed (comments, docstrings, debug "
-            "logging and blank runs removed), plus a services overview and a Health-page shot.<br/>"
+            "logging and blank runs removed), plus a services overview and a Global Visualization shot.<br/>"
             "&bull; <b>Architecture &amp; services</b> &ndash; every service on this branch with "
             "its role, plus the live Global Visualization page.<br/>"
             "&bull; <b>Exploit / CVE matrix</b> &ndash; a reference table of every exploit "
@@ -53,7 +53,7 @@ class ExtrasPage(QWidget):
             needs_health=True))
         toolbar.addWidget(self.export_btn)
 
-        self.arch_btn = QPushButton("Architecture & services (PDF)")
+        self.arch_btn = QPushButton("Architecture && services (PDF)")
         self.arch_btn.setToolTip("Every service on this branch with its role, plus the live Global Visualization page.")
         self.arch_btn.clicked.connect(lambda: self._run_export(
             "architecture overview", "architecture_overview.pdf",
