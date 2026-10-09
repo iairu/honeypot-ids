@@ -25,6 +25,9 @@ from core.state import AppState, RemoteConfig
 # descriptor is core.projects.PROJECTS.
 PROJECT_LABELS = {pid: project_for(pid).label for pid in PROJECT_IDS}
 
+# Label on every container and volume ids/images/pool_manager creates.
+RUNTIME_POOL_LABEL = "honeypot.pool.managed-by=pool_manager"
+
 
 @dataclass
 class Target:
@@ -160,6 +163,24 @@ class Target:
 
         remote_cmd = f"cd {shlex.quote(self.remote_compose_dir())} && {command}"
         return ssh.ssh_argv(self.remote, remote_cmd), None
+
+    def build_purge(self) -> tuple[list[str], str | None]:
+        """`down -v`. For the edge stack, first the honeypot pools pool_manager
+        built at runtime: they carry no compose labels (so `down` leaves them
+        running, still attached to the stack's networks, which then cannot be
+        removed) and their volumes are not compose volumes. pool_manager is
+        stopped first so it does not rebuild a spare in between."""
+        if self.project != "edge":
+            return self.build("down", "-v")
+        compose = "docker compose " + " ".join(
+            shlex.quote(a) for a in self._global_flags(("down",)))
+        label = shlex.quote(f"label={RUNTIME_POOL_LABEL}")
+        # One brace group, so a failed `cd` (remote) skips all of it.
+        return self.build_shell(
+            f"{{ {compose} stop pool_manager; "
+            f"c=$(docker ps -aq --filter {label}); [ -z \"$c\" ] || docker rm -f -v $c; "
+            f"v=$(docker volume ls -q --filter {label}); [ -z \"$v\" ] || docker volume rm -f $v; "
+            f"{compose} down -v --remove-orphans; }}")
 
     # ---- one-shot synchronous helpers (call from a background thread) ----
 

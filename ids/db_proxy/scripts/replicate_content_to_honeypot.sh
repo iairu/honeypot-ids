@@ -160,13 +160,17 @@ prod_mysqldump() {
 # production's content is read once per cycle, not once per pool.
 #
 # Returns 1 (nothing written) if production currently has no matching
-# content -- avoids ever emitting "WHERE id IN ()", which is invalid SQL.
+# content -- avoids ever emitting "WHERE id IN ()", which is invalid SQL --
+# and 2 if dumping production's content failed (the script is incomplete).
 # ---------------------------------------------------------------------------
 build_sync_sql() {
     local ids table_exists sql_file="$WORKDIR/content_sync.sql"
 
+    # group_concat_max_len: MySQL's default (1024 bytes) silently truncates
+    # the list after ~200 IDs -- the catalog's variations and attachments
+    # alone are more -- so most of the content was never mirrored.
     ids=$(prod_mysql "$MYSQL_DATABASE" -e \
-        "SELECT GROUP_CONCAT(ID) FROM wp_posts WHERE post_type IN ('page','post','product','product_variation','attachment') AND post_status IN ('publish','inherit')")
+        "SET SESSION group_concat_max_len = 16777216; SELECT GROUP_CONCAT(ID) FROM wp_posts WHERE post_type IN ('page','post','product','product_variation','attachment') AND post_status IN ('publish','inherit')")
 
     if [ -z "$ids" ] || [ "$ids" = "NULL" ]; then
         log "production has no page/post/product/attachment content yet -- skipping this cycle"
@@ -201,16 +205,20 @@ build_sync_sql() {
     # REPLACE deletes any row with the same primary key first, so the sync is
     # idempotent regardless of the pool's pre-existing dummy data, and the
     # honeypot content still ends up an exact mirror of production.
-    prod_mysqldump --replace --where="ID IN ($ids)" "$MYSQL_DATABASE" wp_posts >> "$sql_file"
-    prod_mysqldump --replace --where="post_id IN ($ids)" "$MYSQL_DATABASE" wp_postmeta >> "$sql_file"
-    prod_mysqldump --replace --where="object_id IN ($ids)" "$MYSQL_DATABASE" wp_term_relationships >> "$sql_file"
+    #
+    # Each dump returns 2 on failure: set -e does not apply inside a function
+    # called from `if !` or `||`, so a failed dump used to leave a script
+    # that DELETEs the content and re-inserts only part of it.
+    prod_mysqldump --replace --where="ID IN ($ids)" "$MYSQL_DATABASE" wp_posts >> "$sql_file" || return 2
+    prod_mysqldump --replace --where="post_id IN ($ids)" "$MYSQL_DATABASE" wp_postmeta >> "$sql_file" || return 2
+    prod_mysqldump --replace --where="object_id IN ($ids)" "$MYSQL_DATABASE" wp_term_relationships >> "$sql_file" || return 2
     if [ "$table_exists" = "1" ]; then
-        prod_mysqldump --replace --where="product_id IN ($ids)" "$MYSQL_DATABASE" wp_wc_product_meta_lookup >> "$sql_file"
+        prod_mysqldump --replace --where="product_id IN ($ids)" "$MYSQL_DATABASE" wp_wc_product_meta_lookup >> "$sql_file" || return 2
     fi
 
     # Small reference tables: full add/update-only refresh, no prior DELETE
     # (mirrors init_setup's sync_files() non-destructive philosophy).
-    prod_mysqldump --replace "$MYSQL_DATABASE" wp_terms wp_term_taxonomy >> "$sql_file"
+    prod_mysqldump --replace "$MYSQL_DATABASE" wp_terms wp_term_taxonomy >> "$sql_file" || return 2
 
     {
         echo "COMMIT;"
@@ -242,8 +250,11 @@ replicate_to_pool() {
 
 sync_cycle() {
     refresh_pool_nums
-    if ! build_sync_sql; then
-        return
+    local rc=0
+    build_sync_sql || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        [ "$rc" -eq 2 ] && log "dumping production's content failed -- skipping this cycle"
+        return 0
     fi
 
     for pool_num in $POOL_NUMS; do

@@ -190,5 +190,27 @@ class ContainerStatusTests(unittest.TestCase):
         self.assertEqual(text, "1/2 up (1 starting)")
 
 
+class PurgeTests(unittest.TestCase):
+    def test_edge_purge_removes_runtime_pools_before_down(self):
+        from core.docker_ctl import Target
+        argv, _ = Target(project="edge").build_purge()
+        self.assertEqual(argv[:2], ["sh", "-c"])
+        cmd = argv[2]
+        stop = cmd.index("stop pool_manager")
+        rm = cmd.index("docker rm -f -v")
+        vol = cmd.index("docker volume rm -f")
+        down = cmd.index("down -v --remove-orphans")
+        self.assertLess(stop, rm)
+        self.assertLess(rm, vol)
+        self.assertLess(vol, down)
+        self.assertIn("label=honeypot.pool.managed-by=pool_manager", cmd)
+
+    def test_siem_purge_is_plain_down(self):
+        from core.docker_ctl import Target
+        argv, _ = Target(project="siem").build_purge()
+        self.assertEqual(argv[:2], ["docker", "compose"])
+        self.assertEqual(argv[-3:], ["down", "-v", "--remove-orphans"])
+
+
 if __name__ == "__main__":
     unittest.main()

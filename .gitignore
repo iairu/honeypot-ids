@@ -45,3 +45,7 @@ dashboard/*.pdf
 # thumbnail size) -- regenerated automatically, not source content.
 ids/production_eshop_files/wp-content/uploads/**/*.jpg
 ids/production_eshop_files/wp-content/uploads/**/*.jpeg
+
+# Python bytecode caches.
+__pycache__/
+*.pyc

@@ -279,9 +279,28 @@ class Manager:
         will never be registered -- it would only hold memory and count
         against the resource budget for good."""
         for n in sorted(self.runtime_pools()):
-            if n > STATIC_COUNT and not self.pool_container_healthy(n):
+            if n > STATIC_COUNT and not self.pool_container_healthy(n) \
+                    and not self.pool_still_starting(n):
                 log(f"pool {n}: left half-built by an earlier run, removing")
                 self.destroy(n)
+
+    def pool_still_starting(self, n: int) -> bool:
+        """A finished WordPress pool whose eshop is running but not healthy
+        yet: after a host reboot Docker restarts it together with this
+        service, and it needs well over a minute to report healthy. The
+        eshop container is only created once every seeding step is done, so
+        it existing and running means the pool is complete; adopt_runtime_pools
+        registers it once healthy. (In the database layer the serving
+        container exists before the clone, so there is no such signal.)"""
+        if MODE != "wordpress":
+            return False
+        try:
+            c = self.docker.containers.get(f"honeypot_eshop_{n}")
+        except docker.errors.NotFound:
+            return False
+        state = c.attrs["State"]
+        return state.get("Status") == "running" and \
+            state.get("Health", {}).get("Status") == "starting"
 
     def adopt_runtime_pools(self) -> None:
         """After a manager restart: re-register pools created earlier that are
@@ -731,7 +750,8 @@ class Manager:
         self.redis.set(STATUS_KEY, json.dumps({
             "at": round(time.time(), 3), "pools": len(pools), "ready": len(ready),
             "free": free, "waiting": waiting, "room": room, "spares": spares,
-            "building": {str(n): round(t, 3) for n, t in self.build_started.items()},
+            # A copy: build threads remove their entry when they finish.
+            "building": {str(n): round(t, 3) for n, t in dict(self.build_started).items()},
             "max_pools": MAX_POOLS, "max_memory_mb": MAX_MEMORY_MB, "max_cpus": MAX_CPUS,
             "mem_per_pool": POOL_MEM_MB, "cpus_per_pool": POOL_CPUS,
             "parallel": PARALLEL_BUILDS, "idle_timeout": IDLE_TIMEOUT_S,

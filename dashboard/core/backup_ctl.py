@@ -125,9 +125,9 @@ def _backup_subdir(filename: str) -> str:
     """"db" or "wp", purely from filename shape -- raises BackupCtlError
     for anything that doesn't match either (same validation
     restore_db_command()/restore_wp_command() already apply)."""
-    if _DB_FILENAME_RE.match(filename):
+    if _DB_FILENAME_RE.fullmatch(filename):
         return "db"
-    if _WP_FILENAME_RE.match(filename):
+    if _WP_FILENAME_RE.fullmatch(filename):
         return "wp"
     raise BackupCtlError(
         f"Not a valid backup filename: {filename!r} "
@@ -256,7 +256,7 @@ def restore_db_command(remote: RemoteConfig | None, filename: str) -> tuple[list
     Run this through LogPanel.run(), never subprocess.run() directly --
     it's slow and mutating, and should stream its own progress rather
     than block the UI thread."""
-    if not _DB_FILENAME_RE.match(filename):
+    if not _DB_FILENAME_RE.fullmatch(filename):
         raise BackupCtlError(f"Not a valid DB dump filename: {filename!r}")
     target = Target(project="edge", remote=remote)
     command = (
@@ -272,7 +272,7 @@ def restore_wp_command(remote: RemoteConfig | None, filename: str) -> tuple[list
     module docstring for why this pipes through production_eshop instead
     of running inside backup_service. Also meant for LogPanel.run(), same
     reasoning as restore_db_command()."""
-    if not _WP_FILENAME_RE.match(filename):
+    if not _WP_FILENAME_RE.fullmatch(filename):
         raise BackupCtlError(f"Not a valid WP archive filename: {filename!r}")
     target = Target(project="edge", remote=remote)
     quoted_path = shlex.quote(f"/backups/wp/{filename}")
