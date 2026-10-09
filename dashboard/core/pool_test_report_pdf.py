@@ -18,7 +18,8 @@ from core.exploit_report_pdf import (_FONT_CSS_STACK, _GREEN, _GREY, _ORANGE, _R
 from core.pool_test_report import (BORROWED, CART_LOST, EXCLUSIVE, INCOMPLETE, MERGED, OWN,
                                    PRODUCTION, SHARED, SHARED_EXPECTED, STATES, UNSTABLE,
                                    PoolTestData, ScalingSummary, Verdict, _quantile, analyze,
-                                   cart_resets, cart_violations, load_stats, scaling_summary,
+                                   CART_CHANGED, CART_CLEARED, CART_NONE, CART_RESTORED, CART_SAME,
+                                   CART_UNREADABLE, cart_marks, cart_resets, load_stats, scaling_summary,
                                    usage_at)
 
 _STATUS_COLOR = {EXCLUSIVE: _GREEN, SHARED_EXPECTED: _ORANGE, INCOMPLETE: _GREY, MERGED: _RED,
@@ -111,42 +112,50 @@ def _cart_section_html(data: PoolTestData) -> str:
     identical wherever the session is routed."""
     if not data.steps or not any(st.carts for st in data.steps):
         return ""
-    base: dict[int, object] = {}
-    resets = cart_resets(data.cleared)
+    marks, issues, notes = cart_marks(data.steps, cart_resets(data.cleared))
+    cleared_before = {}
+    for e in data.cleared:
+        if e.clears_cookies():
+            cleared_before.setdefault((e.step, e.window), e)
+    badge = {CART_UNREADABLE: ("unreadable", _GREY), CART_NONE: ("no cart yet", _GREY),
+             CART_CLEARED: ("empty since its cookies were cleared", _GREY),
+             CART_RESTORED: ("cart back after clearing", _BLUE_INK),
+             CART_SAME: ("same cart", _GREEN), CART_CHANGED: ("CART CHANGED", _RED)}
     rows = []
-    for n, step in enumerate(data.steps):
+    for n, (step, row) in enumerate(zip(data.steps, marks)):
         cells = []
-        for i, c in enumerate(step.carts):
-            if (n, i) in resets:
-                base.pop(i, None)
-            if c is not None and c.items and i not in base:
-                base[i] = c
-            ref = base.get(i)
+        for i, mark in enumerate(row):
             d = step.decisions[i] if i < len(step.decisions) else None
             where = (f"pool {d.pool}" if d is not None and d.pool is not None else "production")
-            if c is None:
-                mark = _badge("unreadable", _GREY)
-            elif ref is None and (n, i) in resets:
-                mark = _badge("emptied by clearing cookies", _GREY)
-            elif ref is None:
-                mark = _badge("no cart yet", _GREY)
-            elif c.signature() == ref.signature():
-                mark = _badge("same cart", _GREEN)
-            else:
-                mark = _badge("CART CHANGED", _RED)
-            cells.append(f'<td>{mark}<br/><span style="font-size:8pt;color:#555;">on {_esc(where)}</span></td>')
+            text, color = badge[mark]
+            flag = ('<br/><span style="font-size:8pt;color:#1565c0;"><b>&#9670; cookies cleared '
+                    'before this step</b></span>' if (n, i) in cleared_before else "")
+            cells.append(f'<td>{_badge(text, color)}{flag}<br/>'
+                         f'<span style="font-size:8pt;color:#555;">on {_esc(where)}</span></td>')
         rows.append(f'<tr><td>{_esc(step.title)}</td>{"".join(cells)}</tr>')
     head = "".join(f"<th>{_esc(f.label)}</th>" for f in data.frames)
-    issues = cart_violations(data.steps, cart_resets(data.cleared))
-    verdict = ('<p style="color:#2e7d32;"><b>Every cart stayed exactly as filled, on production and in '
-               'every honeypot pool.</b></p>' if not issues else
+    ok = ('Every cart stayed exactly as filled, on production and in every honeypot pool.'
+          if not cleared_before else
+          'Every cart stayed exactly as filled, on production and in every honeypot pool, until its '
+          'window cleared its cookies; from then on it held only what the window had after clearing.')
+    verdict = (f'<p style="color:#2e7d32;"><b>{ok}</b></p>' if not issues else
                '<ul style="color:#c62828;">' + "".join(f"<li>{_esc(x)}</li>" for x in issues) + "</ul>")
+    if notes:
+        verdict += ('<ul style="color:#555;">' + "".join(f"<li>{_esc(x)}</li>" for x in notes) + "</ul>")
+    clearing = ('' if not cleared_before else
+                '<p style="color:#555;">Where a window cleared its cookies (marked &#9670;), WooCommerce\'s '
+                'cart cookie went with them, so the cart it filled is gone from the browser from that step '
+                'on and an empty cart there is expected. If a cart shows up again after that, the browser '
+                'did not bring it back: the stack restored it, and the report notes it below the table. '
+                'That restored cart is then the one the later steps are compared with. Clearing only localStorage or '
+                'sessionStorage leaves the cart cookie in place, so the cart must stay as it was.</p>')
     return ('<h2 style="color:#222;">Cart persistence</h2>'
             '<p style="color:#555;">A visitor diverted to a honeypot is served by a different database, so '
             'WooCommerce\'s own cart session does not exist there. The storefront therefore carries the '
             'cart in a cookie and rebuilds it on whichever instance serves the next request. Each window '
             'filled its cart on production; the cart was then read back after every step, through the same '
             'cookies and routing as the window\'s own traffic.</p>'
+            + clearing +
             '<table width="100%" cellspacing="0" cellpadding="4" border="1" style="border-collapse:collapse;">'
             f'<tr><th>Step</th>{head}</tr>' + "".join(rows) + '</table>' + verdict)
 

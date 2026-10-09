@@ -416,3 +416,23 @@ class ClearBrowserDataTests(unittest.TestCase):
         v = analyze(f, state(free=[4]), steps, [event])
         self.assertEqual(v.status, EXCLUSIVE)
         self.assertIn("F0 cleared browser data", " ".join(v.findings))
+
+    def test_cart_after_clearing_cookies_is_explained(self):
+        from core.pool_test_report import (CART_CLEARED, CART_RESTORED, CART_SAME, CartState,
+                                           ClearEvent, cart_marks, cart_resets)
+        full, empty = CartState([("Mug", 2)], "$44"), CartState([], "$0")
+        resets = cart_resets([ClearEvent(1.0, 0, 1, "cookies", SID[0])])
+        # Cleared before step 2: empty from then on is expected, not a change.
+        steps = [self._step("fill", 1, carts=[full]), self._step("clear", 1, carts=[empty]),
+                 self._step("later", 1, carts=[empty])]
+        marks, issues, notes = cart_marks(steps, resets)
+        self.assertEqual([m[0] for m in marks], [CART_SAME, CART_CLEARED, CART_CLEARED])
+        self.assertEqual((issues, notes), ([], []))
+        # A cart that comes back afterwards is noted, then is the new baseline.
+        steps.append(self._step("back", 1, carts=[full]))
+        steps.append(self._step("gone", 1, carts=[empty]))
+        marks, issues, notes = cart_marks(steps, resets)
+        self.assertEqual(marks[3][0], CART_RESTORED)
+        self.assertIn("reappeared in 'back'", notes[0])
+        self.assertEqual(len(issues), 1)
+        self.assertIn("deleted its cookies before 'clear'", issues[0])

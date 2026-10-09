@@ -284,29 +284,68 @@ def session_resets(cleared: list[ClearEvent] | None) -> set[tuple[int, int]]:
             if e.resolved and e.after_session and not e.same_session()}
 
 
-def cart_violations(steps: list["StepResult"], resets: set[tuple[int, int]] | None = None) -> list[str]:
-    """Carts must stay exactly as filled, however the session is routed. The
-    baseline is each window's cart in the first step that has one, and starts
-    over where `resets` (see cart_resets()) says the window wiped its cookies."""
-    out = []
+# How a window's cart compares with its baseline in one step (see cart_marks()).
+CART_UNREADABLE, CART_NONE, CART_CLEARED, CART_RESTORED, CART_SAME, CART_CHANGED = (
+    "unreadable", "none", "cleared", "restored", "same", "changed")
+
+
+def cart_marks(steps: list["StepResult"], resets: set[tuple[int, int]] | None = None
+               ) -> tuple[list[list[str]], list[str], list[str]]:
+    """Per step and window, how the cart compares with what the window filled
+    (one of the CART_* marks); one plain sentence per cart that changed; and
+    one per cart that came back after clearing (observed, not a failure).
+
+    The baseline is each window's cart in the first step that has one. Where
+    `resets` (see cart_resets()) says the window deleted its cookies, the cart
+    cookie went with them: from then on an empty cart is expected (CART_CLEARED).
+    A cart that shows up again after that is CART_RESTORED -- the browser no
+    longer held it, so the stack brought it back -- and becomes the new baseline."""
+    resets = resets or set()
+    marks: list[list[str]] = []
+    issues: list[str] = []
+    notes: list[str] = []
     base: dict[int, tuple[CartState, str]] = {}
+    cleared_at: dict[int, str] = {}          # window -> title of the step it cleared before
     for n, step in enumerate(steps):
+        row = []
         for i, c in enumerate(step.carts):
-            if resets and (n, i) in resets:
+            if (n, i) in resets:
                 base.pop(i, None)
+                cleared_at[i] = step.title
+            note = (f" Window {i + 1} had deleted its cookies before '{cleared_at[i]}', "
+                    "so the cart it filled was gone from the browser from that step on."
+                    if i in cleared_at else "")
             if c is None:
+                row.append(CART_UNREADABLE)
                 if i in base:
-                    out.append(f"Window {i + 1}: cart could not be read in '{step.title}'.")
+                    issues.append(f"Window {i + 1}: cart could not be read in '{step.title}'.")
                 continue
             if i not in base:
-                if c.items:
-                    base[i] = (c, step.title)
+                if not c.items:
+                    row.append(CART_CLEARED if i in cleared_at else CART_NONE)
+                    continue
+                base[i] = (c, step.title)
+                if i in cleared_at:
+                    row.append(CART_RESTORED)
+                    notes.append(f"Window {i + 1}: a cart ({c.text()}) reappeared in '{step.title}'."
+                                  + note + " The browser no longer held it, so the stack restored it.")
+                else:
+                    row.append(CART_SAME)
                 continue
-            if c.signature() != base[i][0].signature():
-                now = c.text() if c.items else "empty"
-                out.append(f"Window {i + 1}: cart changed in '{step.title}' ({now}) "
-                           f"from what it held in '{base[i][1]}' ({base[i][0].text()}).")
-    return out
+            if c.signature() == base[i][0].signature():
+                row.append(CART_SAME)
+                continue
+            row.append(CART_CHANGED)
+            now = c.text() if c.items else "empty"
+            issues.append(f"Window {i + 1}: cart changed in '{step.title}' ({now}) "
+                          f"from what it held in '{base[i][1]}' ({base[i][0].text()})." + note)
+        marks.append(row)
+    return marks, issues, notes
+
+
+def cart_violations(steps: list["StepResult"], resets: set[tuple[int, int]] | None = None) -> list[str]:
+    """Carts must stay exactly as filled, however the session is routed (see cart_marks())."""
+    return cart_marks(steps, resets)[1]
 
 
 def parse_product_ids(store_api_json: str, slugs: list[str]) -> dict[str, int]:
