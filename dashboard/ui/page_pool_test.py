@@ -21,13 +21,14 @@ many still wait for theirs.
 """
 from __future__ import annotations
 
+import random
 import time
 from datetime import datetime
 
 from PyQt6.QtCore import QEventLoop, Qt, QThread, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
+    QCheckBox, QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
     QProgressBar, QPushButton, QSpinBox, QSplitter, QVBoxLayout, QWidget,
 )
 
@@ -36,9 +37,9 @@ from core.docker_ctl import target_for
 from core.exploits import EXPLOIT_PRESETS
 from core import pool_evidence
 from core.pool_test_report import (CART_PLAN, FALLBACK_EXPLOITS, MAX_ATTEMPTS, MAX_WINDOWS,
-                                    MIN_WINDOWS, CartState, Decision, ExploitRun, FrameResult,
+                                    MIN_WINDOWS, CartState, ClearEvent, Decision, ExploitRun, FrameResult,
                                     LoadTiming, PoolTestData, Sample, StepResult, UsageSample,
-                                    browse_action, browse_page, classify, parse_cart, parse_decision, parse_product_ids,
+                                    browse_action, browse_page, classify, clear_schedule, parse_cart, parse_decision, parse_product_ids,
                                     window_plan)
 from core.resource_stats import collect_pool_usage
 from core.state import AppState
@@ -75,6 +76,12 @@ SCALE_TIMEOUT_S = 900
 
 # While the report waits for pools, every window opens its next page this often.
 BROWSE_EVERY_S = 10.0
+
+
+# Clears the page origin's localStorage and sessionStorage, the way "clear site
+# data" does; returns how many entries were removed.
+_CLEAR_STORAGE_JS = ("(function(){var n=0;try{n+=localStorage.length;localStorage.clear();}catch(e){}"
+                     "try{n+=sessionStorage.length;sessionStorage.clear();}catch(e){}return String(n);})()")
 
 
 # Reads the shop's own cart (WooCommerce Store API) from inside a window, so the
@@ -206,6 +213,14 @@ class PoolTestPage(QWidget):
         self.reset_btn.setToolTip("Clear every frame's cookies, so each starts a fresh session.")
         self.reset_btn.clicked.connect(self.reset_sessions)
         bar.addWidget(self.reset_btn)
+        self.clear_check = QCheckBox("Clear browser data in random windows")
+        self.clear_check.setChecked(True)
+        self.clear_check.setToolTip(
+            "During the report run, a few random windows clear their own cookies and/or "
+            "localStorage between steps, the way a regular visitor clears their browsing "
+            "data. The PDF shows each time it happened and what the stack did with the "
+            "window afterwards (its old session back or a fresh one, and which pool).")
+        bar.addWidget(self.clear_check)
         self.export_btn = QPushButton("Export report (PDF)")
         self.export_btn.setToolTip(
             "Which honeypot pool each window's session landed in, and whether that matches "
@@ -266,6 +281,7 @@ class PoolTestPage(QWidget):
         # Per frame: the session id from the SERVERID cookie the proxy set it
         # ("<id>.<mac>"), kept up to date from the profile's cookie store.
         self._session_ids = [""] * MAX_WINDOWS
+        self._cookie_names: list[set[str]] = [set() for _ in range(MAX_WINDOWS)]
         self._visits = [0] * MAX_WINDOWS          # pages each window has browsed this run
         self._seen: list[list[str]] = [[] for _ in range(MAX_WINDOWS)]   # ... this step
         self.set_window_count(MIN_WINDOWS)
@@ -376,12 +392,16 @@ class PoolTestPage(QWidget):
             self.attack(i)
 
     def _on_cookie(self, index: int, cookie) -> None:
-        if bytes(cookie.name()).decode(errors="replace") == SESSION_COOKIE:
+        name = bytes(cookie.name()).decode(errors="replace")
+        self._cookie_names[index].add(name)
+        if name == SESSION_COOKIE:
             value = bytes(cookie.value()).decode(errors="replace")
             self._session_ids[index] = value.split(".", 1)[0]
 
     def _on_cookie_removed(self, index: int, cookie) -> None:
-        if bytes(cookie.name()).decode(errors="replace") == SESSION_COOKIE:
+        name = bytes(cookie.name()).decode(errors="replace")
+        self._cookie_names[index].discard(name)
+        if name == SESSION_COOKIE:
             self._session_ids[index] = ""
 
     # ---- routing decision under each frame ----
@@ -620,6 +640,9 @@ class PoolTestPage(QWidget):
             "per batch of new pools)."
             + (f" The last {self._delayed()} window(s) attack only after pools were pre-built "
                "for them." if self._delayed() else "")
+            + (" Between steps, a few random windows clear their own cookies and/or "
+               "localStorage, like a visitor clearing their browsing data."
+               if self.clear_check.isChecked() else "")
             + " At the end the windows' sessions are released and the pools they no longer "
             "need are scaled down at once (instead of after POOL_IDLE_TIMEOUT_SECONDS)."
             + "\n\nContinue?",
@@ -635,7 +658,7 @@ class PoolTestPage(QWidget):
         self.cancel_btn.setEnabled(True)
         self.progress_row.setVisible(True)
         for w in (self.export_btn, self.open_all_btn, self.attack_all_btn, self.reset_btn,
-                  self.refresh_btn, self.count_spin, self.delayed_spin):
+                  self.refresh_btn, self.count_spin, self.delayed_spin, self.clear_check):
             w.setEnabled(False)
 
         error, data = "", None
@@ -646,7 +669,7 @@ class PoolTestPage(QWidget):
 
         self.progress_row.setVisible(False)
         for w in (self.export_btn, self.open_all_btn, self.attack_all_btn, self.reset_btn,
-                  self.refresh_btn, self.count_spin, self.delayed_spin):
+                  self.refresh_btn, self.count_spin, self.delayed_spin, self.clear_check):
             w.setEnabled(True)
         self._exporting = False
         self._poll.start()
@@ -716,6 +739,43 @@ class PoolTestPage(QWidget):
     def _browse_all(self, step: str) -> None:
         """Every window opens its next page."""
         self._load_all([self._browse_url(w) for w in range(len(self.browsers))], step)
+
+    # ---- windows clearing their own browser data ----
+
+    def _clear_browser_data(self, window: int, variant: str, step: int,
+                            before: Decision | None) -> ClearEvent:
+        """Window `window` clears its own data the way a visitor would from the
+        browser's settings: its site storage (from the page, as "clear site
+        data" does) and/or every cookie in its profile. Nothing is rewritten."""
+        event = ClearEvent(self._now(), window, step, variant,
+                           before_session=self._session_ids[window],
+                           before_pool=before.pool if before is not None else None)
+        browser = self.browsers[window]
+        if variant in ("storage", "all") and browser.view.url().toString().startswith("http"):
+            got = self._run_js(window, _CLEAR_STORAGE_JS)
+            event.storage_keys = int(got) if str(got).isdigit() else 0
+        if event.clears_cookies():
+            event.cookies = sorted(self._cookie_names[window])
+            browser.clear_cookies()
+            deadline = time.monotonic() + 3.0      # deleteAllCookies() is asynchronous
+            while self._session_ids[window] and time.monotonic() < deadline:
+                self._spin(100)
+        return event
+
+    def _resolve_cleared(self, cleared: list[ClearEvent], results: list[StepResult]) -> None:
+        """Fill in what each clearing led to from the step it happened before,
+        and say it in that step's action for the window."""
+        for e in cleared:
+            if e.step >= len(results):
+                continue
+            step = results[e.step]
+            d = step.decisions[e.window] if e.window < len(step.decisions) else Decision()
+            e.after_session, e.after_pool, e.after_route = d.session_id, d.pool, d.route
+            e.resolved = True
+            if e.window < len(step.actions):
+                step.actions[e.window] = (f"First {e.what()} ({e.outcome()}); then "
+                                          + step.actions[e.window][:1].lower()
+                                          + step.actions[e.window][1:])
 
     def _attack_step(self, n: int, total_steps: int, total: int, windows: list[int],
                      queues: list[list], used: set[str], runs: list[ExploitRun],
@@ -1021,10 +1081,21 @@ class PoolTestPage(QWidget):
         runs: list[ExploitRun] = []
         used: set[str] = set()
         step = 0
+        # Clearing starts once every window has filled its cart (step 3) and can
+        # happen before any later step up to the cart page; never the scale-down.
+        clear_seed = random.randrange(2 ** 31) if self.clear_check.isChecked() else None
+        schedule = clear_schedule(list(range(3, total_steps)), count,
+                                  random.Random(clear_seed)) if clear_seed is not None else {}
+        cleared: list[ClearEvent] = []
 
         def next_step(label: str) -> int:
             nonlocal step
             step += 1
+            for w, variant in schedule.get(step, []):
+                self._progress(f"Step {step}/{total_steps}: {FRAMES[w][0]} clears its browser data",
+                               step, total)
+                before = results[-1].decisions[w] if results and w < len(results[-1].decisions) else None
+                cleared.append(self._clear_browser_data(w, variant, len(results), before))
             self._progress(f"Step {step}/{total_steps}: {label}", step, total)
             return step
 
@@ -1128,6 +1199,7 @@ class PoolTestPage(QWidget):
                 [self._grab(b) for b in self.browsers], self._read_carts()))
         except _Cancelled:
             return None
+        self._resolve_cleared(cleared, results)
 
         # Evidence and the registry first: the scale-down removes containers.
         self._progress("Reading what each honeypot container saw...", total - 2, total)
@@ -1172,7 +1244,8 @@ class PoolTestPage(QWidget):
             since=baseline.get("since", ""), duration=duration, delayed=delayed,
             samples=list(self._samples), loads=list(self._loads), events=events,
             marks=list(self._marks), reserve=dict(self._reserve),
-            usage=list(sampler.samples), scaledown=scaledown)
+            usage=list(sampler.samples), scaledown=scaledown,
+            cleared=cleared, clear_seed=clear_seed)
 
     def reset_sessions(self) -> None:
         for browser in self.browsers:

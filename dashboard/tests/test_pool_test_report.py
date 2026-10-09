@@ -343,3 +343,76 @@ class PoolEvidenceRuntimePools(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClearBrowserDataTests(unittest.TestCase):
+    """Windows clearing their own cookies / storage mid-run, reported as observed."""
+
+    @staticmethod
+    def _step(title, *pools, sids=None, carts=()):
+        from core.pool_test_report import Decision, StepResult
+        sids = sids or SID
+        return StepResult(title, "", [""] * len(pools),
+                          [Decision(sids[i], "HONEYPOT" if p is not None else "PRODUCTION", pool=p)
+                           for i, p in enumerate(pools)], carts=list(carts))
+
+    def test_schedule_is_reproducible_and_never_empty(self):
+        import random
+        from core.pool_test_report import CLEAR_TEXT, clear_schedule
+        a = clear_schedule([3, 4, 5, 6], 3, random.Random(7))
+        self.assertEqual(a, clear_schedule([3, 4, 5, 6], 3, random.Random(7)))
+        for seed in range(50):
+            s = clear_schedule([3, 4], 3, random.Random(seed))
+            self.assertTrue(s)
+            for n, events in s.items():
+                self.assertIn(n, (3, 4))
+                for w, variant in events:
+                    self.assertIn(w, range(3))
+                    self.assertIn(variant, CLEAR_TEXT)
+        self.assertEqual(clear_schedule([], 3, random.Random(1)), {})
+
+    def test_outcome_is_observed_not_judged(self):
+        from core.pool_test_report import ClearEvent
+        kept = ClearEvent(1.0, 0, 2, "cookies", SID[0], 1, cookies=["SERVERID"],
+                          after_session=SID[0], after_pool=1, after_route="HONEYPOT", resolved=True)
+        self.assertTrue(kept.same_session())
+        self.assertIn("kept its session, served by pool 1", kept.outcome())
+        self.assertIn("1 cookie(s) (SERVERID)", kept.removed())
+        fresh = ClearEvent(1.0, 0, 2, "all", SID[0], 1, storage_keys=2,
+                           after_session="d" * 32, after_route="PRODUCTION", resolved=True)
+        self.assertIn("fresh session, served by production", fresh.outcome())
+        self.assertIn("2 storage entries", fresh.removed())
+        self.assertIn("not observed", ClearEvent(1.0, 0, 2, "storage", SID[0]).outcome())
+
+    def test_cleared_cookies_restart_the_cart_baseline(self):
+        from core.pool_test_report import CartState, ClearEvent, cart_resets, cart_violations
+        full, empty = CartState([("Mug", 2)], "$44"), CartState([], "$0")
+        steps = [self._step("fill", 1, carts=[full]), self._step("next", 1, carts=[empty])]
+        self.assertEqual(len(cart_violations(steps)), 1)
+        cookies = [ClearEvent(1.0, 0, 1, "cookies", SID[0])]
+        self.assertEqual(cart_violations(steps, cart_resets(cookies)), [])
+        storage = [ClearEvent(1.0, 0, 1, "storage", SID[0])]
+        self.assertEqual(len(cart_violations(steps, cart_resets(storage))), 1)
+
+    def test_fresh_session_after_clearing_is_not_a_pool_move(self):
+        from core.pool_test_report import ClearEvent
+        new = ["d" * 32, SID[1], SID[2]]
+        steps = [self._step("attack", 1, 2, 3), self._step("cleared", 4, 2, 3, sids=new)]
+        f = [FrameResult(label=f"F{i}", session_id=new[i], pool=p) for i, p in enumerate((4, 2, 3))]
+        self.assertEqual(analyze(f, state(ready=(1, 2, 3, 4), free=[5]), steps).status, "unstable")
+        event = ClearEvent(1.0, 0, 1, "all", SID[0], 1, after_session=new[0], after_pool=4,
+                           after_route="HONEYPOT", resolved=True)
+        self.assertEqual(analyze(f, state(ready=(1, 2, 3, 4), free=[5]), steps, [event]).status,
+                         EXCLUSIVE)
+
+    def test_fresh_session_left_on_production_is_noted_not_incomplete(self):
+        from core.pool_test_report import ClearEvent
+        new = ["d" * 32, SID[1], SID[2]]
+        steps = [self._step("attack", 1, 2, 3), self._step("cleared", None, 2, 3, sids=new)]
+        f = [FrameResult(label=f"F{i}", session_id=new[i], pool=p) for i, p in enumerate((None, 2, 3))]
+        self.assertEqual(analyze(f, state(free=[4]), steps).status, INCOMPLETE)
+        event = ClearEvent(1.0, 0, 1, "cookies", SID[0], 1, after_session=new[0],
+                           after_route="PRODUCTION", resolved=True)
+        v = analyze(f, state(free=[4]), steps, [event])
+        self.assertEqual(v.status, EXCLUSIVE)
+        self.assertIn("F0 cleared browser data", " ".join(v.findings))
