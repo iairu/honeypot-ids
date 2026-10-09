@@ -361,7 +361,7 @@ class CertsPage(TimelineMixin, QWizardPage):
         info = QLabel(
             "Generate the SIEM CA + service certs, and the edge nginx "
             "SSL cert, now. You can also do this later from the "
-            "Certificates page (which offers per-service regeneration "
+            "PKI & Certificates page (which offers per-service regeneration "
             "too)."
         )
         info.setWordWrap(True)
@@ -376,7 +376,7 @@ class CertsPage(TimelineMixin, QWizardPage):
         layout.addWidget(self.generate_btn)
 
         # Run via CertWorker (a QThread -- see ui/page_certs.py, the
-        # standalone Certificates page's own "Regenerate ALL" button,
+        # standalone PKI & Certificates page's own "Regenerate ALL" button,
         # which already did this correctly) rather than calling
         # cert_ctl.regenerate() directly here on the UI thread. That was
         # the actual bug behind "setup gets stuck after clicking Generate
@@ -432,7 +432,7 @@ class FinishPage(TimelineMixin, QWizardPage):
         layout = QVBoxLayout(self)
         self._init_timeline(layout)
         layout.addWidget(QLabel(
-            "Setup complete. Use the Services page to start the stacks, "
+            "Setup complete. Use the Workloads page to start the stacks, "
             "Health to watch container status, and Settings to change any "
             "of this later."
         ))
@@ -442,7 +442,7 @@ class SetupWizard(QWizard):
     def __init__(self, state: AppState, parent=None):
         super().__init__(parent)
         self.state = state
-        self.setWindowTitle("Honeypot Dashboard — Setup")
+        self.setWindowTitle("Honeypot IDS — Console Setup")
         self.setMinimumSize(700, 620)
 
         # Remote/local choice comes first so the .env pages that follow

@@ -20,7 +20,7 @@ from core.proc import run_checked
 # Counters whose growth means "this database was used".
 DB_COUNTERS = ("Questions", "Com_select", "Com_insert", "Com_update", "Com_delete")
 
-# Window tag the Pool test page puts in each frame's User-Agent ("PoolTest/A").
+# Window tag the Segmentation Validation page puts in each frame's User-Agent ("PoolTest/A").
 _WINDOW_RE = re.compile(r"PoolTest/([A-Z])")
 _LOG_RE = re.compile(
     r'^(\S+) \S+ \S+ \[[^\]]+\] "(\S+) (\S+)[^"]*" (\d{3}) \S+ "[^"]*" "([^"]*)"')

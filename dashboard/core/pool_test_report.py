@@ -1,4 +1,4 @@
-"""Data and verdict for the Pool test page's PDF report (no Qt, so it is unit
+"""Data and verdict for the Segmentation Validation page's PDF report (no Qt, so it is unit
 tested on its own; the rendering is core/pool_test_report_pdf.py).
 
 The property under test: by default there is ONE malicious session per
@@ -31,7 +31,7 @@ FALLBACK_EXPLOITS = ["CVE-2024-27956", "CVE-2022-0739", "CVE-2024-2879", "CVE-20
                      "GENERIC-WP-001"]
 MAX_ATTEMPTS = 3
 
-# How many test windows the Pool test page can run side by side.
+# How many test windows the Segmentation Validation page can run side by side.
 MIN_WINDOWS, MAX_WINDOWS = 3, 10
 
 # What each window puts in its cart before anything is attacked: (product slug,
@@ -602,7 +602,7 @@ def analyze(frames: list[FrameResult], state: dict, steps: list[StepResult] | No
     if steps and any(d.route == "HONEYPOT" for d in steps[0].decisions):
         moved.append("Some windows were already diverted before attacking (step 1): the host "
                      "IP carries bad reputation from earlier tests. Use 'Unpoison host IP' on "
-                     "the Exploits page and run the report again.")
+                     "the Attack Simulation page and run the report again.")
     cart_issues = cart_violations(steps or [])
     shared = {n: labels for n, labels in by_pool.items() if len(labels) > 1}
     if not shared and cart_issues:

@@ -1,4 +1,4 @@
-"""Start/Stop-with-graph-export for the Services page.
+"""Start/Stop-with-graph-export for the Workloads page.
 
 While the user starts or stops a stack, this samples -- in the background --
 overall host CPU/RAM (from /proc, local or over SSH) plus per-container CPU and
@@ -137,7 +137,7 @@ def _detect_events(prev: dict, cur: dict, elapsed: float, events: list) -> None:
 
 class ServicesReportWorker(QThread):
     progress = pyqtSignal(str, int, int)       # message, current, total (per-mille)
-    health_shot_request = pyqtSignal(str)      # caption/key -> GUI grabs Health page
+    health_shot_request = pyqtSignal(str)      # caption/key -> GUI grabs Global Visualization page
     finished_ok = pyqtSignal(object)           # ServicesReport
     failed = pyqtSignal(str)
     # Emitted once the idle "before" shot is taken and sampling is primed; the
@@ -681,7 +681,7 @@ def render_services_pdf(data: ServicesReport, out_path: str) -> None:
         parts.append('<p style="color:#666;">No per-container samples were captured.</p>')
 
     # 3. health page screenshots
-    parts.append('<h2 style="color:#222;">3. Health page as the stack changes state</h2>')
+    parts.append('<h2 style="color:#222;">3. Global Visualization page as the stack changes state</h2>')
     if data.stage_shots:
         for i, (caption, path) in enumerate(data.stage_shots):
             img = QImage(path)

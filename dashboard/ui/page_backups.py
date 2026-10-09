@@ -1,4 +1,4 @@
-"""Backups page: lists the DB dumps + WordPress file archives backup_service
+"""Backup & Recovery page: lists the DB dumps + WordPress file archives backup_service
 (ids / edge project) has written under /backups, plus a tail of
 its structured backup.log, and lets you restore either kind of backup back
 onto the live production stack -- see core/backup_ctl.py for exactly how
@@ -167,7 +167,7 @@ class BackupsPage(QWidget):
         self.refresh()
 
     def rebuild_targets(self) -> None:
-        """Call when remote settings change (Settings page / setup wizard)."""
+        """Call when remote settings change (Connectors & Config page / setup wizard)."""
         self.target_combo.rebuild()
 
     def refresh(self) -> None:

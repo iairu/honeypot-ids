@@ -1,7 +1,7 @@
 """Tracks, per (target_key, service), how many log lines seen so far
 contain an error word -- "error", or anything starting with "fail" or
 "fault", case-insensitive (see core/log_error_match.py) -- fed entirely by the
-Services page's always-running combined log tail for each target (see
+Workloads page's always-running combined log tail for each target (see
 page_services.py's TargetPanel), so it keeps working regardless of which
 page is currently visible and without starting any extra `docker compose
 logs` processes of its own.

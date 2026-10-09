@@ -1,5 +1,5 @@
-"""Main application window: sidebar navigation between Services / Health /
-Certificates / Settings, a menu bar (Settings menu + re-run wizard), a
+"""Main application window: a grouped navigation rail (Monitor / Threat
+operations / Manage / Reporting) with a page header bar, a menu bar (Settings menu + re-run wizard), a
 shared background status poller, window-geometry persistence, a system
 tray icon (unhealthy-container notifications), and a confirm-before-quit
 guard while a mutating docker compose action is in flight."""
@@ -7,11 +7,12 @@ from __future__ import annotations
 
 import base64
 
-from PyQt6.QtCore import QByteArray, Qt
-from PyQt6.QtGui import QIcon, QKeySequence, QShortcut
+from PyQt6.QtCore import QByteArray, QSize, Qt
+from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
-    QListWidget, QListWidgetItem, QMainWindow, QMenu, QMenuBar, QMessageBox,
-    QSplitter, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget,
+    QAbstractItemView, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QMainWindow, QMenu, QMenuBar, QMessageBox, QStackedWidget, QSystemTrayIcon,
+    QVBoxLayout, QWidget,
 )
 
 from core import honeypot_layer
@@ -19,6 +20,7 @@ from core.docker_ctl import all_targets, target_for
 from core.paths import DASHBOARD_DIR
 from core.learning import PAGE_GUIDES
 from core.state import AppState
+from ui import theme
 from ui.dependency_banner import DependencyBanner
 from ui.error_monitor import ErrorLogMonitor
 from core.container_status import classify
@@ -59,20 +61,41 @@ PAGES = [
     "kibana", "exploits", "pool_test", "log_search", "extras", "settings", "learn",
 ]
 PAGE_LABELS = {
-    "services": "Services",
-    "health": "Health",
-    "resources": "Resources",
-    "certificates": "Certificates",
-    "redis": "Redis",
-    "backups": "Backups",
-    "kibana": "Kibana",
-    "exploits": "Exploits",
-    "pool_test": "Pool Test",
-    "log_search": "Log Search",
-    "extras": "Extras",
-    "settings": "Settings",
-    "learn": "Learn",
+    "services": "Workloads",
+    "health": "Global Visualization",
+    "resources": "Workload Telemetry",
+    "certificates": "PKI & Certificates",
+    "redis": "Pool State Store",
+    "backups": "Backup & Recovery",
+    "kibana": "SIEM Analytics",
+    "exploits": "Attack Simulation",
+    "pool_test": "Segmentation Validation",
+    "log_search": "Forensics Analysis",
+    "extras": "Reporting",
+    "settings": "Connectors & Config",
+    "learn": "Knowledge Base",
 }
+
+# The navigation rail's sections, top to bottom. Every page id appears
+# exactly once; NAV_ORDER (the flattened list) is also what Ctrl+1..9 and
+# the View menu follow, so the shortcuts match what the rail shows.
+NAV_GROUPS = [
+    ("Monitor", ["health", "resources", "kibana", "log_search"]),
+    ("Threat Operations", ["exploits", "pool_test", "redis"]),
+    ("Manage", ["services", "certificates", "backups", "settings"]),
+    ("Reporting", ["extras", "learn"]),
+]
+NAV_ORDER = [page_id for _group, ids in NAV_GROUPS for page_id in ids]
+PAGE_GROUP = {page_id: group for group, ids in NAV_GROUPS for page_id in ids}
+
+APP_TITLE = "Honeypot IDS · Security Operations Console"
+
+_PAGE_ROLE = Qt.ItemDataRole.UserRole
+
+
+def _menu_text(label: str) -> str:
+    """A label as QAction text: a lone "&" there marks a mnemonic."""
+    return label.replace("&", "&&")
 
 
 class MainWindow(QMainWindow):
@@ -81,8 +104,8 @@ class MainWindow(QMainWindow):
         self.state = state
         # Before any page builds a Target: they all read the active layer.
         honeypot_layer.set_active(state.honeypot_layer)
-        self.setWindowTitle("Honeypot / SIEM Dashboard")
-        self.resize(1200, 800)
+        self.setWindowTitle(APP_TITLE)
+        self.resize(1280, 820)
         if _APP_ICON_PATH.exists():
             self.setWindowIcon(QIcon(str(_APP_ICON_PATH)))
         self._restore_geometry()
@@ -99,30 +122,31 @@ class MainWindow(QMainWindow):
         # can't be missed just because docker/docker compose happened to
         # be fine when whichever page you're currently on was built).
         self.dependency_banner = DependencyBanner()
-        central_layout.addWidget(self.dependency_banner)
 
-        splitter = QSplitter()
-        central_layout.addWidget(splitter, stretch=1)
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        central_layout.addLayout(body, stretch=1)
 
-        self.nav_list = QListWidget()
-        self.nav_list.setMaximumWidth(180)
-        for page_id in PAGES:
-            item = QListWidgetItem(PAGE_LABELS[page_id])
-            item.setData(1, page_id)
-            # One-line "what is this page for" on hover (core/learning.py) --
-            # the sidebar is the first thing a newcomer reads.
-            if page_id in PAGE_GUIDES:
-                item.setToolTip(PAGE_GUIDES[page_id].summary)
-            self.nav_list.addItem(item)
-        self.nav_list.currentRowChanged.connect(self._on_nav_changed)
-        splitter.addWidget(self.nav_list)
+        body.addWidget(self._build_nav_rail())
 
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        content_layout.addWidget(self._build_header_bar())
         self.stack = QStackedWidget()
-        splitter.addWidget(self.stack)
-        splitter.setSizes([180, 1020])
+        stack_holder = QWidget()
+        stack_layout = QVBoxLayout(stack_holder)
+        stack_layout.setContentsMargins(16, 12, 16, 12)
+        stack_layout.setSpacing(10)
+        stack_layout.addWidget(self.dependency_banner)
+        stack_layout.addWidget(self.stack, stretch=1)
+        content_layout.addWidget(stack_holder, stretch=1)
+        body.addWidget(content, stretch=1)
 
         # App-lifetime background tail of reverse_proxy's logs, independent
-        # of whether the Exploits page is open -- persists notable events
+        # of whether the Attack Simulation page is open -- persists notable events
         # (honeypot diversions, CVE/high-severity signals, missing
         # dependencies) to AppState.security_events across restarts. No
         # page currently displays this (see ui/security_feed.py); kept
@@ -173,14 +197,15 @@ class MainWindow(QMainWindow):
         ]:
             self.stack.addWidget(widget)
 
-        start_index = PAGES.index(state.last_page) if state.last_page in PAGES else 0
+        start_page = state.last_page if state.last_page in PAGES else NAV_ORDER[0]
         # First launch with this feature: open on Learn once, so a student
         # sees the orientation and labs before the control pages.
         if not state.learn_welcome_shown:
-            start_index = PAGES.index("learn")
+            start_page = "learn"
             state.learn_welcome_shown = True
             state.save()
-        self.nav_list.setCurrentRow(start_index)
+        self.nav_list.currentItemChanged.connect(self._on_nav_changed)
+        self._open_page(start_page)
 
         self.poller = StatusPoller(self._get_targets, interval_ms=state.poll_interval_ms)
         self.poller.results_ready.connect(self._on_status_results)
@@ -208,7 +233,7 @@ class MainWindow(QMainWindow):
     # ---- navigation / target plumbing ----
 
     def _grab_health_screenshot(self) -> str:
-        """Bring the Health page on-screen briefly, grab it, and return a PNG
+        """Bring the Global Visualization page on-screen briefly, grab it, and return a PNG
         path for the Extras thesis export. Restores the previous page. Returns
         "" if the grab fails -- the export tolerates a missing screenshot."""
         import os
@@ -244,23 +269,126 @@ class MainWindow(QMainWindow):
 
     def _edge_target(self):
         """The reverse_proxy target the security feed tails -- the same one
-        the Exploits page's score badge uses (target_for picks remote when
+        the Attack Simulation page's score badge uses (target_for picks remote when
         configured, else local)."""
         return target_for("edge", self.state)
 
-    def _open_page(self, page_id: str) -> None:
-        if page_id in PAGES:
-            self.nav_list.setCurrentRow(PAGES.index(page_id))
+    def _build_nav_rail(self) -> QWidget:
+        """Brand block, then one non-selectable header per NAV_GROUPS
+        section followed by its pages. Page items carry their page id in
+        _PAGE_ROLE; header items carry none."""
+        rail = QFrame()
+        rail.setObjectName("NavRail")
+        rail.setFixedWidth(236)
+        layout = QVBoxLayout(rail)
+        layout.setContentsMargins(0, 16, 0, 12)
+        layout.setSpacing(0)
 
-    def _on_nav_changed(self, row: int) -> None:
-        if 0 <= row < len(PAGES):
-            self.stack.setCurrentIndex(row)
-            self.state.last_page = PAGES[row]
-            self.state.save()
+        brand = QHBoxLayout()
+        brand.setContentsMargins(18, 0, 16, 14)
+        brand.setSpacing(10)
+        mark = QLabel()
+        mark.setObjectName("BrandMark")
+        mark.setFixedSize(6, 34)
+        brand.addWidget(mark)
+        brand_text = QVBoxLayout()
+        brand_text.setSpacing(1)
+        title = QLabel("HONEYPOT IDS")
+        title.setObjectName("BrandTitle")
+        subtitle = QLabel("Security Operations Console")
+        subtitle.setObjectName("BrandSubtitle")
+        brand_text.addWidget(title)
+        brand_text.addWidget(subtitle)
+        brand.addLayout(brand_text, stretch=1)
+        layout.addLayout(brand)
+
+        self.nav_list = QListWidget()
+        self.nav_list.setObjectName("NavList")
+        self.nav_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.nav_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.nav_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._nav_items: dict[str, QListWidgetItem] = {}
+        for group, page_ids in NAV_GROUPS:
+            header = QListWidgetItem(group.upper())
+            header.setFlags(Qt.ItemFlag.NoItemFlags)
+            font = header.font()
+            font.setPointSizeF(7.5)
+            font.setBold(True)
+            font.setLetterSpacing(font.SpacingType.AbsoluteSpacing, 1.2)
+            header.setFont(font)
+            header.setForeground(QColor(theme.scheme_colors()["nav_muted"]))
+            header.setSizeHint(QSize(0, 40))
+            header.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
+            self.nav_list.addItem(header)
+            for page_id in page_ids:
+                item = QListWidgetItem(PAGE_LABELS[page_id])
+                item.setData(_PAGE_ROLE, page_id)
+                # One-line "what is this page for" on hover (core/learning.py)
+                # -- the rail is the first thing a newcomer reads.
+                if page_id in PAGE_GUIDES:
+                    item.setToolTip(PAGE_GUIDES[page_id].summary)
+                self.nav_list.addItem(item)
+                self._nav_items[page_id] = item
+        layout.addWidget(self.nav_list, stretch=1)
+
+        footer = QLabel("Edge + SIEM digital twin")
+        footer.setObjectName("NavFooter")
+        footer.setContentsMargins(20, 8, 16, 0)
+        layout.addWidget(footer)
+
+        theme.on_change(self._recolor_nav_headers)
+        return rail
+
+    def _recolor_nav_headers(self) -> None:
+        muted = QColor(theme.scheme_colors()["nav_muted"])
+        for row in range(self.nav_list.count()):
+            item = self.nav_list.item(row)
+            if item.data(_PAGE_ROLE) is None:
+                item.setForeground(muted)
+
+    def _build_header_bar(self) -> QWidget:
+        bar = QFrame()
+        bar.setObjectName("HeaderBar")
+        layout = QVBoxLayout(bar)
+        layout.setContentsMargins(20, 14, 20, 12)
+        layout.setSpacing(2)
+        self.page_crumb = QLabel()
+        self.page_crumb.setObjectName("PageCrumb")
+        self.page_title = QLabel()
+        self.page_title.setObjectName("PageTitle")
+        self.page_subtitle = QLabel()
+        self.page_subtitle.setObjectName("PageSubtitle")
+        self.page_subtitle.setWordWrap(True)
+        layout.addWidget(self.page_crumb)
+        layout.addWidget(self.page_title)
+        layout.addWidget(self.page_subtitle)
+        return bar
+
+    def current_page(self) -> str:
+        item = self.nav_list.currentItem()
+        page_id = item.data(_PAGE_ROLE) if item is not None else None
+        return page_id if page_id in PAGES else "learn"
+
+    def _open_page(self, page_id: str) -> None:
+        if page_id in self._nav_items:
+            self.nav_list.setCurrentItem(self._nav_items[page_id])
+
+    def _on_nav_changed(self, current: QListWidgetItem | None, _previous=None) -> None:
+        page_id = current.data(_PAGE_ROLE) if current is not None else None
+        if page_id not in PAGES:
+            return
+        self.stack.setCurrentIndex(PAGES.index(page_id))
+        self.page_crumb.setText(f"{PAGE_GROUP[page_id].upper()}  ›  {PAGE_LABELS[page_id].upper()}")
+        self.page_title.setText(PAGE_LABELS[page_id])
+        guide = PAGE_GUIDES.get(page_id)
+        self.page_subtitle.setText(guide.summary if guide else "")
+        self.page_subtitle.setVisible(bool(guide))
+        self.state.last_page = page_id
+        self.state.save()
 
     def _on_remote_settings_changed(self) -> None:
         self.services_page.rebuild_panels()
-        # Health page rebuilds its diagram automatically on the next poll
+        # Global Visualization page rebuilds its diagram automatically on the next poll
         # tick (it always calls _get_targets() fresh in apply_status()).
         self.redis_page.rebuild_targets()
         self.backups_page.rebuild_targets()
@@ -270,9 +398,9 @@ class MainWindow(QMainWindow):
         self.security_feed.start(self._edge_target())
 
     def _on_honeypot_layer_changed(self, _layer_id: str) -> None:
-        """Services page switched the ids stack's honeypot layer: rebuild
+        """Workloads page switched the ids stack's honeypot layer: rebuild
         every page's targets (their compose file and labels changed), let the
-        Exploits page re-grey its presets, and re-poll right away."""
+        Attack Simulation page re-grey its presets, and re-poll right away."""
         self._on_remote_settings_changed()
         self.exploits_page.set_honeypot_layer()
         self.poller.poll_now()
@@ -305,7 +433,7 @@ class MainWindow(QMainWindow):
             icon = self.windowIcon()
 
         self.tray_icon = QSystemTrayIcon(icon, self)
-        self.tray_icon.setToolTip("Honeypot / SIEM Dashboard")
+        self.tray_icon.setToolTip(APP_TITLE)
 
         menu = QMenu()
         show_action = menu.addAction("Show dashboard")
@@ -363,33 +491,34 @@ class MainWindow(QMainWindow):
         menu_bar: QMenuBar = self.menuBar()
 
         settings_menu = menu_bar.addMenu("&Settings")
-        open_settings_action = settings_menu.addAction("Open Settings page")
-        open_settings_action.triggered.connect(lambda: self.nav_list.setCurrentRow(PAGES.index("settings")))
+        open_settings_action = settings_menu.addAction("Open " + _menu_text(PAGE_LABELS["settings"]))
+        open_settings_action.triggered.connect(lambda: self._open_page("settings"))
         rerun_wizard_action = settings_menu.addAction("Re-run setup wizard…")
         rerun_wizard_action.triggered.connect(self._rerun_wizard)
 
         view_menu = menu_bar.addMenu("&View")
-        for page_id in PAGES:
-            action = view_menu.addAction(PAGE_LABELS[page_id])
-            action.triggered.connect(lambda _checked, pid=page_id: self.nav_list.setCurrentRow(PAGES.index(pid)))
+        for group, page_ids in NAV_GROUPS:
+            view_menu.addSection(group)
+            for page_id in page_ids:
+                action = view_menu.addAction(_menu_text(PAGE_LABELS[page_id]))
+                action.triggered.connect(lambda _checked, pid=page_id: self._open_page(pid))
 
         help_menu = menu_bar.addMenu("&Help")
         page_help_action = help_menu.addAction("Help for this page")
         page_help_action.setShortcut(QKeySequence("F1"))
         page_help_action.triggered.connect(self._show_page_help)
-        learn_action = help_menu.addAction("Learn: labs, glossary, exploit lessons")
+        learn_action = help_menu.addAction(f"{PAGE_LABELS['learn']}: labs, glossary, attack lessons")
         learn_action.triggered.connect(lambda: self._open_page("learn"))
 
     def _show_page_help(self) -> None:
         """F1: what the current page is for, what to try, what to notice
-        (core/learning.PAGE_GUIDES), with a jump to the Learn page."""
-        row = self.nav_list.currentRow()
-        page_id = PAGES[row] if 0 <= row < len(PAGES) else "learn"
+        (core/learning.PAGE_GUIDES), with a jump to the Knowledge Base."""
+        page_id = self.current_page()
         box = QMessageBox(self)
         box.setWindowTitle(f"Help: {PAGE_LABELS[page_id]}")
         box.setTextFormat(Qt.TextFormat.RichText)
         box.setText(page_guide_html(page_id, PAGE_LABELS[page_id]))
-        learn_btn = box.addButton("Open Learn page", QMessageBox.ButtonRole.ActionRole)
+        learn_btn = box.addButton(f"Open {PAGE_LABELS['learn']}", QMessageBox.ButtonRole.ActionRole)
         box.addButton(QMessageBox.StandardButton.Close)
         box.exec()
         if box.clickedButton() is learn_btn:
@@ -398,10 +527,10 @@ class MainWindow(QMainWindow):
     # ---- keyboard shortcuts ----
 
     def _build_shortcuts(self) -> None:
-        # Ctrl+1..9: jump straight to the Nth page in the sidebar.
-        for i, page_id in enumerate(PAGES[:9], start=1):
+        # Ctrl+1..9: jump straight to the Nth page in the navigation rail.
+        for i, page_id in enumerate(NAV_ORDER[:9], start=1):
             shortcut = QShortcut(QKeySequence(f"Ctrl+{i}"), self)
-            shortcut.activated.connect(lambda pid=page_id: self.nav_list.setCurrentRow(PAGES.index(pid)))
+            shortcut.activated.connect(lambda pid=page_id: self._open_page(pid))
 
         # Ctrl+R: refresh whatever the current page can meaningfully
         # refresh on demand -- an embedded browser reload, an immediate
@@ -411,7 +540,7 @@ class MainWindow(QMainWindow):
         refresh_shortcut = QShortcut(QKeySequence("Ctrl+R"), self)
         refresh_shortcut.activated.connect(self._on_refresh_shortcut)
 
-        # Ctrl+F: jump to and focus the Log Search page's search box --
+        # Ctrl+F: jump to and focus the Forensics Analysis page's search box --
         # the one "find" surface in this app, so Ctrl+F behaves the way
         # it's expected to everywhere else.
         find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
@@ -433,7 +562,7 @@ class MainWindow(QMainWindow):
             current.refresh()
 
     def _on_find_shortcut(self) -> None:
-        self.nav_list.setCurrentRow(PAGES.index("log_search"))
+        self._open_page("log_search")
         self.log_search_page.focus_search_box()
 
     # ---- menu ----
@@ -441,7 +570,7 @@ class MainWindow(QMainWindow):
     def _rerun_wizard(self) -> None:
         wizard = SetupWizard(self.state, self)
         wizard.exec()
-        # Settings page holds its own EnvFile/RemoteConfigWidget instances
+        # Connectors & Config page holds its own EnvFile/RemoteConfigWidget instances
         # loaded at construction time -- rebuild it so it reflects whatever
         # the wizard just wrote, instead of showing stale pre-wizard values.
         self._reload_settings_page()

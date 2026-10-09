@@ -1,4 +1,4 @@
-"""Settings page tab for one project's .env: a Local/Remote toggle that
+"""Connectors & Config page tab for one project's .env: a Local/Remote toggle that
 swaps the SOURCE of the same EnvEditorWidget between the real local file
 and the one fetched live from the configured remote host over SSH. Save
 writes back to whichever source is currently selected. Companion to the

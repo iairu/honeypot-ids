@@ -1,4 +1,4 @@
-"""Services page: start/restart/stop/purge for each project, local and
+"""Workloads page: start/restart/stop/purge for each project, local and
 (if configured) remote, with live status shown next to the buttons and
 live command output below."""
 from __future__ import annotations
@@ -30,7 +30,7 @@ class TargetPanel(QGroupBox):
         super().__init__(target.label, parent)
         self.target = target
         self._error_monitor = error_monitor
-        # Callable returning a PNG path of the Health page (or "" on failure),
+        # Callable returning a PNG path of the Global Visualization page (or "" on failure),
         # supplied by MainWindow -- used by the "…with PDF graph export" buttons
         # to embed Health-page screenshots in the report.
         self._health_screenshot_provider = health_screenshot_provider
@@ -73,7 +73,7 @@ class TargetPanel(QGroupBox):
 
         # Second row: start/stop that ALSO record a PDF of resource graphs
         # (host CPU/RAM + per-container) with event markers and Health-page
-        # screenshots, the same style as the Exploits page's report export.
+        # screenshots, the same style as the Attack Simulation page's report export.
         export_row = QHBoxLayout()
         self.start_export_btn = QPushButton("Start with PDF graph export")
         self.stop_export_btn = QPushButton("Stop with PDF graph export")
@@ -247,7 +247,7 @@ class TargetPanel(QGroupBox):
         worker.start()
 
     def _on_svc_health_shot(self, key: str) -> None:
-        """GUI-thread: grab the Health page and hand the path back to the worker
+        """GUI-thread: grab the Global Visualization page and hand the path back to the worker
         (which is blocked waiting for it)."""
         path = ""
         if self._health_screenshot_provider is not None:

@@ -1,5 +1,5 @@
 """Decides which `docker compose logs` lines count as errors -- the test
-behind the Health page's red "!N" badges (ui/error_monitor.py) and the
+behind the Global Visualization page's red "!N" badges (ui/error_monitor.py) and the
 badge-click "error lines only" log view. Qt-free so it can be unit-tested
 without the app's PyQt6 venv.
 
@@ -81,7 +81,7 @@ def is_error_log_line(raw_line: str) -> bool:
     message portion -- the
     exact same test process_chunk() uses per-line to increment a badge
     count, exposed for reuse by anything that wants to filter down to
-    just the lines that would increment it (e.g. the Health page's "view
+    just the lines that would increment it (e.g. the Global Visualization page's "view
     this service's error lines only" action, clicking a node's badge)."""
     plain = _ANSI_RE.sub("", raw_line)
     m = _PREFIX_RE.match(plain)

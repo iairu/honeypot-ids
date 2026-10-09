@@ -1,4 +1,4 @@
-"""Pool test page: 3 to 10 embedded browsers, each its own attacker session,
+"""Segmentation Validation page: 3 to 10 embedded browsers, each its own attacker session,
 to see how the honeypot pool receives several attackers at once.
 
 Every frame is a BrowserWidget, i.e. its own off-the-record profile and so its
@@ -159,9 +159,6 @@ class PoolTestPage(QWidget):
         self._presets = [p for p in EXPLOIT_PRESETS if p.method.upper() == "GET"]
 
         layout = QVBoxLayout(self)
-        title = QLabel("Pool test")
-        title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        layout.addWidget(title)
 
         intro = QLabel(
             "3 to 10 browsers, each a separate session (own cookies, own User-Agent and "
@@ -219,7 +216,7 @@ class PoolTestPage(QWidget):
         layout.addLayout(bar)
 
         # In-page progress row (not a floating dialog, so it can never land in
-        # the frames' screenshots) -- same pattern as the Exploits page.
+        # the frames' screenshots) -- same pattern as the Attack Simulation page.
         self.progress_row = QWidget()
         prog = QHBoxLayout(self.progress_row)
         prog.setContentsMargins(0, 0, 0, 0)
@@ -622,7 +619,7 @@ class PoolTestPage(QWidget):
             self, "Reset test sessions?",
             "The report starts from a clean slate: this machine's own sessions and honeypot "
             "pool assignments are removed first (the same reset as 'Unpoison host IP' on "
-            f"the Exploits page), then the {self._count} windows each run their own exploit, "
+            f"the Attack Simulation page), then the {self._count} windows each run their own exploit, "
             "and the run waits for the honeypot pools to scale up to them (a few minutes "
             "per batch of new pools)."
             + (f" The last {self._delayed()} window(s) attack only after pools were pre-built "

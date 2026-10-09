@@ -276,7 +276,7 @@ def clear_local_threat_state(remote: RemoteConfig | None, timeout: float = 15.0)
     """Un-poisons threat_ips/session/pool-assignment state for the shared
     host IP (see _UNPOISON_SCRIPT) so exploit testing always starts from a
     clean, production-routed session -- run this before/after running
-    exploits from the Exploits page. Returns a summary dict:
+    exploits from the Attack Simulation page. Returns a summary dict:
     {"sessions_removed": int, "pool_assignments_removed": [session id, ...],
     "threat_ips_removed": [ip, ...]}."""
     out = _run_redis_cli(remote, "EVAL", _UNPOISON_SCRIPT, "0", timeout=timeout).strip()

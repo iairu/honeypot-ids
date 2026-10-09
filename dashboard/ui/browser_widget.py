@@ -1,5 +1,5 @@
-"""Embedded browser widget with an address bar -- shared by the Kibana page
-and the Exploits page's production-eshop view.
+"""Embedded browser widget with an address bar -- shared by the SIEM Analytics page
+and the Attack Simulation page's production-eshop view.
 
 Uses a dedicated QWebEngineProfile per widget instance rather than the
 shared default profile: every site this app points a browser at (Kibana,
@@ -55,10 +55,13 @@ class BrowserWidget(QWidget):
         self.home_btn = QPushButton("⌂")
         self.home_btn.setFixedWidth(32)
         self.home_btn.setToolTip("Home (back to the starting address)")
+        for btn in (self.back_btn, self.forward_btn, self.reload_btn, self.home_btn):
+            btn.setProperty("compact", True)
         self.address_bar = QLineEdit()
         self.address_bar.setPlaceholderText("Enter a URL and press Enter")
         go_btn = QPushButton("Go")
         go_btn.setFixedWidth(40)
+        go_btn.setProperty("compact", True)
 
         nav_row.addWidget(self.back_btn)
         nav_row.addWidget(self.forward_btn)

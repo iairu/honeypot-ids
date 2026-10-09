@@ -1,5 +1,5 @@
 """App-lifetime background tail of reverse_proxy's own logs, independent of
-whether the Exploits page is even open -- parsed via core/threat_log_parser
+whether the Attack Simulation page is even open -- parsed via core/threat_log_parser
 (the same parser page_exploits.py's score badge/diagram tab use), filtered
 down to NOTABLE events (honeypot diversions, CVE/high-severity signals --
 anything the parser already tags COLOR_HIGH) plus dependency-check

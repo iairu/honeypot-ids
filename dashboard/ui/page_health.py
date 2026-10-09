@@ -1,4 +1,4 @@
-"""Health page: the cross-referenced service diagram, plus a details
+"""Global Visualization page: the cross-referenced service diagram, plus a details
 panel for whatever node is selected (status detail, Restart, View Logs,
 Open Web UI, Open Shell). The diagram's own nodes additionally carry a
 quick "export logs to a file" icon (see ui/health_diagram.py) handled here
@@ -488,7 +488,7 @@ class HealthPage(QWidget):
             self.restart_progress.setValue(1)
             self.restart_progress.setStyleSheet(_progress_chunk_css("#d9534f"))
         # Resume the live log tail now that the one-shot restart command
-        # has finished, same as the Services page does for its own
+        # has finished, same as the Workloads page does for its own
         # up/restart/down commands.
         if self._selected and self._selected[1] == service:
             self._view_logs_selected()

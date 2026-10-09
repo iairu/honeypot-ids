@@ -1,7 +1,7 @@
 """Reusable .env editing widget -- one row per key found in the file,
 password-masked for anything that looks like a secret, with a per-field
 show/hide toggle and a "generate random value" button for secrets.
-Shared by the setup wizard (first-run) and the Settings page (anytime).
+Shared by the setup wizard (first-run) and the Connectors & Config page (anytime).
 """
 from __future__ import annotations
 
@@ -42,12 +42,14 @@ class EnvFieldRow(QWidget):
         if is_secret:
             self.toggle_btn = QPushButton("👁")
             self.toggle_btn.setFixedWidth(28)
+            self.toggle_btn.setProperty("compact", True)
             self.toggle_btn.setCheckable(True)
             self.toggle_btn.toggled.connect(self._toggle_visibility)
             layout.addWidget(self.toggle_btn)
 
             gen_btn = QPushButton("Generate")
             gen_btn.setFixedWidth(80)
+            gen_btn.setProperty("compact", True)
             gen_btn.clicked.connect(self._generate)
             layout.addWidget(gen_btn)
 
