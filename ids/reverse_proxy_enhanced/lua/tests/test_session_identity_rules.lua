@@ -132,6 +132,24 @@ do
     check("nil fields are safe", rules.fingerprint_source(nil, true) == nil)
 end
 
+print("== rejected cookie log ==")
+do
+    local hash = function(s) return "h:" .. s end
+    local forged = ID .. ".deadbeefdeadbeef"
+    local r = rules.rejection_record(forged, "bad_signature", 100, hash, true, 50, "fp1")
+    check("forged cookie: claimed id kept", r.claimed_id == ID)
+    check("forged cookie: only its hash is stored", r.cookie_sha1 == "h:" .. forged)
+    check("scored with a stable key", r.scored == true and r.score == 50)
+    check("status and time recorded", r.status == "bad_signature" and r.at == 100 and r.fingerprint == "fp1")
+    local u = rules.rejection_record(ID, "malformed", 1, hash, false, 50, nil)
+    check("unsigned cookie: claimed id kept, not scored without a stable key",
+          u.claimed_id == ID and u.scored == false and u.score == 0 and u.fingerprint == "")
+    local g = rules.rejection_record("not-a-session", "malformed", 1, hash, true, 50)
+    check("garbage cookie: no claimed id", g.claimed_id == "")
+    check("non-string cookie is safe", rules.rejection_record(nil, "malformed", 1, hash, true, 50).cookie_sha1 == "h:")
+    check("log is capped", rules.REJECTIONS_MAX > 0 and rules.REJECTIONS_KEY == "session_cookie_rejections")
+end
+
 print("== nginx.conf wiring (both honeypot layers) ==")
 local function read(path)
     local f = io.open(path, "r")

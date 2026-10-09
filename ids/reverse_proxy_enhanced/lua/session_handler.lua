@@ -42,7 +42,42 @@ end
 --- @return string|nil  session id (nil unless the cookie verified)
 --- @return string      "valid" | "missing" | "malformed" | "bad_signature"
 function _M.read_session_cookie()
-    return identity_rules.verify(ngx.var["cookie_" .. _G.config.session.cookie_name], mac)
+    local ctx = ngx.ctx
+    if ctx.session_cookie_status then
+        return ctx.session_cookie_id, ctx.session_cookie_status
+    end
+    local cookie = ngx.var["cookie_" .. _G.config.session.cookie_name]
+    local id, status = identity_rules.verify(cookie, mac)
+    ctx.session_cookie_id, ctx.session_cookie_status = id, status
+    if status == "bad_signature" or status == "malformed" then
+        _M.record_cookie_rejection(cookie, status)
+    end
+    return id, status
+end
+
+local function sha1_hex(s)
+    local sha1 = resty_sha1:new()
+    sha1:update(s)
+    return str.to_hex(sha1:final())
+end
+
+--- Log a rejected session cookie (see session_identity_rules.REJECTIONS_KEY).
+function _M.record_cookie_rejection(cookie, status)
+    local cfg = _G.config.session
+    local record = identity_rules.rejection_record(
+        cookie, status, ngx.now(), sha1_hex, cfg.signing_key_stable, cfg.tamper_score,
+        _M.request_fingerprint())
+    record.ip = ngx.var.remote_addr
+    record.uri = (ngx.var.request_uri or ""):sub(1, 200)
+
+    local red, err = _G.redis_pool.get_connection()
+    if not red then
+        ngx.log(ngx.ERR, "[SESSION] Failed to connect to Redis to log a rejected cookie: ", err)
+        return
+    end
+    red:lpush(identity_rules.REJECTIONS_KEY, cjson.encode(record))
+    red:ltrim(identity_rules.REJECTIONS_KEY, 0, identity_rules.REJECTIONS_MAX - 1)
+    _G.redis_pool.close_connection(red)
 end
 
 -- ---------------------------------------------------------------------------
