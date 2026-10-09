@@ -128,8 +128,16 @@ class Target:
         the old one exists. That orphan then held a network and a named
         volume across a subsequent Purge (`down -v` logged "Resource is
         still in use" and silently left them behind). --remove-orphans
-        makes both directions self-healing."""
-        if compose_args and compose_args[0] in ("up", "down"):
+        makes both directions self-healing.
+
+        `up` also gets --build: without it compose keeps running whatever
+        image of a locally built service (pool_manager, ...) it built
+        first, so a fixed manager.py never reached the container (a pool
+        build kept failing on a FLUSH PRIVILEGES already removed from the
+        source). The build cache makes this a no-op when nothing changed."""
+        if compose_args and compose_args[0] == "up":
+            return (*compose_args, "--build", "--remove-orphans")
+        if compose_args and compose_args[0] == "down":
             return (*compose_args, "--remove-orphans")
         return compose_args
 

@@ -34,7 +34,7 @@ fi
 # use --profile '*' -- tearing down must always cover everything that
 # might be running, regardless of which profile started it.
 echo "Starting services with docker compose..."
-docker compose up
+docker compose up --build
 
 echo ""
 echo "Services stopped."

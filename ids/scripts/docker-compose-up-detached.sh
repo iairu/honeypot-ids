@@ -27,7 +27,7 @@ fi
 # docker-compose-up.sh's comment: vector (profiles: [elk]) is meant to
 # stay opt-in, not force-started here.
 echo "Starting services with docker compose in background..."
-docker compose up -d
+docker compose up -d --build
 
 echo ""
 echo "Services started successfully in detached mode."
