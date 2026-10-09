@@ -43,6 +43,7 @@ from core.pool_test_report import (CART_PLAN, FALLBACK_EXPLOITS, MAX_ATTEMPTS, M
 from core.resource_stats import collect_pool_usage
 from core.state import AppState
 from ui.browser_widget import BrowserWidget
+from ui.flow_layout import FlowLayout, labeled
 
 # Name of the proxy's session cookie (init.lua: session.cookie_name).
 SESSION_COOKIE = "SERVERID"
@@ -170,16 +171,15 @@ class PoolTestPage(QWidget):
         intro.setStyleSheet("color: #aaaaaa;")
         layout.addWidget(intro)
 
-        bar = QHBoxLayout()
-        bar.addWidget(QLabel("Windows:"))
+        # Wraps onto more rows in a narrow window instead of forcing it wider.
+        bar = FlowLayout()
         self.count_spin = QSpinBox()
         self.count_spin.setRange(MIN_WINDOWS, MAX_WINDOWS)
         self.count_spin.setValue(MIN_WINDOWS)
         self.count_spin.setToolTip(
             "How many browser windows (separate attacker sessions) to run side by side.")
         self.count_spin.valueChanged.connect(self.set_window_count)
-        bar.addWidget(self.count_spin)
-        bar.addWidget(QLabel("of which wait for pools:"))
+        bar.addWidget(labeled("Windows:", self.count_spin))
         self.delayed_spin = QSpinBox()
         self.delayed_spin.setRange(0, MIN_WINDOWS)
         self.delayed_spin.setValue(0)
@@ -190,13 +190,12 @@ class PoolTestPage(QWidget):
             "own at once instead of borrowing one round-robin. The other windows attack "
             "straight away and show the round-robin borrowing while pools are still being "
             "built.")
-        bar.addWidget(self.delayed_spin)
+        bar.addWidget(labeled("of which wait for pools:", self.delayed_spin))
         self.preset_combo = QComboBox()
         for p in self._presets:
             self.preset_combo.addItem(f"{p.cve} — {p.name}")
         self.preset_combo.setMinimumWidth(320)
-        bar.addWidget(QLabel("Exploit:"))
-        bar.addWidget(self.preset_combo, stretch=1)
+        bar.addWidget(labeled("Exploit:", self.preset_combo))
         self.open_all_btn = QPushButton("Open shop in all")
         self.open_all_btn.clicked.connect(self.open_all)
         bar.addWidget(self.open_all_btn)
