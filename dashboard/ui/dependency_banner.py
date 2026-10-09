@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidg
 
 from core.dependency_check import check_dependencies, install_command
 from ui import theme
+from ui.common import clear_layout
 
 
 class DependencyBanner(QWidget):
@@ -32,6 +33,9 @@ class DependencyBanner(QWidget):
         self.setVisible(False)
         self._last_required_missing: frozenset[str] = frozenset()
         self._severity: str | None = None  # "danger" | "warning" while shown
+        self._compact = False  # details folded away (short window)
+        self._details: QWidget | None = None
+        self._details_btn: QPushButton | None = None
         theme.on_change(self._apply_style)
         self.refresh()
 
@@ -53,10 +57,8 @@ class DependencyBanner(QWidget):
         )
 
     def refresh(self) -> None:
-        while self._layout.count():
-            item = self._layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        clear_layout(self._layout)
+        self._details = self._details_btn = None
 
         statuses = check_dependencies()
         missing = [s for s in statuses if not s.ok]
@@ -90,25 +92,41 @@ class DependencyBanner(QWidget):
                 "⚠ Optional tooling missing -- remote targets (SSH control, project sync) are "
                 "unavailable: " + ", ".join(s.name for s in missing)
             )
+        header_row = QHBoxLayout()
         header = QLabel(header_text)
         header.setObjectName("BannerHeader")
         header.setWordWrap(True)
-        self._layout.addWidget(header)
+        header.setMinimumWidth(1)
+        header_row.addWidget(header, stretch=1)
+        self._details_btn = QPushButton()
+        self._details_btn.clicked.connect(lambda: self.set_compact(not self._compact))
+        header_row.addWidget(self._details_btn, alignment=Qt.AlignmentFlag.AlignTop)
+        recheck_btn = QPushButton("Recheck")
+        recheck_btn.clicked.connect(self.refresh)
+        header_row.addWidget(recheck_btn, alignment=Qt.AlignmentFlag.AlignTop)
+        self._layout.addLayout(header_row)
 
+        self._details = QWidget()
+        details = QVBoxLayout(self._details)
+        details.setContentsMargins(0, 0, 0, 0)
+        details.setSpacing(4)
         for s in missing:
             line = QLabel(f"  •  {s.name}: {s.detail}")
             line.setWordWrap(True)
-            self._layout.addWidget(line)
+            details.addWidget(line)
 
         cmd_label = QLabel(f"Recommended install command:\n{install_command()}")
         cmd_label.setWordWrap(True)
         cmd_label.setObjectName("BannerCommand")
         cmd_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self._layout.addWidget(cmd_label)
+        details.addWidget(cmd_label)
+        self._layout.addWidget(self._details)
+        self.set_compact(self._compact)
 
-        btn_row = QHBoxLayout()
-        recheck_btn = QPushButton("Recheck")
-        recheck_btn.clicked.connect(self.refresh)
-        btn_row.addWidget(recheck_btn)
-        btn_row.addStretch()
-        self._layout.addLayout(btn_row)
+    def set_compact(self, compact: bool) -> None:
+        """Folds the per-tool lines and install command away, leaving the
+        one-line summary (MainWindow does this in a short window)."""
+        self._compact = compact
+        if self._details is not None:
+            self._details.setVisible(not compact)
+            self._details_btn.setText("Details" if compact else "Hide details")

@@ -10,7 +10,19 @@ stretch past screen width.
 from __future__ import annotations
 
 from PyQt6.QtCore import QMargins, QPoint, QRect, QSize, Qt
-from PyQt6.QtWidgets import QLayout, QSizePolicy, QStyle, QWidgetItem
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QLayout, QSizePolicy, QStyle, QWidget, QWidgetItem
+
+
+def labeled(text: str, widget: QWidget) -> QWidget:
+    """`text` and `widget` side by side in one container, so a FlowLayout
+    wraps them onto a new row together instead of splitting the pair."""
+    box = QWidget()
+    row = QHBoxLayout(box)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(6)
+    row.addWidget(QLabel(text))
+    row.addWidget(widget)
+    return box
 
 
 class FlowLayout(QLayout):

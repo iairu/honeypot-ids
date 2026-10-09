@@ -11,8 +11,8 @@ from PyQt6.QtCore import QByteArray, QSize, Qt
 from PyQt6.QtGui import QColor, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QMainWindow, QMenu, QMenuBar, QMessageBox, QStackedWidget, QSystemTrayIcon,
-    QVBoxLayout, QWidget,
+    QMainWindow, QMenu, QMenuBar, QMessageBox, QPushButton, QStackedWidget,
+    QSystemTrayIcon, QVBoxLayout, QWidget,
 )
 
 from core import honeypot_layer
@@ -37,6 +37,7 @@ from ui.page_redis import RedisPage
 from ui.page_resources import ResourcesPage
 from ui.page_services import ServicesPage
 from ui.page_settings import SettingsPage
+from ui.responsive import scrollable
 from ui.security_feed import SecurityEventFeed
 from ui.status_poller import StatusPoller
 from ui.wizard import SetupWizard
@@ -92,6 +93,13 @@ APP_TITLE = "Honeypot IDS · Security Operations Console"
 
 _PAGE_ROLE = Qt.ItemDataRole.UserRole
 
+# Responsive breakpoints, in window pixels: below NARROW_WIDTH the
+# navigation rail collapses behind the header's menu button (and closes
+# again after a page is picked); below SHORT_HEIGHT the header drops its
+# summary line and the dependency banner its details.
+NARROW_WIDTH = 900
+SHORT_HEIGHT = 700
+
 
 def _menu_text(label: str) -> str:
     """A label as QAction text: a lone "&" there marks a mnemonic."""
@@ -128,7 +136,10 @@ class MainWindow(QMainWindow):
         body.setSpacing(0)
         central_layout.addLayout(body, stretch=1)
 
-        body.addWidget(self._build_nav_rail())
+        self.nav_rail = self._build_nav_rail()
+        body.addWidget(self.nav_rail)
+        self._narrow: bool | None = None   # set by the first resizeEvent()
+        self._short: bool | None = None
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
@@ -138,7 +149,7 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         stack_holder = QWidget()
         stack_layout = QVBoxLayout(stack_holder)
-        stack_layout.setContentsMargins(16, 12, 16, 12)
+        stack_layout.setContentsMargins(12, 10, 12, 10)
         stack_layout.setSpacing(10)
         stack_layout.addWidget(self.dependency_banner)
         stack_layout.addWidget(self.stack, stretch=1)
@@ -195,7 +206,9 @@ class MainWindow(QMainWindow):
             ("settings", self.settings_page),
             ("learn", self.learn_page),
         ]:
-            self.stack.addWidget(widget)
+            # Each page scrolls on its own when the window is smaller than
+            # it, so no page dictates the window's minimum size.
+            self.stack.addWidget(scrollable(widget))
 
         start_page = state.last_page if state.last_page in PAGES else NAV_ORDER[0]
         # First launch with this feature: open on Learn once, so a student
@@ -240,9 +253,9 @@ class MainWindow(QMainWindow):
         import tempfile
         from PyQt6.QtCore import QEventLoop, QTimer
 
-        prev = self.stack.currentWidget()
+        prev = self.stack.currentIndex()
         try:
-            self.stack.setCurrentWidget(self.health_page)
+            self.stack.setCurrentIndex(PAGES.index("health"))
             # Let it lay out and paint before grabbing.
             loop = QEventLoop()
             QTimer.singleShot(700, loop.quit)
@@ -251,8 +264,7 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001 -- best-effort screenshot
             return ""
         finally:
-            if prev is not None:
-                self.stack.setCurrentWidget(prev)
+            self.stack.setCurrentIndex(prev)
         if pixmap.isNull():
             return ""
         try:
@@ -352,14 +364,26 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(bar)
         layout.setContentsMargins(20, 14, 20, 12)
         layout.setSpacing(2)
+        crumb_row = QHBoxLayout()
+        crumb_row.setSpacing(10)
+        self.nav_toggle = QPushButton("☰")
+        self.nav_toggle.setObjectName("NavToggle")
+        self.nav_toggle.setToolTip("Show or hide the navigation")
+        self.nav_toggle.setProperty("compact", True)
+        self.nav_toggle.setFixedWidth(34)
+        self.nav_toggle.clicked.connect(lambda: self._set_nav_visible(not self.nav_rail.isVisible()))
         self.page_crumb = QLabel()
         self.page_crumb.setObjectName("PageCrumb")
+        # Long labels must not set the window's minimum width.
+        self.page_crumb.setMinimumWidth(1)
         self.page_title = QLabel()
         self.page_title.setObjectName("PageTitle")
         self.page_subtitle = QLabel()
         self.page_subtitle.setObjectName("PageSubtitle")
         self.page_subtitle.setWordWrap(True)
-        layout.addWidget(self.page_crumb)
+        crumb_row.addWidget(self.nav_toggle)
+        crumb_row.addWidget(self.page_crumb, stretch=1)
+        layout.addLayout(crumb_row)
         layout.addWidget(self.page_title)
         layout.addWidget(self.page_subtitle)
         return bar
@@ -382,7 +406,10 @@ class MainWindow(QMainWindow):
         self.page_title.setText(PAGE_LABELS[page_id])
         guide = PAGE_GUIDES.get(page_id)
         self.page_subtitle.setText(guide.summary if guide else "")
-        self.page_subtitle.setVisible(bool(guide))
+        self.page_subtitle.setVisible(bool(guide) and not self._short)
+        # Narrow window: the rail is a drawer, closed again once a page is picked.
+        if self._narrow:
+            self._set_nav_visible(False)
         self.state.last_page = page_id
         self.state.save()
 
@@ -547,19 +574,19 @@ class MainWindow(QMainWindow):
         find_shortcut.activated.connect(self._on_find_shortcut)
 
     def _on_refresh_shortcut(self) -> None:
-        current = self.stack.currentWidget()
-        if current is self.kibana_page:
-            current.browser.view.reload()
-        elif current is self.exploits_page:
-            current.browser.view.reload()
-        elif current is self.log_search_page:
-            current.run_search()
-        elif current is self.redis_page:
-            current.refresh()
-        elif current is self.backups_page:
-            current.refresh()
-        elif current is self.certs_page and hasattr(current, "refresh"):
-            current.refresh()
+        page = self.current_page()
+        if page == "kibana":
+            self.kibana_page.browser.view.reload()
+        elif page == "exploits":
+            self.exploits_page.browser.view.reload()
+        elif page == "log_search":
+            self.log_search_page.run_search()
+        elif page == "redis":
+            self.redis_page.refresh()
+        elif page == "backups":
+            self.backups_page.refresh()
+        elif page == "certificates" and hasattr(self.certs_page, "refresh"):
+            self.certs_page.refresh()
 
     def _on_find_shortcut(self) -> None:
         self._open_page("log_search")
@@ -583,11 +610,32 @@ class MainWindow(QMainWindow):
         self.security_feed.start(self._edge_target())
 
     def _reload_settings_page(self) -> None:
-        index = self.stack.indexOf(self.settings_page)
-        self.stack.removeWidget(self.settings_page)
+        area = self.stack.widget(PAGES.index("settings"))
+        area.takeWidget()
         self.settings_page.deleteLater()
         self.settings_page = SettingsPage(self.state, self._on_remote_settings_changed, self.set_poll_interval)
-        self.stack.insertWidget(index, self.settings_page)
+        area.setWidget(self.settings_page)
+
+    # ---- responsive layout ----
+
+    def _set_nav_visible(self, visible: bool) -> None:
+        self.nav_rail.setVisible(visible)
+        self.nav_toggle.setToolTip("Hide the navigation" if visible else "Show the navigation")
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        size = event.size()
+        narrow = size.width() < NARROW_WIDTH
+        if narrow != self._narrow:
+            # Only on crossing the breakpoint, so a rail the user opened
+            # by hand stays open while they resize within one range.
+            self._narrow = narrow
+            self._set_nav_visible(not narrow)
+        short = size.height() < SHORT_HEIGHT
+        if short != self._short:
+            self._short = short
+            self.page_subtitle.setVisible(not short and bool(PAGE_GUIDES.get(self.current_page())))
+            self.dependency_banner.set_compact(short)
 
     # ---- geometry persistence ----
 
