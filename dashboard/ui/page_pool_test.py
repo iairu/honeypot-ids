@@ -27,7 +27,7 @@ from datetime import datetime
 from PyQt6.QtCore import QEventLoop, Qt, QThread, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QApplication, QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
+    QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
     QProgressBar, QPushButton, QSpinBox, QSplitter, QVBoxLayout, QWidget,
 )
 
@@ -578,12 +578,9 @@ class PoolTestPage(QWidget):
         from ui.page_exploits import ExploitsPage
         pixmap = browser.view.grab()
         if pixmap.isNull() or ExploitsPage._looks_blank(pixmap):  # noqa: SLF001
-            handle = self.window().windowHandle()
-            screen = handle.screen() if handle else QApplication.primaryScreen()
-            if screen is not None:
-                fallback = screen.grabWindow(int(browser.view.winId()))
-                if not fallback.isNull() and not ExploitsPage._looks_blank(fallback):  # noqa: SLF001
-                    pixmap = fallback
+            fallback = ExploitsPage.screen_grab(browser.view)
+            if not fallback.isNull() and not ExploitsPage._looks_blank(fallback):  # noqa: SLF001
+                pixmap = fallback
         image = pixmap.toImage()
         image.setDevicePixelRatio(1.0)
         return image
