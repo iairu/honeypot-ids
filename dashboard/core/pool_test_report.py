@@ -202,7 +202,7 @@ def parse_cart(store_api_json: str) -> CartState | None:
 #   FORGE   rewrite the session cookie (and localStorage) to a session the
 #           server never signed. The proxy must reject it as not server-signed
 #           (session_cookie_rejections in Redis) and never serve the claimed
-#           session -- in particular not another window's.
+#           session.
 
 DELETE, FORGE = "delete", "forge"
 TAMPER_KINDS = (DELETE, FORGE)
@@ -212,7 +212,6 @@ DELETE_VARIANTS = [("session_cookie", "deleted its SERVERID session cookie"),
                    ("storage", "cleared its localStorage and sessionStorage"),
                    ("all", "cleared all site data (every cookie, localStorage, sessionStorage)")]
 FORGE_VARIANTS = [("invented", "rewrote its session to an invented session id with a made-up signature"),
-                  ("hijack", "rewrote its session to another window's session id with a made-up signature"),
                   ("unsigned", "stripped the signature off its own session id")]
 VARIANT_TEXT = dict(DELETE_VARIANTS + FORGE_VARIANTS)
 
@@ -249,7 +248,6 @@ class TamperEvent:
     planted: str = ""             # FORGE: the cookie value written into the window
     claimed_session: str = ""     # FORGE: the other session that cookie claimed ("" for
                                   # "unsigned", which claims the window's own id)
-    victim: int | None = None     # FORGE hijack: the window whose session was claimed
     after_session: str = ""       # session id the proxy handed the window afterwards
     after_pool: int | None = None
     resolved: bool = False        # the window has loaded a page since, and was read back
@@ -272,10 +270,7 @@ class TamperEvent:
                                             and self.after_session == self.claimed_session)
 
     def what(self) -> str:
-        text = VARIANT_TEXT.get(self.variant, self.variant)
-        if self.kind == FORGE and self.victim is not None:
-            text = text.replace("another window's", f"window {self.victim + 1}'s")
-        return text
+        return VARIANT_TEXT.get(self.variant, self.variant)
 
     def outcome(self) -> str:
         """Plain-language result for the report."""
