@@ -272,5 +272,57 @@ class ProductIds(unittest.TestCase):
             parse_product_ids("<html>", ["a"])
 
 
+
+class PoolEvidenceRuntimePools(unittest.TestCase):
+    """Pools pool_manager built at runtime are not compose services: reading
+    them must fall back from `docker compose exec/logs` to plain docker."""
+
+    def test_falls_back_to_docker_when_compose_does_not_know_the_pool(self):
+        from unittest import mock
+        from core import pool_evidence as pe
+        target = mock.MagicMock()
+        target.build.side_effect = lambda *a: (["compose", *a], None)
+        target.build_shell.side_effect = lambda cmd: (["sh", "-c", cmd], None)
+        calls = []
+
+        def run(argv, error, **_kw):
+            calls.append(argv)
+            if argv[0] == "compose":
+                raise error('service "honeypot_eshop_4" is not running')
+            return mock.Mock(stdout="2026-10-08T17:30:00Z\n")
+        with mock.patch.object(pe, "run_checked", side_effect=run):
+            out = pe._exec(target, "honeypot_eshop_4", "date -u")
+            log = pe._logs(target, "honeypot_eshop_4", "2026-10-08T17:30:00Z")
+        self.assertEqual(out.strip(), "2026-10-08T17:30:00Z")
+        self.assertTrue(log)
+        self.assertIn("docker exec honeypot_eshop_4 sh -c 'date -u'", calls[1][2])
+        self.assertIn("docker logs --since 2026-10-08T17:30:00Z honeypot_eshop_4", calls[3][2])
+
+    def test_logs_retry_through_docker_when_compose_prints_nothing(self):
+        from unittest import mock
+        from core import pool_evidence as pe
+        target = mock.MagicMock()
+        target.build.side_effect = lambda *a: (["compose", *a], None)
+        target.build_shell.side_effect = lambda cmd: (["sh", "-c", cmd], None)
+        line = '172.21.0.9 - - [09/Oct/2026:06:30:00 +0000] "GET /x HTTP/1.1" 200 5 "-" "UA PoolTest/D"\n'
+
+        def run(argv, error, **_kw):   # compose: unknown service -> exit 0, no output
+            return mock.Mock(stdout="" if argv[0] == "compose" else line)
+        with mock.patch.object(pe, "run_checked", side_effect=run):
+            log = pe._logs(target, "honeypot_eshop_4", "2026-10-09T06:00:00Z")
+        self.assertEqual([h.window for h in pe.parse_access_log(log)], ["D"])
+
+    def test_pool_built_during_the_run_gets_its_own_baseline(self):
+        from unittest import mock
+        from core import pool_evidence as pe
+        baseline = {"since": "2026-10-08T17:00:00Z", "db": {1: {"Questions": 5}}, "pool_since": {}}
+        with mock.patch.object(pe, "_exec", return_value="2026-10-08T17:31:00Z\n"), \
+                mock.patch.object(pe, "db_status", return_value={"Questions": 900}):
+            pe.extend_baseline(mock.MagicMock(), baseline, [1, 4])
+        self.assertEqual(baseline["db"][1], {"Questions": 5})          # untouched
+        self.assertEqual(baseline["db"][4], {"Questions": 900})
+        self.assertEqual(baseline["pool_since"], {4: "2026-10-08T17:31:00Z"})
+
+
 if __name__ == "__main__":
     unittest.main()

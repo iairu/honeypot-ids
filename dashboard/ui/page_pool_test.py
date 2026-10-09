@@ -240,6 +240,7 @@ class PoolTestPage(QWidget):
         self._pending_loads: list[LoadTiming] = []
         self._marks: list[tuple[float, str]] = []
         self._reserve: dict = {}
+        self._baseline: dict = {}   # pool_evidence baseline of the running report
 
         self.pool_label = QLabel("")
         self.pool_label.setWordWrap(True)
@@ -780,6 +781,7 @@ class PoolTestPage(QWidget):
                 state = self._blocking(lambda: redis_inspect.pool_state(remote))
             except Exception:  # noqa: BLE001 -- keep waiting on the decisions alone
                 state = {}
+            self._baseline_new_pools(state)
             waiting = [self._letter(i) for i, d in enumerate(decisions) if d.waiting]
             elapsed = int(time.monotonic() - start)
             if not waiting or elapsed >= SCALE_TIMEOUT_S:
@@ -810,6 +812,15 @@ class PoolTestPage(QWidget):
             "round-robin.",
             actions, decisions, [self._grab(b) for b in self.browsers], self._read_carts())
 
+    def _baseline_new_pools(self, state: dict) -> None:
+        """Evidence baseline for pools that became ready during the run, taken
+        as soon as they show up (before the windows that will get them attack),
+        so the report can show what each of them saw and changed too."""
+        new = [p for p in state.get("ready", []) if self._baseline.get("db", {}).get(p) is None]
+        if new and self._baseline:
+            target = target_for("edge", self.state)
+            self._blocking(lambda: pool_evidence.extend_baseline(target, self._baseline, new))
+
     def _prescale(self, n: int, total_steps: int, total: int, windows: list[int]) -> StepResult:
         """Ask pool_manager for one free pool per delayed window and wait until
         they are ready -- or growth is capped with nothing left building, so
@@ -830,6 +841,7 @@ class PoolTestPage(QWidget):
                     state = self._blocking(lambda: redis_inspect.pool_state(remote))
                 except Exception:  # noqa: BLE001
                     state = {}
+                self._baseline_new_pools(state)
                 free = len(state.get("free", []))
                 building = (state.get("status") or {}).get("building", {})
                 reserve["free"] = free
@@ -953,6 +965,7 @@ class PoolTestPage(QWidget):
         except Exception:  # noqa: BLE001
             ready = []
         baseline = self._blocking(lambda: pool_evidence.take_baseline(target, ready))
+        self._baseline = baseline
         # The run's clock starts here; pool_manager's events carry the edge
         # host's clock, so remember how far Redis' clock is from ours.
         try:
