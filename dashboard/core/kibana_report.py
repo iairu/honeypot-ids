@@ -1,4 +1,4 @@
-"""Kibana PDF export: one section per Kibana page button on the Kibana page
+"""Kibana PDF export: one section per SIEM Analytics page button on the SIEM Analytics page
 (ui/page_kibana._BOOKMARKS), each with a short explanation of what the page
 shows and a full-page screenshot of it.
 
@@ -22,7 +22,7 @@ from PyQt6.QtGui import QFont, QImage, QTextDocument
 from core.exploit_report_pdf import _FONT_CSS_STACK, _report_font_family
 from core.thesis_export import _finish_pdf
 
-# What each Kibana page button shows, keyed by its path relative to the
+# What each SIEM Analytics page button shows, keyed by its path relative to the
 # Kibana root (same keys as ui/page_kibana._BOOKMARKS). Panel names match
 # siem/kibana/build_dashboards.py.
 PAGE_NOTES: dict[str, str] = {
@@ -100,7 +100,7 @@ PAGE_NOTES: dict[str, str] = {
 
 @dataclass
 class KibanaShot:
-    label: str          # the Kibana page button's label
+    label: str          # the SIEM Analytics page button's label
     path: str           # path relative to the Kibana root
     url: str            # full URL that was captured
     image: QImage | None
@@ -135,7 +135,7 @@ def render_kibana_pdf(shots: list[KibanaShot], out_path: str, kibana_url: str) -
     parts.append('<p style="color:#555;">Generated '
                  f'{_esc(datetime.now().strftime("%Y-%m-%d %H:%M"))} from '
                  f'<code>{_esc(kibana_url)}</code>. One section per page button on the '
-                 "dashboard's Kibana page: what the page shows, then a full-page screenshot "
+                 "dashboard's SIEM Analytics page: what the page shows, then a full-page screenshot "
                  'of it as it looked at export time (dashboards use their saved time range, '
                  'the last 24 hours). Tall pages continue over several strips.</p><hr/>')
 

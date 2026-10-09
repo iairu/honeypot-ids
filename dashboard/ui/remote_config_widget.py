@@ -1,6 +1,6 @@
 """Form for a single project's remote (SSH) connection settings, plus Test
 Connection, "upload just the .env", and "sync the whole project" actions.
-Shared by the wizard and the Settings page."""
+Shared by the wizard and the Connectors & Config page."""
 from __future__ import annotations
 
 import shutil

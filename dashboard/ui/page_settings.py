@@ -1,4 +1,4 @@
-"""Settings page: edit either project's real .env file, configure remote
+"""Connectors & Config page: edit either project's real .env file, configure remote
 (SSH) control for either project, and export/import the whole
 configuration as one JSON bundle. This is the "adjust existing .env"
 surface -- the wizard covers first-run creation; this covers anytime
@@ -93,7 +93,7 @@ class SettingsPage(QWidget):
         form.addRow("", self.tray_notif_check)
 
         note = QLabel(
-            "Lower the refresh interval for a snappier Health diagram; "
+            "Lower the refresh interval for a snappier topology map; "
             "raise it to reduce SSH round-trips against a remote target on "
             "a slow link. Takes effect immediately, no restart needed."
         )

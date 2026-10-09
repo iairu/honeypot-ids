@@ -1,4 +1,4 @@
-"""Per-container resource collection for the Resources page.
+"""Per-container resource collection for the Workload Telemetry page.
 
 Three cheap shell one-liners run through the same Target plumbing every other
 docker-facing feature uses (local `sh -c`, or SSH for a remote target):
@@ -583,7 +583,7 @@ def collect_log_sizes(target: Target, timeout: float = 20.0) -> dict[str, int]:
     """{full_container_id: json_log_bytes} for every container's docker log, via
     a throwaway alpine container that mounts the (root-only) containers dir
     read-only. {} if that path/daemon layout isn't available (e.g. Docker
-    Desktop VMs) -- the Resources page then just shows log size as n/a."""
+    Desktop VMs) -- the Workload Telemetry page then just shows log size as n/a."""
     out = _run(
         target,
         "docker run --rm -v /var/lib/docker/containers:/c:ro alpine "

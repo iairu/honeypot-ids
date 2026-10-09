@@ -1,4 +1,4 @@
-"""Teaching content for the Learn page and the dashboard's in-app hints.
+"""Teaching content for the Knowledge Base page and the dashboard's in-app hints.
 
 The dashboard's audience includes cybersecurity students who have never run
 a honeypot or a SIEM before. Everything here is plain data (no Qt), so it is
@@ -7,7 +7,7 @@ unit-testable and reusable by any page:
   - GLOSSARY: the terms a student meets on the pages, each with a plain
     definition and what it means in THIS project.
   - PAGE_GUIDES: one per sidebar page -- what it is for, what to try, what
-    to notice. Drives sidebar tooltips, F1 help and the Learn page's tour.
+    to notice. Drives sidebar tooltips, F1 help and the Knowledge Base page's tour.
   - EXPLOIT_LESSONS: one per core/exploits.EXPLOIT_PRESETS entry, keyed by
     its ``cve`` -- attack class, OWASP Top 10 (2021) category, MITRE ATT&CK
     technique, how the attack works and how to defend against it. The test
@@ -67,7 +67,7 @@ GLOSSARY: list[GlossaryTerm] = [
         "up points for individual signals (bad patterns, suspicious headers, known "
         "exploits, bad IP reputation, automation tools and so on).",
         "Scores run from 0 to 100. A session whose score reaches the honeypot threshold "
-        "(80 by default) is routed to the honeypot. The Exploits page shows each signal "
+        "(80 by default) is routed to the honeypot. The Attack Simulation page shows each signal "
         "with the points it added.",
         "exploits",
     ),
@@ -94,7 +94,7 @@ GLOSSARY: list[GlossaryTerm] = [
         "Common Vulnerabilities and Exposures: a public ID (like CVE-2024-27956) for one "
         "specific, disclosed vulnerability in one product.",
         "The proxy knows the request patterns of a set of real WordPress plugin CVEs. A "
-        "matching request goes to the honeypot immediately. Each Exploits preset fires one "
+        "matching request goes to the honeypot immediately. Each attack-simulation preset fires one "
         "of them (the GENERIC-WP-* ones are common WordPress attacks without a CVE).",
         "exploits",
     ),
@@ -167,7 +167,7 @@ GLOSSARY: list[GlossaryTerm] = [
         "everywhere, stores them centrally, and lets analysts search, correlate and "
         "visualise them.",
         "The siem project: Vector ships logs into Elasticsearch, Kibana visualises them. "
-        "Open it from the Kibana page.",
+        "Open it from the SIEM Analytics page.",
         "kibana",
     ),
     GlossaryTerm(
@@ -175,7 +175,7 @@ GLOSSARY: list[GlossaryTerm] = [
         "Elasticsearch is a search engine used as a log store, Kibana is its web UI for "
         "dashboards and searching, and Vector is a log shipper that collects and "
         "transforms logs before storing them.",
-        "Together they form the SIEM stack in siem/. The Kibana page embeds its "
+        "Together they form the SIEM stack in siem/. The SIEM Analytics page embeds its "
         "dashboards and logs you in automatically.",
         "kibana",
     ),
@@ -218,7 +218,7 @@ GLOSSARY: list[GlossaryTerm] = [
         "MITRE ATT&CK",
         "A public knowledge base of real-world attacker tactics and techniques, each with "
         "an ID like T1190 (Exploit Public-Facing Application).",
-        "Each exploit lesson on the Learn page names the ATT&CK technique it belongs to.",
+        "Each exploit lesson on the Knowledge Base page names the ATT&CK technique it belongs to.",
         "learn",
     ),
     GlossaryTerm(
@@ -232,7 +232,7 @@ GLOSSARY: list[GlossaryTerm] = [
         "TLS certificate",
         "Proves a server's identity and enables HTTPS encryption. Self-signed "
         "certificates encrypt but aren't trusted by browsers by default.",
-        "The Certificates page generates the self-signed certificates the proxy and SIEM "
+        "The PKI & Certificates page generates the self-signed certificates the proxy and SIEM "
         "use, which is why curl runs with -k.",
         "certificates",
     ),
@@ -261,7 +261,7 @@ class PageGuide:
 
 PAGE_GUIDES: dict[str, PageGuide] = {
     "services": PageGuide(
-        "Start, stop and watch the logs of both stacks (IDS and SIEM).",
+        "Workload inventory and lifecycle control for the IDS edge and SIEM stacks, with live container logs.",
         "Press Start on the ids project, then on siem, and watch the logs scroll.",
         "Every container is a separate service: proxy, eshops, databases, Suricata, "
         "Redis. The combined log is what a sysadmin reads first when something breaks. "
@@ -270,73 +270,73 @@ PAGE_GUIDES: dict[str, PageGuide] = {
         "databases per request, which cannot contain file or code-execution attacks).",
     ),
     "health": PageGuide(
-        "Live diagram of every container and whether it is healthy.",
+        "Topology map of every workload with live health, enforcement path and honeypot pool status.",
         "Stop one container from a terminal and watch its node change colour.",
         "The diagram is the system's architecture: traffic enters at the proxy, fans "
         "out to production or honeypot eshops, and everything reports to the SIEM.",
     ),
     "resources": PageGuide(
-        "CPU, memory and network graphs per container.",
-        "Run an exploit on the Exploits page and look for its marker on the graphs.",
+        "Per-workload CPU, memory and network telemetry, annotated with attack-simulation markers.",
+        "Run an exploit on the Attack Simulation page and look for its marker on the graphs.",
         "Attacks cost resources. Scanners and brute force show up as load spikes, which "
         "is also how denial-of-service is noticed.",
     ),
     "certificates": PageGuide(
-        "Generate the TLS certificates the stacks use for HTTPS.",
+        "Issue and rotate the TLS certificates securing the edge proxy and SIEM endpoints.",
         "Generate certificates once before the first start.",
         "The certificates are self-signed, so browsers and curl need to be told to "
         "trust them (curl -k).",
     ),
     "redis": PageGuide(
-        "Look inside the session store: sessions, threat scores, IP reputation.",
+        "Inspect the proxy's live state store: sessions, threat scores, IP reputation and pool bindings.",
         "Run an exploit, then refresh here and find your session and its score.",
         "The proxy's memory is data you can inspect: a score is just a number in a key, "
         "and a sticky honeypot binding is just a stored pool name.",
     ),
     "backups": PageGuide(
-        "Back up and restore the stacks' data volumes.",
+        "Snapshot and restore workload data volumes for incident recovery.",
         "Take a backup before experimenting so you can roll back.",
         "Backups are part of incident response: being able to restore a known-good "
         "state matters as much as detecting the attack.",
     ),
     "kibana": PageGuide(
-        "The SIEM's dashboards: every request, alert and security event.",
+        "SIEM dashboards for flows, alerts and security events, correlated across both stacks.",
         "Open Attack Patterns after running a few exploits and find your CVEs, then open "
         "Threat Decisions & Decay to see why each request was diverted.",
         "This is the analyst's view. The same attack you fired appears here as "
         "structured events you can filter, count and correlate.",
     ),
     "exploits": PageGuide(
-        "Fire real WordPress exploits at the proxy and see how it reacts.",
+        "Replay real WordPress CVE exploits against the edge and observe detection, scoring and diversion.",
         "Pick a preset, press 'What is this?' to read about it, then Run exploit (curl).",
         "Each card on the Threat analyzer tab is one signal that added points. Watch the "
         "score cross the threshold and the route flip to HONEYPOT.",
     ),
     "log_search": PageGuide(
-        "Search raw logs across all containers.",
+        "Forensic search across raw logs from every workload.",
         "Search for the CVE ID of an exploit you just ran.",
         "Raw logs are the ground truth behind every dashboard. Being able to grep them "
         "is a core analyst skill.",
     ),
     "pool_test": PageGuide(
-        "Three browsers, three separate attacker sessions, against the honeypot pool.",
+        "Validate per-session segmentation: several isolated attacker sessions, each diverted to its own honeypot pool.",
         "Press Open shop in all, then Attack from all, then Refresh pool state.",
         "Attackers are told apart by session, not by address: each frame has its own cookie "
         "and browser fingerprint, so each is diverted to a honeypot pool of its own.",
     ),
     "extras": PageGuide(
-        "PDF exports: implementation chapter, architecture, exploit matrix.",
+        "Report generation: implementation chapter, architecture overview and exploit / CVE matrix.",
         "Export the Exploit / CVE matrix as a study sheet.",
         "The matrix lists every preset with its CVE and severity in one table.",
     ),
     "settings": PageGuide(
-        "Local or remote (SSH) targets, .env values, theme and polling.",
+        "Target connectors (local or SSH), stack configuration, detection policy values and console preferences.",
         "Open the edge .env and find SCORE_DECAY_HALF_LIFE_SECONDS and THREAT_DECAY_ENABLED.",
         "Detection is configuration: changing how fast evidence fades changes who still "
         "counts as an attacker. Change it and re-run the same exploit.",
     ),
     "learn": PageGuide(
-        "Glossary, guided labs and a lesson for every exploit preset.",
+        "Glossary, guided labs and a threat brief for every attack-simulation preset.",
         "Start with Lab 1 on the Guided labs tab.",
         "Everything on the other pages is explained here in plain language.",
     ),
@@ -640,7 +640,7 @@ LABS: list[Lab] = [
         (
             LabStep("lab1.certs", "Generate TLS certificates (only needed once).", "certificates"),
             LabStep("lab1.start", "Start the ids project, then the siem project.", "services"),
-            LabStep("lab1.health", "Wait until every node on the Health diagram is green. "
+            LabStep("lab1.health", "Wait until every node on the Global Visualization map is green. "
                     "Find the reverse proxy, both eshops and Suricata.", "health"),
             LabStep("lab1.glossary", "Read the glossary entries for Honeypot, Reverse proxy "
                     "and SIEM.", "learn"),
@@ -648,7 +648,7 @@ LABS: list[Lab] = [
     Lab("lab2", "Lab 2: Watch a normal visitor",
         "See what a clean request looks like before attacking anything.",
         (
-            LabStep("lab2.reset", "On Exploits, press 'Reset local score + cookies'.", "exploits"),
+            LabStep("lab2.reset", "On Attack Simulation, press 'Reset local score + cookies'.", "exploits"),
             LabStep("lab2.browse", "Browse the shop in the embedded browser for a minute.", "exploits"),
             LabStep("lab2.cards", "On the Threat analyzer tab, confirm the requests route to "
                     "PRODUCTION with a low score.", "exploits"),
@@ -663,7 +663,7 @@ LABS: list[Lab] = [
                     "Hover a card for an explanation.", "exploits"),
             LabStep("lab3.route", "Confirm the final decision is HONEYPOT and note the score.",
                     "exploits"),
-            LabStep("lab3.redis", "Find your session and its stored score in Redis.", "redis"),
+            LabStep("lab3.redis", "Find your session and its stored score in the Pool State Store.", "redis"),
         )),
     Lab("lab4", "Lab 4: Investigate in the SIEM",
         "Find the same attack as an analyst would, in Kibana and the raw logs.",

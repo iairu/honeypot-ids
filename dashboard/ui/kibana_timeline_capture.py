@@ -2,7 +2,7 @@
 (core/kibana_timeline.py), one per exploit.
 
 A never-shown QWebEngineView on its own profile logs in to Kibana once (same
-autologin script as the Kibana page), imports the timeline's saved objects
+autologin script as the SIEM Analytics page), imports the timeline's saved objects
 through Kibana's own API with that session, then for each capture loads the
 one-panel dashboard in embed mode for the exploit's time window, waits until
 Kibana reports the panel rendered, and grabs just the panel.
@@ -105,7 +105,7 @@ class KibanaTimelineCapture(QObject):
         if self._imported:
             self._load_target()
         else:
-            # Any Kibana page: logs in (if needed) and gives the import a
+            # Any SIEM Analytics page: logs in (if needed) and gives the import a
             # same-origin session.
             self._set_phase("login")
             self._view.load(QUrl(self._base + "/app/home"))

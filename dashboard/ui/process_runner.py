@@ -1,6 +1,6 @@
 """Runs a command via QProcess and streams its output into a QPlainTextEdit
--- shared by the Services page (start/stop/restart/purge), the Health page
-(per-service restart/logs), and the Certificates page (regenerate).
+-- shared by the Workloads page (start/stop/restart/purge), the Global Visualization page
+(per-service restart/logs), and the PKI & Certificates page (regenerate).
 
 One LogPanel = one QProcess at a time. Starting a new command while one is
 already running kills the previous one first (there's no legitimate reason
@@ -51,7 +51,7 @@ class LogPanel(QWidget):
         self._last_line_filter: Callable[[str], bool] | None = None
         # Overrides what the Reload button does, instead of blindly
         # replaying the last command run() was given. Needed by the
-        # Services page: its LogPanel's "last command" is often a
+        # Workloads page: its LogPanel's "last command" is often a
         # mutating one (up -d/restart/down) that the panel only runs
         # once before auto-resuming a `logs -f` tail (see
         # page_services.py's TargetPanel) -- naively replaying THAT would
@@ -92,17 +92,17 @@ class LogPanel(QWidget):
         # Re-runs the last run() command from scratch (fresh process, fresh
         # output) -- only ever enabled once run() has actually been called,
         # since pages that only ever push lines in via append() (e.g. the
-        # Certificates page's worker-thread output) have no command to
+        # PKI & Certificates page's worker-thread output) have no command to
         # replay.
         self.reload_button = QPushButton("Reload")
         self.reload_button.clicked.connect(self._reload)
         self.reload_button.setEnabled(False)
         button_row.addWidget(self.reload_button)
 
-        # The Services page already has its own Start/Restart/Stop/Purge
+        # The Workloads page already has its own Start/Restart/Stop/Purge
         # buttons directly above this panel -- a second "Stop" button here
         # would be redundant (and ambiguous: stopping WHAT, the compose
-        # command or the containers?). Health/Certificates pages have no
+        # command or the containers?). Health/PKI & Certificates pages have no
         # such buttons of their own, so they keep it.
         self.stop_button = QPushButton("Stop")
         self.stop_button.clicked.connect(self.stop)

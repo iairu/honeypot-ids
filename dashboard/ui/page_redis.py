@@ -1,8 +1,8 @@
-"""Redis page: every key in session_store (the edge project's Redis --
+"""Pool State Store page: every key in session_store (the edge project's Redis --
 sessions, threat_ips, suricata_alerts, ...) as a table (type/ttl/size,
 click a row to see its full value) plus a bar chart of current threat_ips
 scores by IP. Local or remote edge target, selectable via a dropdown --
-mirrors the Services page's per-target model, just scoped to the one
+mirrors the Workloads page's per-target model, just scoped to the one
 project Redis actually belongs to."""
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from core.redis_inspect import (
     RedisInspectError, RedisKeyInfo, dbsize, flush_all, get_threat_scores, get_value, list_keys,
 )
 from core.state import AppState, RemoteConfig
+from ui import theme
 from ui.common import ErrorBanner, TargetSelector, confirm, danger_button, set_status
 from ui.process_runner import LogPanel
 
@@ -80,6 +81,7 @@ class RedisPage(QWidget):
         right.addWidget(self.value_view)
 
         self.chart_view = QChartView()
+        theme.on_change(lambda: theme.style_chart(self.chart_view.chart()))
         self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.chart_view.setMinimumHeight(220)
         right.addWidget(self.chart_view)
@@ -102,7 +104,7 @@ class RedisPage(QWidget):
         self.refresh()
 
     def rebuild_targets(self) -> None:
-        """Call when remote settings change (Settings page)."""
+        """Call when remote settings change (Connectors & Config page)."""
         self.target_combo.rebuild()
 
     def _reset(self) -> None:
@@ -214,4 +216,5 @@ class RedisPage(QWidget):
         else:
             chart.setTitle("threat_ips raw_score by IP -- no data yet")
 
+        theme.style_chart(chart)
         self.chart_view.setChart(chart)

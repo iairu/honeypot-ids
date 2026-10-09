@@ -1,4 +1,4 @@
-"""Certificates page: regenerate per service/group, or all, via cert_ctl.
+"""PKI & Certificates page: regenerate per service/group, or all, via cert_ctl.
 Runs regeneration in a background thread (openssl calls are fast but
 several run in sequence for "all", and blocking the UI thread even
 briefly for a click is bad practice)."""

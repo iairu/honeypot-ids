@@ -15,7 +15,7 @@ signal exists at all is stdout, one line per event, e.g.:
     [content-sync 2026-08-09T02:00:04Z] pool 2 (honeypot_database_2): replication FAILED -- pool DB left as-is, will retry next cycle
 
 so this module re-parses that text (fed in from the same `docker compose
-logs -f honeypot_content_sync` tail the Health page already runs for
+logs -f honeypot_content_sync` tail the Global Visualization page already runs for
 every node's log panel -- no extra docker-exec round trip needed) rather
 than adding any new backend signal.
 """

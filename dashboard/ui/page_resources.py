@@ -1,4 +1,4 @@
-"""Resources page: per-container live resource usage (CPU, memory, PIDs,
+"""Workload Telemetry page: per-container live resource usage (CPU, memory, PIDs,
 net/block I/O and on-disk log size) shown htop-style in a table, plus three
 over-time graphs (CPU %, memory, log size), each with one coloured line per
 container and a bold average line.
@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 
 from core import resource_stats as rs
 from core.resource_stats import ContainerResource, human_bytes
+from ui import theme
 
 POLL_SECONDS = 2.0
 LOG_EVERY_TICKS = 7           # heavier log-size sweep every ~14s
@@ -118,15 +119,20 @@ class _MetricChart(QWidget):
         self._chart.addSeries(self._avg)
         self._avg.attachAxis(self._axis_x)
         self._avg.attachAxis(self._axis_y)
-        pen = QPen(QColor("#111111"))
-        pen.setWidth(3)
-        self._avg.setPen(pen)
+        self._apply_theme()
+        theme.on_change(self._apply_theme)
 
         view = QChartView(self._chart)
         view.setRenderHint(QPainter.RenderHint.Antialiasing)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(view)
+
+    def _apply_theme(self) -> None:
+        theme.style_chart(self._chart)
+        pen = QPen(QColor(theme.scheme_colors()["fg"]))
+        pen.setWidth(3)
+        self._avg.setPen(pen)
 
     def _ensure_series(self, service: str, color: QColor) -> QLineSeries:
         s = self._series.get(service)

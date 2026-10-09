@@ -1,4 +1,4 @@
-"""Full-page screenshots of every Kibana page button, for the Kibana PDF
+"""Full-page screenshots of every SIEM Analytics page button, for the Kibana PDF
 export (core/kibana_report.py).
 
 Captures run in a separate, never-shown QWebEngineView that shares the Kibana

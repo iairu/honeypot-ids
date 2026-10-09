@@ -126,7 +126,7 @@ HIGHLIGHTS: list[Highlight] = [
         description=(
             "A single pass over the running containers turning `docker stats` output into a "
             "per-service view of CPU, memory and (merged in separately) log-file size, used "
-            "both by the live Resources page and by the exploit report's graphs."),
+            "both by the live Workload Telemetry page and by the exploit report's graphs."),
         path="dashboard/core/resource_stats.py",
         lang="py",
         symbols=["collect_live"],
@@ -532,7 +532,7 @@ def _services_section_html(doc: QTextDocument, health_screenshot: str) -> str:
             doc.addResource(QTextDocument.ResourceType.ImageResource,
                             QUrl("thesis://health"), img)
             parts.append('<p style="color:#555;">Live health view of the running services '
-                         '(dashboard Health page):</p>')
+                         '(dashboard Global Visualization page):</p>')
             parts.append('<img src="thesis://health" width="660"/>')
     return "".join(parts)
 
@@ -773,7 +773,7 @@ def render_cve_matrix_pdf(out_path: str) -> int:
     parts.append('<h1 style="color:#222;">Exploit / CVE coverage</h1>')
     parts.append('<p style="color:#555;">Generated '
                  f'{_esc(datetime.now().strftime("%Y-%m-%d %H:%M"))}. Every exploit the '
-                 'Exploits page and its PDF report can fire, each kept in step with a '
+                 'Attack Simulation page and its PDF report can fire, each kept in step with a '
                  "detection pattern in the reverse proxy's cve_patterns table so “run this "
                  'exploit” and “the honeypot detects it” are the same list. Firing any of them '
                  'is scored through the pipeline in <b>Figure 2</b> and routed as in '
@@ -823,7 +823,7 @@ def render_cve_matrix_pdf(out_path: str) -> int:
 
 def render_architecture_pdf(out_path: str, health_screenshot: str = "") -> int:
     """A standalone architecture overview: every Compose service on this branch
-    with its role, plus the live Health page. Returns the service count."""
+    with its role, plus the live Global Visualization page. Returns the service count."""
     doc, family, parts = _new_doc()
     parts.append('<h1 style="color:#222;">System architecture &amp; services</h1>')
     parts.append('<p style="color:#555;">Generated '

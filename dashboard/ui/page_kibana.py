@@ -1,4 +1,4 @@
-"""Kibana page: browser_widget.BrowserWidget pointed at the configured SIEM
+"""SIEM Analytics page: browser_widget.BrowserWidget pointed at the configured SIEM
 host's Kibana -- https://<remote_siem.host or localhost>:5601/. The address
 bar is fully editable regardless (e.g. to navigate straight to a specific
 saved dashboard's URL), this is only the starting point.
@@ -8,7 +8,7 @@ Beyond a bare embedded browser:
     (named) QWebEngineProfile and the off-the-record default every other
     embedded browser in this app uses -- see browser_widget.py. Kibana is
     the one place in this app where staying logged in across restarts is
-    obviously wanted, unlike the Exploits page's eshop browser.
+    obviously wanted, unlike the Attack Simulation page's eshop browser.
   - Autologin: whenever Kibana's own login page loads, its username/
     password fields are filled in and submitted automatically using the
     SIEM stack's own ELASTIC_USERNAME/ELASTIC_PASSWORD (core/
@@ -39,7 +39,7 @@ import os
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
-    QCheckBox, QFileDialog, QLabel, QMessageBox, QProgressDialog, QPushButton, QVBoxLayout,
+    QCheckBox, QFileDialog, QMessageBox, QProgressDialog, QPushButton, QVBoxLayout,
     QWidget,
 )
 
@@ -48,6 +48,7 @@ from core.kibana_credentials import get_elastic_credentials
 from core.kibana_report import render_kibana_pdf
 from core.state import AppState
 from ui.browser_widget import BrowserWidget
+from ui.common import ErrorBanner
 from ui.flow_layout import FlowLayout
 from ui.kibana_export import KibanaCapture
 
@@ -159,12 +160,7 @@ class KibanaPage(QWidget):
         toolbar_widget.setLayout(toolbar)
         layout.addWidget(toolbar_widget)
 
-        self.banner = QLabel("")
-        self.banner.setWordWrap(True)
-        self.banner.setVisible(False)
-        self.banner.setStyleSheet(
-            "QLabel { background-color: #d9534f; color: white; padding: 8px; }"
-        )
+        self.banner = ErrorBanner()
         layout.addWidget(self.banner)
 
         self._browser_layout = QVBoxLayout()
@@ -221,7 +217,7 @@ class KibanaPage(QWidget):
         # (the toggle below) mid-capture would delete it out from under it.
         self.remember_check.setEnabled(False)
 
-        self._progress = QProgressDialog("Capturing Kibana pages…", "Cancel", 0, len(_BOOKMARKS), self)
+        self._progress = QProgressDialog("Capturing SIEM Analytics pages…", "Cancel", 0, len(_BOOKMARKS), self)
         self._progress.setWindowTitle("Kibana PDF export")
         self._progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._progress.setMinimumDuration(0)
@@ -297,18 +293,18 @@ class KibanaPage(QWidget):
             self.banner.setText(
                 "⚠ Couldn't load Kibana because the SIEM stack doesn't appear to be running "
                 f"at all for this target ({target.label}) -- no 'kibana' container found. "
-                "Start it from the Services page, then reload this page."
+                "Start it from the Workloads page, then reload this page."
             )
         elif kibana_container.get("State") != "running":
             self.banner.setText(
                 "⚠ Couldn't load Kibana -- its container exists but isn't running "
                 f"(state: {kibana_container.get('State', 'unknown')}). Start it from the "
-                "Services page, then reload this page."
+                "Workloads page, then reload this page."
             )
         else:
             self.banner.setText(
                 "⚠ Couldn't load Kibana -- its container IS running, so this isn't a "
-                "\"SIEM is down\" problem. Check its logs on the Services/Health page "
+                "\"SIEM is down\" problem. Check its logs on the Workloads / Global Visualization pages "
                 "(startup can take a minute; a cert/network issue would also show here)."
             )
         self.banner.setVisible(True)

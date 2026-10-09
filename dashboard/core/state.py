@@ -56,13 +56,13 @@ class AppState:
     # environment without a tray isn't surprised by anything; the tray
     # icon itself only appears when the platform actually supports one.
     tray_notifications_enabled: bool = True
-    # Whether the Kibana page's embedded browser uses a persistent (named)
+    # Whether the SIEM Analytics page's embedded browser uses a persistent (named)
     # QWebEngineProfile -- cookies survive app restarts, so logging into
     # Kibana once doesn't mean doing it again on every dashboard launch --
     # vs. the off-the-record default every other embedded browser in this
     # app uses (see browser_widget.py). On by default: Kibana is the one
     # place in this app where staying logged in is the obviously-wanted
-    # behavior, unlike the Exploits page's eshop browser, where an
+    # behavior, unlike the Attack Simulation page's eshop browser, where an
     # ephemeral session is the whole point.
     kibana_remember_credentials: bool = True
     # "system" (follow the OS), "light", or "dark" -- see ui/theme.py.
@@ -73,13 +73,13 @@ class AppState:
     # ui/security_feed.py. Each entry: {timestamp, kind, label, detail,
     # color, score}.
     security_events: list = field(default_factory=list)
-    # Learn page (ui/page_learn.py): ids of guided-lab steps the user has
+    # Knowledge Base page (ui/page_learn.py): ids of guided-lab steps the user has
     # ticked off (core/learning.LABS), and whether the one-time welcome
-    # that opens the Learn page on first launch has been shown.
+    # that opens the Knowledge Base page on first launch has been shown.
     learn_completed_steps: list = field(default_factory=list)
     learn_welcome_shown: bool = False
     # Honeypot layer of the ids stack: "reverse_proxy" (default) or
-    # "database" -- see core/honeypot_layer.py. Picked on the Services page.
+    # "database" -- see core/honeypot_layer.py. Picked on the Workloads page.
     honeypot_layer: str = "reverse_proxy"
 
     @classmethod

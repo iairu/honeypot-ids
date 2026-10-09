@@ -1,4 +1,4 @@
-"""Extras page: one-click export of an auto-generated "Implementation" thesis
+"""Reporting page: one-click export of an auto-generated "Implementation" thesis
 chapter (PDF) built from the project's more interesting algorithms.
 
 The heavy lifting is in core/thesis_export: it reads the featured excerpts out
@@ -24,15 +24,12 @@ from core import thesis_export
 class ExtrasPage(QWidget):
     def __init__(self, health_screenshot_provider=None, parent=None):
         super().__init__(parent)
-        # Callable returning a PNG path of the Health page (or "" on failure);
+        # Callable returning a PNG path of the Global Visualization page (or "" on failure);
         # supplied by MainWindow, which alone can bring that page on-screen to
         # grab it. None => the chapter is exported without the screenshot.
         self._health_screenshot_provider = health_screenshot_provider
         layout = QVBoxLayout(self)
 
-        title = QLabel("Extras")
-        title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        layout.addWidget(title)
 
         intro = QLabel(
             "Auto-generated PDF exports, all rendered in the same Baskerville face as the "
@@ -41,7 +38,7 @@ class ExtrasPage(QWidget):
             "algorithms, pulled from the source and condensed (comments, docstrings, debug "
             "logging and blank runs removed), plus a services overview and a Health-page shot.<br/>"
             "&bull; <b>Architecture &amp; services</b> &ndash; every service on this branch with "
-            "its role, plus the live Health page.<br/>"
+            "its role, plus the live Global Visualization page.<br/>"
             "&bull; <b>Exploit / CVE matrix</b> &ndash; a reference table of every exploit "
             "preset the dashboard can fire.")
         intro.setWordWrap(True)
@@ -57,7 +54,7 @@ class ExtrasPage(QWidget):
         toolbar.addWidget(self.export_btn)
 
         self.arch_btn = QPushButton("Architecture & services (PDF)")
-        self.arch_btn.setToolTip("Every service on this branch with its role, plus the live Health page.")
+        self.arch_btn.setToolTip("Every service on this branch with its role, plus the live Global Visualization page.")
         self.arch_btn.clicked.connect(lambda: self._run_export(
             "architecture overview", "architecture_overview.pdf",
             lambda path, hs: thesis_export.render_architecture_pdf(path, health_screenshot=hs),
@@ -113,7 +110,7 @@ class ExtrasPage(QWidget):
         self.count_label.setText(f"{len(items)} excerpt(s) resolved from the source tree.")
 
     def _run_export(self, label: str, default_name: str, render_fn, needs_health: bool) -> None:
-        """Generic PDF export: ask for a path, grab the Health page if the export
+        """Generic PDF export: ask for a path, grab the Global Visualization page if the export
         needs it, run render_fn(path, health_shot) on the GUI thread (the renders
         are quick), and offer to open the result."""
         path, _ = QFileDialog.getSaveFileName(

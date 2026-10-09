@@ -1,7 +1,7 @@
 """Interpreting `docker compose ps --format json` container records.
 
 One vocabulary for "what state is this container in", shared by the
-Services page's per-target summary and the Health diagram's per-node
+Workloads page's per-target summary and the Health diagram's per-node
 coloring, so the two can never disagree about e.g. whether a cleanly
 exited one-shot job counts as "up".
 """

@@ -1,5 +1,5 @@
-"""Shared "export logs to a file" helper -- used by the Health page (one
-container at a time, via a node's corner icon) and the Services page (a
+"""Shared "export logs to a file" helper -- used by the Global Visualization page (one
+container at a time, via a node's corner icon) and the Workloads page (a
 whole target/project's combined logs, via a button on each panel).
 Factored out from what was originally page_health.py-only logic so both
 pages share one implementation instead of drifting apart."""

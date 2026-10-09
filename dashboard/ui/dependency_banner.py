@@ -10,6 +10,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from core.dependency_check import check_dependencies, install_command
+from ui import theme
 
 
 class DependencyBanner(QWidget):
@@ -23,11 +24,33 @@ class DependencyBanner(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(10, 8, 10, 8)
+        self._layout.setContentsMargins(14, 10, 14, 10)
         self._layout.setSpacing(4)
+        # A plain QWidget subclass ignores its own stylesheet background
+        # without this.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setVisible(False)
         self._last_required_missing: frozenset[str] = frozenset()
+        self._severity: str | None = None  # "danger" | "warning" while shown
+        theme.on_change(self._apply_style)
         self.refresh()
+
+    def _apply_style(self) -> None:
+        """Alert card: tinted fill with a solid left edge in the severity
+        color, in the current theme's own text color."""
+        if self._severity is None:
+            self.setStyleSheet("")
+            return
+        c = theme.scheme_colors()
+        edge = c[self._severity]
+        self.setStyleSheet(
+            f"DependencyBanner {{ background-color: {c['bg_alt']}; border: 1px solid {c['border']}; "
+            f"border-left: 4px solid {edge}; }} "
+            f"QLabel {{ color: {c['fg']}; background: transparent; }} "
+            f"QLabel#BannerHeader {{ color: {edge}; font-weight: 700; }} "
+            f"QLabel#BannerCommand {{ font-family: {theme.MONO_STACK}; background-color: {c['bg']}; "
+            f"border: 1px solid {c['border']}; border-radius: 4px; padding: 6px; }}"
+        )
 
     def refresh(self) -> None:
         while self._layout.count():
@@ -41,7 +64,8 @@ class DependencyBanner(QWidget):
         if not missing:
             self._last_required_missing = frozenset()
             self.setVisible(False)
-            self.setStyleSheet("")
+            self._severity = None
+            self._apply_style()
             return
 
         required_missing = [s for s in missing if s.required]
@@ -51,24 +75,23 @@ class DependencyBanner(QWidget):
                 "Required tool(s) not found: " + ", ".join(sorted(current_required))
             )
         self._last_required_missing = current_required
-        color = "#d9534f" if required_missing else "#f0ad4e"  # red if core tools missing, orange if only optional
-        self.setStyleSheet(
-            f"DependencyBanner {{ background-color: {color}; border-radius: 4px; }} QLabel {{ color: white; }}"
-        )
+        # Red if core tools are missing, amber if only optional ones.
+        self._severity = "danger" if required_missing else "warning"
+        self._apply_style()
         self.setVisible(True)
 
         if required_missing:
             header_text = (
-                "⚠ Missing required tool(s) -- most of this app won't work until these are installed: "
-                + ", ".join(s.name for s in required_missing)
+                "⚠ Host prerequisite check failed -- most console functions are unavailable until "
+                "these are installed: " + ", ".join(s.name for s in required_missing)
             )
         else:
             header_text = (
-                "⚠ Missing optional tool(s), needed only for remote-target features "
-                "(SSH control, whole-project upload): " + ", ".join(s.name for s in missing)
+                "⚠ Optional tooling missing -- remote targets (SSH control, project sync) are "
+                "unavailable: " + ", ".join(s.name for s in missing)
             )
         header = QLabel(header_text)
-        header.setStyleSheet("font-weight: bold; color: white;")
+        header.setObjectName("BannerHeader")
         header.setWordWrap(True)
         self._layout.addWidget(header)
 
@@ -79,7 +102,7 @@ class DependencyBanner(QWidget):
 
         cmd_label = QLabel(f"Recommended install command:\n{install_command()}")
         cmd_label.setWordWrap(True)
-        cmd_label.setStyleSheet("font-family: monospace; background-color: rgba(0, 0, 0, 0.2); padding: 4px;")
+        cmd_label.setObjectName("BannerCommand")
         cmd_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._layout.addWidget(cmd_label)
 

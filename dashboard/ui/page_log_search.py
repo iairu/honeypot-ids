@@ -1,6 +1,6 @@
 """Global log search: grep-style search across every configured target's
 containers at once (both projects, local + remote), instead of only ever
-being able to tail one service's log at a time on the Services page.
+being able to tail one service's log at a time on the Workloads page.
 
 Runs `docker compose logs --tail=<N>` (no -f, no specific service -- every
 container in that target's project, with --ansi always) per selected

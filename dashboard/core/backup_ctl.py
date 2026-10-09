@@ -54,13 +54,13 @@ CONTENT_SYNC_SERVICE = "honeypot_content_sync"
 # immediately rather than waiting out whatever's left of the current
 # interval. Status is visible two ways after this runs: this command's own
 # echoed messages (streamed live into whichever LogPanel ran it), and the
-# Health page's "Content sync activity" panel (ui/page_health.py), which
+# Global Visualization page's "Content sync activity" panel (ui/page_health.py), which
 # parses honeypot_content_sync's own per-pool starting/complete/failed log
 # lines out of the same restart's live log tail.
 _RESYNC_SUFFIX = (
     " && echo '[dashboard] Production content changed -- restarting "
     f"{CONTENT_SYNC_SERVICE} to replicate it into the honeypot pools now "
-    "(see the Health page for per-pool progress) instead of waiting up to "
+    "(see the Global Visualization page for per-pool progress) instead of waiting up to "
     "REPLICATION_INTERVAL_SECONDS for the next scheduled cycle...' "
     f"&& docker compose --profile '*' restart {CONTENT_SYNC_SERVICE} "
     "&& echo '[dashboard] Replication triggered.'"

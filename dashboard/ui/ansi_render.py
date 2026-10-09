@@ -26,6 +26,8 @@ from ui.ansi import (
 # (Solarized or High Contrast, light or dark) is actually active, instead
 # of making its own separate light/dark choice.
 _ANSI_PALETTES = {
+    theme.THEME_CONSOLE_DARK: (DARK_BASE_COLORS, DARK_BRIGHT_COLORS),
+    theme.THEME_CONSOLE_LIGHT: (LIGHT_BASE_COLORS, LIGHT_BRIGHT_COLORS),
     theme.THEME_DARK: (DARK_BASE_COLORS, DARK_BRIGHT_COLORS),
     theme.THEME_LIGHT: (LIGHT_BASE_COLORS, LIGHT_BRIGHT_COLORS),
     theme.THEME_HC_DARK: (HC_DARK_BASE_COLORS, HC_DARK_BRIGHT_COLORS),
@@ -42,7 +44,7 @@ def panel_stylesheet(widget_selector: str = "QPlainTextEdit") -> str:
     bg, fg = panel_colors()
     return (
         f"{widget_selector} {{ background-color: {bg}; color: {fg}; "
-        "font-family: monospace; font-size: 11px; }"
+        f"font-family: {theme.MONO_STACK}; font-size: 11px; }}"
     )
 
 

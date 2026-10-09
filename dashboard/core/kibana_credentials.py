@@ -4,7 +4,7 @@ dashboard login" -- for page_kibana.py's autologin.
 
 Local or remote, matching however state.remote_siem is configured: a local
 SIEM reads SIEM_ENV_FILE directly (core/env_file.py), a remote one fetches
-the .env over SSH (core/env_upload.py), same as the Settings page's
+the .env over SSH (core/env_upload.py), same as the Connectors & Config page's
 Local/Remote .env toggle already does for editing it.
 """
 from __future__ import annotations

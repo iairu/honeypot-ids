@@ -6,7 +6,7 @@ it, stacked by route (production / honeypot).
 The panel lives on its own saved objects (a visualization and a one-panel
 dashboard, both with fixed "exploit-report-*" ids) so it never collides with
 the Honeypot dashboards that siem/kibana/build_dashboards.py owns. The
-dashboard app imports them itself through the logged-in Kibana page right
+dashboard app imports them itself through the logged-in SIEM Analytics page right
 before the first capture (ui/kibana_timeline_capture.py), so nothing has to
 be redeployed on the SIEM for the report to use them.
 

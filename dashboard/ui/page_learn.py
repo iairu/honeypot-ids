@@ -1,4 +1,4 @@
-"""Learn page: the dashboard's teaching layer for cybersecurity students.
+"""Knowledge Base page: the dashboard's teaching layer for cybersecurity students.
 
 Four tabs, all driven by core/learning.py:
   - Start here: how the system works in five steps, plus a tour of every
@@ -70,7 +70,7 @@ def exploit_lesson_html(preset: ExploitPreset) -> str:
     parts.append("<h4>What the honeypot does</h4><p>The reverse proxy recognises this "
                  "request's pattern, adds points to the session's threat score and routes "
                  "it to the decoy shop, where the attack 'works' against fake data. Watch "
-                 "it happen on the Exploits page's Threat analyzer tab.</p>")
+                 "it happen on the Attack Simulation page's Threat analyzer tab.</p>")
     return "".join(parts)
 
 
@@ -118,9 +118,6 @@ class LearnPage(QWidget):
         self._page_labels = page_labels
         layout = QVBoxLayout(self)
 
-        title = QLabel("Learn")
-        title.setStyleSheet("font-size: 16px; font-weight: bold;")
-        layout.addWidget(title)
 
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs, stretch=1)

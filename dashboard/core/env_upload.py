@@ -8,7 +8,7 @@ Two shapes, for two different UI flows:
     file already on disk.
   - download_env_text(remote) / upload_env_text(text, remote): fetch/send
     TEXT directly over an ssh pipe, no local file involved at any point --
-    used by the wizard's remote-prefill env pages and the Settings page's
+    used by the wizard's remote-prefill env pages and the Connectors & Config page's
     Local/Remote toggle, where the content is fetched, edited in memory in
     the same EnvEditorWidget used for local files, and saved straight back
     to the remote host without ever touching local disk.

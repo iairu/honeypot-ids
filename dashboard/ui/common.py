@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QComboBox, QLabel, QLayout, QMessageBox, QPushButton
 
 from core.colors import RED
 from core.docker_ctl import Target
+from ui import theme
 
 
 def confirm(parent: QWidget | None, title: str, text: str) -> bool:
@@ -33,7 +34,7 @@ def set_status(label: QLabel, text: str, color: str | None = None, bold: bool = 
 
 
 def badge_css(bg: str, fg: str = "#1e1e1e") -> str:
-    """Pill-style QLabel stylesheet (score/route badges on the Exploits page)."""
+    """Pill-style QLabel stylesheet (score/route badges on the Attack Simulation page)."""
     return f"QLabel {{ background-color: {bg}; color: {fg}; padding: 4px 10px; border-radius: 4px; font-weight: bold; }}"
 
 
@@ -72,8 +73,16 @@ class ErrorBanner(QLabel):
     def __init__(self, parent=None):
         super().__init__("", parent)
         self.setWordWrap(True)
-        self.setStyleSheet(f"background-color: {RED}; color: white; padding: 6px; border-radius: 4px;")
+        self._apply_style()
+        theme.on_change(self._apply_style)
         self.setVisible(False)
+
+    def _apply_style(self) -> None:
+        # Same alert-card shape as ui/dependency_banner.py, in the danger color.
+        c = theme.scheme_colors()
+        self.setStyleSheet(
+            f"QLabel {{ background-color: {c['bg_alt']}; color: {c['fg']}; padding: 8px 10px; "
+            f"border: 1px solid {c['border']}; border-left: 4px solid {c['danger']}; }}")
 
     def show_message(self, text: str) -> None:
         self.setText(text)
