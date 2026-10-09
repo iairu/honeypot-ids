@@ -204,10 +204,15 @@ class TargetPanel(QGroupBox):
             self, "Confirm purge",
             f"This will run 'docker compose down -v' for {self.target.label}, "
             "permanently deleting all named volumes (databases, Redis data, "
-            "Elasticsearch indices, everything) for this stack.\n\n"
+            "Elasticsearch indices, everything) for this stack"
+            + (", including the honeypot pools added at runtime" if self.target.project == "edge"
+               else "") + ".\n\n"
             "This cannot be undone. Continue?",
         ):
-            self._run("down", "-v")
+            self._mutating_action = True
+            self._last_mutating_args = ("down", "-v")
+            argv, cwd = self.target.build_purge()
+            self.log_panel.run(argv, cwd)
 
     # ---- start/stop with PDF graph export ----
 

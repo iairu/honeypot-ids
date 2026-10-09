@@ -342,6 +342,22 @@ class Reconcile(unittest.TestCase):
         self.run_reconcile()                        # the healthy one is adopted
         self.assertIn(str(built), self.r.smembers(self.m.READY_KEY))
 
+    def test_startup_keeps_a_built_pool_that_is_still_starting(self):
+        # After a host reboot the eshop runs but is not healthy yet.
+        starting = self.STATIC + 1
+        self.mgr.runtime_pools = lambda: {starting}
+        self.mgr.pool_container_healthy = lambda n: False
+        eshop = mock.MagicMock()
+        eshop.attrs = {"State": {"Status": "running", "Health": {"Status": "starting"}}}
+        self.mgr.docker.containers.get = lambda name: eshop
+        with mock.patch.object(self.m, "MODE", "wordpress"):
+            self.mgr.remove_partial_pools()
+        self.assertEqual(self.mgr.destroyed, [])
+        # The database layer has no such signal: still removed.
+        with mock.patch.object(self.m, "MODE", "database"):
+            self.mgr.remove_partial_pools()
+        self.assertEqual(self.mgr.destroyed, [starting])
+
 
 class ReconcileDatabaseLayer(Reconcile):
     """Database layer: only `honeypot_database` (pool 1) is compose-declared."""
