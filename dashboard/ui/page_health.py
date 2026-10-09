@@ -9,11 +9,11 @@ import html
 import re
 from datetime import datetime, timedelta, timezone
 
-from PyQt6.QtCore import QProcess, QTimer, QUrl, Qt, pyqtSignal
+from PyQt6.QtCore import QProcess, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QGroupBox, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton,
-    QSplitter, QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget,
 )
 
 from core import honeypot_layer
@@ -28,6 +28,7 @@ from core.container_status import classify, is_ready, status_detail
 from ui.health_diagram import HealthDiagram, STATUS_COLORS
 from ui.log_export import LogExporter
 from ui.process_runner import LogPanel
+from ui.responsive import ResponsiveSplitter
 
 CONTENT_SYNC_SERVICE = "honeypot_content_sync"
 
@@ -215,7 +216,8 @@ class HealthPage(QWidget):
         self._uptime_timer.timeout.connect(self._refresh_uptime_labels)
         self._uptime_timer.start(1000)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        # Diagram beside the detail panel, stacked above it in a narrow window.
+        splitter = ResponsiveSplitter(breakpoint=900)
         layout.addWidget(splitter, stretch=1)
 
         self.diagram = HealthDiagram(error_monitor)
@@ -286,7 +288,8 @@ class HealthPage(QWidget):
         detail_layout.addWidget(self.log_panel, stretch=1)
         self._pending_restart_service: str | None = None
 
-        detail_panel.setMinimumWidth(320)
+        # Never narrower than its own buttons need.
+        detail_panel.setMinimumWidth(max(320, detail_panel.minimumSizeHint().width()))
         splitter.addWidget(detail_panel)
         splitter.setSizes([700, 320])
 
