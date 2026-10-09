@@ -38,7 +38,8 @@ from core import pool_evidence
 from core.pool_test_report import (CART_PLAN, FALLBACK_EXPLOITS, MAX_ATTEMPTS, MAX_WINDOWS,
                                     MIN_WINDOWS, CartState, Decision, ExploitRun, FrameResult,
                                     LoadTiming, PoolTestData, Sample, StepResult, UsageSample,
-                                    classify, parse_cart, parse_decision, window_plan)
+                                    classify, parse_cart, parse_decision, parse_product_ids,
+                                    window_plan)
 from core.resource_stats import collect_pool_usage
 from core.state import AppState
 from ui.browser_widget import BrowserWidget
@@ -78,21 +79,15 @@ _CART_JS = ("(function(){try{var x=new XMLHttpRequest();x.open('GET','/wp-json/w
             "x.send();return x.responseText;}catch(e){return '';}})()")
 
 
-def product_ids(base_url: str, slugs: list[str]) -> dict[str, int]:
-    """Product IDs by slug, read from each product page's body class (postid-N)."""
-    import re
-    import ssl
-    import urllib.request
-    ctx = ssl.create_default_context()
-    ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE   # the shop's cert is self-signed
-    out = {}
-    for slug in slugs:
-        html = urllib.request.urlopen(f"{base_url}/product/{slug}/", context=ctx, timeout=20).read().decode("utf-8", "replace")
-        m = re.search(r"postid-(\d+)", html)
-        if not m:
-            raise RuntimeError(f"Could not find product '{slug}' on the shop.")
-        out[slug] = int(m.group(1))
-    return out
+def product_ids_js(slugs: list[str]) -> str:
+    """JS that reads the product IDs for `slugs` from the shop's Store API in one
+    request, run inside a window: the lookup is then an ordinary browser request
+    of that window's own (production) session. Fetched from Python instead, it
+    was a scripted client to the proxy, got diverted to a honeypot and took a
+    free pool away from the windows (one of them then had to borrow a pool)."""
+    url = "/wp-json/wc/store/v1/products?per_page=100&slug=" + ",".join(slugs)
+    return ("(function(){try{var x=new XMLHttpRequest();x.open('GET','" + url + "',false);"
+            "x.send();return x.responseText;}catch(e){return '';}})()")
 
 
 class _Cancelled(Exception):
@@ -245,6 +240,7 @@ class PoolTestPage(QWidget):
         self._pending_loads: list[LoadTiming] = []
         self._marks: list[tuple[float, str]] = []
         self._reserve: dict = {}
+        self._baseline: dict = {}   # pool_evidence baseline of the running report
 
         self.pool_label = QLabel("")
         self.pool_label.setWordWrap(True)
@@ -412,6 +408,10 @@ class PoolTestPage(QWidget):
         browser = self.browsers[index]
         if not browser.view.url().toString().startswith("http"):
             return None
+        return parse_cart(self._run_js(index, _CART_JS))
+
+    def _run_js(self, index: int, script: str, timeout_ms: int = 6000) -> str:
+        """Run `script` in window `index` and return its result ("" on timeout)."""
         loop = QEventLoop()
         timer = QTimer(self)
         timer.setSingleShot(True)
@@ -421,11 +421,11 @@ class PoolTestPage(QWidget):
         def done(result) -> None:
             got[0] = result
             loop.quit()
-        browser.page.runJavaScript(_CART_JS, done)
-        timer.start(6000)
+        self.browsers[index].page.runJavaScript(script, done)
+        timer.start(timeout_ms)
         loop.exec()
         timer.stop()
-        return parse_cart(got[0] or "")
+        return got[0] or ""
 
     def _read_carts(self) -> list[CartState | None]:
         carts = [self._read_cart(i) for i in range(len(self.browsers))]
@@ -781,6 +781,7 @@ class PoolTestPage(QWidget):
                 state = self._blocking(lambda: redis_inspect.pool_state(remote))
             except Exception:  # noqa: BLE001 -- keep waiting on the decisions alone
                 state = {}
+            self._baseline_new_pools(state)
             waiting = [self._letter(i) for i, d in enumerate(decisions) if d.waiting]
             elapsed = int(time.monotonic() - start)
             if not waiting or elapsed >= SCALE_TIMEOUT_S:
@@ -811,6 +812,15 @@ class PoolTestPage(QWidget):
             "round-robin.",
             actions, decisions, [self._grab(b) for b in self.browsers], self._read_carts())
 
+    def _baseline_new_pools(self, state: dict) -> None:
+        """Evidence baseline for pools that became ready during the run, taken
+        as soon as they show up (before the windows that will get them attack),
+        so the report can show what each of them saw and changed too."""
+        new = [p for p in state.get("ready", []) if self._baseline.get("db", {}).get(p) is None]
+        if new and self._baseline:
+            target = target_for("edge", self.state)
+            self._blocking(lambda: pool_evidence.extend_baseline(target, self._baseline, new))
+
     def _prescale(self, n: int, total_steps: int, total: int, windows: list[int]) -> StepResult:
         """Ask pool_manager for one free pool per delayed window and wait until
         they are ready -- or growth is capped with nothing left building, so
@@ -831,6 +841,7 @@ class PoolTestPage(QWidget):
                     state = self._blocking(lambda: redis_inspect.pool_state(remote))
                 except Exception:  # noqa: BLE001
                     state = {}
+                self._baseline_new_pools(state)
                 free = len(state.get("free", []))
                 building = (state.get("status") or {}).get("building", {})
                 reserve["free"] = free
@@ -922,6 +933,7 @@ class PoolTestPage(QWidget):
         status = (before.get("status") or {}) if before else {}
         return {"requested": requested, "done": done, "sessions": len(sids),
                 "pools_before": before.get("ready", []) if before else [],
+                "building_before": sorted(int(n) for n in status.get("building", {})),
                 "pools_after": state.get("ready", []) if state else [],
                 "idle_timeout": status.get("idle_timeout"), "spares": status.get("spares"),
                 "mem_per_pool": status.get("mem_per_pool"),
@@ -953,6 +965,7 @@ class PoolTestPage(QWidget):
         except Exception:  # noqa: BLE001
             ready = []
         baseline = self._blocking(lambda: pool_evidence.take_baseline(target, ready))
+        self._baseline = baseline
         # The run's clock starts here; pool_manager's events carry the edge
         # host's clock, so remember how far Redis' clock is from ours.
         try:
@@ -1002,7 +1015,7 @@ class PoolTestPage(QWidget):
             next_step("every window fills its cart")
             self._mark("Every window fills its cart")
             slugs = sorted({slug for items in cart_plan for slug, _q in items})
-            ids = self._blocking(lambda: product_ids(self._base_url(), slugs))
+            ids = parse_product_ids(self._run_js(0, product_ids_js(slugs)), slugs)
             for k in range(max(len(items) for items in cart_plan)):
                 urls = [f"{self._base_url()}/?add-to-cart={ids[items[k][0]]}&quantity={items[k][1]}"
                         if k < len(items) else shop for items in cart_plan]

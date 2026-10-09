@@ -11,6 +11,7 @@ project's compose Target, so they work for a remote edge host too.
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass, field
 
 from core.docker_ctl import Target
@@ -99,10 +100,50 @@ def db_delta(before: dict[str, int] | None, after: dict[str, int]) -> dict[str, 
 
 # ---- collectors (docker / compose) ----
 
+def _run_container(target: Target, service: str, compose_args: tuple[str, ...],
+                   docker_cmd: str, timeout: float, what: str) -> str:
+    """Run against a pool container: through compose for the pools declared in
+    the compose file, else straight through docker. Pools pool_manager built at
+    runtime are plain containers named like the service (honeypot_eshop_4) and
+    unknown to compose ("service ... is not running")."""
+    argv, cwd = target.build(*compose_args)
+    try:
+        return run_checked(argv, error=PoolEvidenceError, cwd=cwd, timeout=timeout,
+                           what=what).stdout
+    except PoolEvidenceError as compose_error:
+        argv, cwd = target.build_shell(docker_cmd)
+        try:
+            return run_checked(argv, error=PoolEvidenceError, cwd=cwd, timeout=timeout,
+                               what=what).stdout
+        except PoolEvidenceError:
+            raise compose_error from None
+
+
 def _exec(target: Target, service: str, command: str, timeout: float = 30.0) -> str:
-    argv, cwd = target.build("exec", "-T", service, "sh", "-c", command)
-    return run_checked(argv, error=PoolEvidenceError, cwd=cwd, timeout=timeout,
-                       what=f"docker exec {service}").stdout
+    return _run_container(
+        target, service, ("exec", "-T", service, "sh", "-c", command),
+        f"docker exec {shlex.quote(service)} sh -c {shlex.quote(command)}",
+        timeout, f"docker exec {service}")
+
+
+def _logs(target: Target, service: str, since: str, timeout: float = 30.0) -> str:
+    """The container's log since `since`. `docker compose logs` does not fail
+    for a service it does not know -- it prints nothing and exits 0 -- so an
+    empty answer is retried through plain docker, which knows the runtime
+    pools (and fails for compose-named ones, keeping the empty answer)."""
+    out = _run_container(
+        target, service, ("logs", "--no-log-prefix", "--since", since, service),
+        f"docker logs --since {shlex.quote(since)} {shlex.quote(service)} 2>&1",
+        timeout, "docker logs")
+    if out.strip():
+        return out
+    argv, cwd = target.build_shell(
+        f"docker logs --since {shlex.quote(since)} {shlex.quote(service)} 2>&1")
+    try:
+        return run_checked(argv, error=PoolEvidenceError, cwd=cwd, timeout=timeout,
+                           what="docker logs").stdout
+    except PoolEvidenceError:
+        return out
 
 
 _STATUS_CMD = ("mysql -uroot -p\"$MYSQL_ROOT_PASSWORD\" -N -e \"SHOW GLOBAL STATUS WHERE "
@@ -131,22 +172,40 @@ def take_baseline(target: Target, pools: list[int]) -> dict:
                 break
         except PoolEvidenceError:
             continue
-    return {"since": since, "db": {p: db_status(target, p) for p in pools}}
+    return {"since": since, "db": {p: db_status(target, p) for p in pools}, "pool_since": {}}
+
+
+def extend_baseline(target: Target, baseline: dict, pools: list[int]) -> None:
+    """Baseline for pools that came up during the run (built by pool_manager
+    for windows that attack later): their DB counters and start time, taken
+    before any test window reaches them, so their evidence covers the
+    windows' traffic only and not the pool's own build."""
+    tried = baseline.setdefault("tried", set())
+    for pool in pools:
+        if baseline.setdefault("db", {}).get(pool) is not None or pool in tried:
+            continue
+        tried.add(pool)
+        try:
+            got = _exec(target, f"honeypot_eshop_{pool}", "date -u +%Y-%m-%dT%H:%M:%SZ").strip()
+        except PoolEvidenceError:
+            continue
+        if _SINCE_RE.match(got):
+            baseline["db"][pool] = db_status(target, pool)
+            baseline.setdefault("pool_since", {})[pool] = got
+            if not baseline.get("since"):
+                baseline["since"] = got
 
 
 def collect(target: Target, pools: list[int], baseline: dict) -> list[ContainerEvidence]:
-    since = baseline.get("since", "")
     out = []
     for pool in pools:
+        since = baseline.get("pool_since", {}).get(pool) or baseline.get("since", "")
         ev = ContainerEvidence(pool)
         try:
             if not since:
                 ev.error = "Could not read the start time from the pool containers."
             else:
-                argv, cwd = target.build("logs", "--no-log-prefix", "--since", since,
-                                         f"honeypot_eshop_{pool}")
-                log = run_checked(argv, error=PoolEvidenceError, cwd=cwd, timeout=30,
-                                  what="docker compose logs").stdout
+                log = _logs(target, f"honeypot_eshop_{pool}", since)
                 ev.hits = parse_access_log(log)
                 files = _exec(target, f"honeypot_eshop_{pool}",
                               "find / -xdev \\( -path /proc -o -path /sys -o -path /run -o -path /dev \\) "

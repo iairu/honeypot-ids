@@ -180,6 +180,18 @@ def cart_violations(steps: list["StepResult"]) -> list[str]:
     return out
 
 
+def parse_product_ids(store_api_json: str, slugs: list[str]) -> dict[str, int]:
+    """{slug: product id} from a Store API products response; raises when one is missing."""
+    try:
+        found = {p["slug"]: int(p["id"]) for p in json.loads(store_api_json or "[]")}
+    except (ValueError, KeyError, TypeError):
+        found = {}
+    missing = [s for s in slugs if s not in found]
+    if missing:
+        raise RuntimeError(f"Could not find product(s) {', '.join(missing)} on the shop.")
+    return {s: found[s] for s in slugs}
+
+
 @dataclass
 class StepResult:
     """One scripted step: what each window did, and each session's decision after."""

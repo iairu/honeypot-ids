@@ -835,7 +835,7 @@ def _scaling_html(data: PoolTestData, doc: QTextDocument, family: str, fig: int)
     sd = data.scaledown or {}
     if sd.get("requested") is not None:
         rows.append(("Forced scale-down at the end",
-                     f"{len(sd.get('pools_before', []))} \u2192 {len(sd.get('pools_after', []))} pool(s) "
+                     f"{_pools_before_count(sd)} \u2192 {len(sd.get('pools_after', []))} pool(s) "
                      + (f"in {sd['done'] - sd['requested']:.0f} s" if sd.get("done") is not None
                         else f"(not finished after {SCALEDOWN_TIMEOUT_TEXT})")))
     if res.get("requested"):
@@ -933,6 +933,16 @@ def _scaling_html(data: PoolTestData, doc: QTextDocument, family: str, fig: int)
 SCALEDOWN_TIMEOUT_TEXT = "5 min"
 
 
+def _building_before(sd: dict) -> list[int]:
+    """Pools still being built when the forced scale-down was requested:
+    pool_manager waits for them and removes them too if they are not needed."""
+    return [n for n in sd.get("building_before", []) if n not in sd.get("pools_before", [])]
+
+
+def _pools_before_count(sd: dict) -> int:
+    return len(sd.get("pools_before", [])) + len(_building_before(sd))
+
+
 def _scaledown_html(data: PoolTestData) -> str:
     """Section: how pools are scaled down when idle, and what the forced
     scale-down at the end of this run freed and how long it took."""
@@ -965,13 +975,15 @@ def _scaledown_html(data: PoolTestData) -> str:
         usage_at(data.usage, data.duration)
     removed = [r for r in summ.removals if r.at >= sd["requested"] - 1]
     per = sd.get("mem_per_pool")
-    nb, na = len(sd.get("pools_before", [])), len(sd.get("pools_after", []))
+    building = _building_before(sd)
+    nb, na = _pools_before_count(sd), len(sd.get("pools_after", []))
     rows = [("Requested at", _mmss(sd["requested"])),
             ("Sessions released", str(sd.get("sessions", 0))),
             ("Finished", f"after {sd['done'] - sd['requested']:.1f} s" if sd.get("done") is not None
              else f"not within {SCALEDOWN_TIMEOUT_TEXT}"),
-            ("Pools", f"{nb} \u2192 {na} ({', '.join(map(str, sd.get('pools_before', []))) or '-'} "
-                      f"\u2192 {', '.join(map(str, sd.get('pools_after', []))) or '-'})"),
+            ("Pools", f"{nb} \u2192 {na} ({', '.join(map(str, sd.get('pools_before', []))) or '-'}"
+                      + (f" + {', '.join(map(str, building))} being built" if building else "")
+                      + f" \u2192 {', '.join(map(str, sd.get('pools_after', []))) or '-'})"),
             ("Pools removed", ", ".join(f"pool {r.pool} ({r.seconds:.1f} s)" for r in removed) or "none"
              + (" (the compose-declared pools cover the spare count; nothing above it was running)"
                 if not removed else ""))]
