@@ -272,6 +272,23 @@ class ProductIds(unittest.TestCase):
             parse_product_ids("<html>", ["a"])
 
 
+class Browsing(unittest.TestCase):
+    def test_windows_look_at_different_pages_and_move_on(self):
+        from core.pool_test_report import BROWSE_PAGES, browse_page
+        firsts = [browse_page(w, 0)[0] for w in range(4)]
+        self.assertEqual(len(set(firsts)), 4)
+        self.assertNotEqual(browse_page(0, 0), browse_page(0, 1))
+        self.assertEqual(browse_page(1, len(BROWSE_PAGES)), browse_page(1, 0))
+        for path, _label in BROWSE_PAGES:   # nothing that changes a cart or logs in
+            self.assertNotRegex(path, r"cart|checkout|account|login|wp-admin")
+
+    def test_action_lists_each_page_once(self):
+        from core.pool_test_report import browse_action
+        self.assertEqual(browse_action([]), "Browses the shop")
+        self.assertEqual(browse_action(["the FAQ", "Stoneware Mug", "the FAQ"]),
+                         "Looks at the FAQ, Stoneware Mug")
+
+
 
 class PoolEvidenceRuntimePools(unittest.TestCase):
     """Pools pool_manager built at runtime are not compose services: reading

@@ -38,7 +38,7 @@ from core import pool_evidence
 from core.pool_test_report import (CART_PLAN, FALLBACK_EXPLOITS, MAX_ATTEMPTS, MAX_WINDOWS,
                                     MIN_WINDOWS, CartState, Decision, ExploitRun, FrameResult,
                                     LoadTiming, PoolTestData, Sample, StepResult, UsageSample,
-                                    classify, parse_cart, parse_decision, parse_product_ids,
+                                    browse_action, browse_page, classify, parse_cart, parse_decision, parse_product_ids,
                                     window_plan)
 from core.resource_stats import collect_pool_usage
 from core.state import AppState
@@ -71,6 +71,9 @@ SCALEDOWN_TIMEOUT_S = 300
 # How long the report waits for pool_manager to build a pool for every window
 # that is still borrowing one (a WordPress pool takes a few minutes).
 SCALE_TIMEOUT_S = 900
+
+# While the report waits for pools, every window opens its next page this often.
+BROWSE_EVERY_S = 10.0
 
 
 # Reads the shop's own cart (WooCommerce Store API) from inside a window, so the
@@ -267,6 +270,8 @@ class PoolTestPage(QWidget):
         # Per frame: the session id from the SERVERID cookie the proxy set it
         # ("<id>.<mac>"), kept up to date from the profile's cookie store.
         self._session_ids = [""] * MAX_WINDOWS
+        self._visits = [0] * MAX_WINDOWS          # pages each window has browsed this run
+        self._seen: list[list[str]] = [[] for _ in range(MAX_WINDOWS)]   # ... this step
         self.set_window_count(MIN_WINDOWS)
 
         # Keeps the labels under the frames current while browsing by hand.
@@ -700,6 +705,25 @@ class PoolTestPage(QWidget):
     def _letter(self, window: int) -> str:
         return FRAMES[window][0][-1]
 
+    # ---- idle windows browse the shop like a shopper would ----
+
+    def _begin_browse(self) -> None:
+        self._seen = [[] for _ in range(MAX_WINDOWS)]
+
+    def _browse_url(self, window: int) -> str:
+        """Next page for a window that has nothing else to do in this step."""
+        path, label = browse_page(window, self._visits[window])
+        self._visits[window] += 1
+        self._seen[window].append(label)
+        return self._base_url() + path
+
+    def _browsed(self, window: int) -> str:
+        return browse_action(self._seen[window])
+
+    def _browse_all(self, step: str) -> None:
+        """Every window opens its next page."""
+        self._load_all([self._browse_url(w) for w in range(len(self.browsers))], step)
+
     def _attack_step(self, n: int, total_steps: int, total: int, windows: list[int],
                      queues: list[list], used: set[str], runs: list[ExploitRun],
                      title: str, detail: str) -> StepResult:
@@ -708,6 +732,7 @@ class PoolTestPage(QWidget):
         never diverts moves on to the next one in its queue -- so each window
         is guaranteed an exploit that does."""
         self._mark(title)
+        self._begin_browse()
         shop = self._base_url() + "/"
         plan = window_plan(self._count)
         state: dict[int, list] = {}     # window -> [preset, attempts, replaced, done]
@@ -731,7 +756,8 @@ class PoolTestPage(QWidget):
             self._progress(f"Step {n}/{total_steps}: " + ", ".join(
                 f"{self._letter(w)} attacks with {state[w][0].cve} (attempt {state[w][1]}/{MAX_ATTEMPTS})"
                 for w in active), n, total)
-            urls = [shop] * len(self.browsers)
+            urls = [shop if w in windows else self._browse_url(w)
+                    for w in range(len(self.browsers))]
             for w in active:
                 urls[w] = self._base_url() + state[w][0].path
             self._load_all(urls, title)
@@ -756,7 +782,7 @@ class PoolTestPage(QWidget):
                         tried[w].add(nxt.cve)
                         used.add(nxt.cve)
                         state[w] = [nxt, 0, True, False]
-        actions = ["Browses the shop"] * len(self.browsers)
+        actions = [self._browsed(w) for w in range(len(self.browsers))]
         for w, (preset, attempts) in last.items():
             actions[w] = f"Opens {preset.cve} ({attempts} attempt(s))"
         return StepResult(title, detail, actions, decisions,
@@ -768,9 +794,10 @@ class PoolTestPage(QWidget):
         every window on the shop again."""
         title = "Honeypot pools scale up"
         self._mark(title)
+        self._begin_browse()
         remote = self._remote()
         before = self._settled_decisions(need_sessions=True)
-        start = time.monotonic()
+        start = last_browse = time.monotonic()
         while True:
             if self._cancelled:
                 raise _Cancelled()
@@ -792,7 +819,10 @@ class PoolTestPage(QWidget):
                            f"{', '.join(waiting)} borrow a pool, building pool(s) {building} "
                            f"({elapsed // 60}:{elapsed % 60:02d}){note}", n, total)
             self._spin(2000)
-        self._load_all([self._base_url() + "/"] * len(self.browsers), title)
+            if time.monotonic() - last_browse >= BROWSE_EVERY_S:
+                self._browse_all(title)
+                last_browse = time.monotonic()
+        self._browse_all(title)
         self._spin(700)
         decisions = self._settled_decisions(need_sessions=True)
         actions = []
@@ -802,7 +832,7 @@ class PoolTestPage(QWidget):
             elif d.waiting:
                 actions.append(f"Still borrowing pool {d.pool} (timed out)")
             else:
-                actions.append("Browses the shop")
+                actions.append(self._browsed(len(actions)))
         return StepResult(
             title,
             "Windows that found no free pool (not scaled up yet) borrowed a ready one "
@@ -827,12 +857,13 @@ class PoolTestPage(QWidget):
         they never will be. Records how long that took."""
         title = f"Pools pre-built for {len(windows)} delayed window(s)"
         self._mark(title)
+        self._begin_browse()
         remote, k = self._remote(), len(windows)
         self._blocking(lambda: redis_inspect.set_pool_reserve(remote, k))
         t_start = self._now()
         reserve = {"requested": k, "start": t_start, "reached": False, "end": None,
                    "free": 0, "reason": ""}
-        start = time.monotonic()
+        start = last_browse = time.monotonic()
         try:
             while True:
                 if self._cancelled:
@@ -862,20 +893,23 @@ class PoolTestPage(QWidget):
                     + (f" — growth capped: {state['capped']}" if state.get("capped") else ""),
                     n, total)
                 self._spin(2000)
+                if time.monotonic() - last_browse >= BROWSE_EVERY_S:
+                    self._browse_all(title)
+                    last_browse = time.monotonic()
         finally:
             # Stop asking for more: the delayed windows are about to take these.
             self._blocking(lambda: redis_inspect.set_pool_reserve(remote, 0))
         self._reserve = reserve
-        self._load_all([self._base_url() + "/"] * len(self.browsers), title)
+        self._browse_all(title)
         self._spin(700)
         decisions = self._settled_decisions(need_sessions=True)
         took = (reserve["end"] or self._now()) - t_start
         outcome = (f"{k} free pool(s) ready after {took:.0f} s" if reserve["reached"]
                    else f"only {reserve['free']} of {k} free pool(s) after {took:.0f} s "
                         f"({reserve['reason']})")
-        actions = ["Browses the shop"] * len(self.browsers)
+        actions = [self._browsed(w) for w in range(len(self.browsers))]
         for w in windows:
-            actions[w] = f"Waits for its pool: {outcome}"
+            actions[w] = f"{actions[w]} while its pool is built: {outcome}"
         return StepResult(
             title,
             f"Before windows {', '.join(self._letter(w) for w in windows)} attack, the test asks "
@@ -975,6 +1009,7 @@ class PoolTestPage(QWidget):
         self._t0 = time.time()
         self._samples, self._loads, self._pending_loads, self._marks = [], [], [], []
         self._reserve = {}
+        self._visits = [0] * MAX_WINDOWS
         sampler = _UsageSampler(target, self._t0, self)
         sampler.start()
         try:
@@ -1016,9 +1051,10 @@ class PoolTestPage(QWidget):
             self._mark("Every window fills its cart")
             slugs = sorted({slug for items in cart_plan for slug, _q in items})
             ids = parse_product_ids(self._run_js(0, product_ids_js(slugs)), slugs)
+            self._begin_browse()
             for k in range(max(len(items) for items in cart_plan)):
                 urls = [f"{self._base_url()}/?add-to-cart={ids[items[k][0]]}&quantity={items[k][1]}"
-                        if k < len(items) else shop for items in cart_plan]
+                        if k < len(items) else self._browse_url(w) for w, items in enumerate(cart_plan)]
                 self._load_all(urls, "Every window fills its cart")
                 self._spin(500)
             decisions = self._settled_decisions(need_sessions=True)
@@ -1026,7 +1062,9 @@ class PoolTestPage(QWidget):
                 "Every window fills its cart",
                 "Each window adds its own products. These carts are the baseline: they must "
                 "look exactly the same after the session is routed to a honeypot pool.",
-                ["Adds " + ", ".join(f"{slug} \u00d7 {q}" for slug, q in items) for items in cart_plan],
+                ["Adds " + ", ".join(f"{slug} \u00d7 {q}" for slug, q in items)
+                 + (", then looks at " + ", ".join(dict.fromkeys(self._seen[w])) if self._seen[w] else "")
+                 for w, items in enumerate(cart_plan)],
                 decisions, [self._grab(b) for b in self.browsers], self._read_carts()))
 
             queues = [self._exploit_queue(i) for i in range(count)]
@@ -1060,14 +1098,15 @@ class PoolTestPage(QWidget):
             # Every window runs a SECOND exploit it has not run yet, all at once.
             next_step("all windows run a second exploit")
             self._mark("All windows run a second exploit")
+            self._begin_browse()
             by_cve = {p.cve: p for p in EXPLOIT_PRESETS}
             second = []
             for w in range(count):
                 own = {r.cve for r in runs if r.window == self._letter(w)}
                 second.append(next((by_cve[c] for c in (plan[w][1], *FALLBACK_EXPLOITS)
                                     if c in by_cve and c not in own), None))
-            self._load_all([self._base_url() + p.path if p else shop for p in second],
-                           "All windows run a second exploit")
+            self._load_all([self._base_url() + p.path if p else self._browse_url(w)
+                            for w, p in enumerate(second)], "All windows run a second exploit")
             self._spin(700)
             decisions = self._settled_decisions(need_sessions=True)
             for i, d in enumerate(decisions):
@@ -1078,7 +1117,7 @@ class PoolTestPage(QWidget):
                 "All windows run a second exploit",
                 "Sticky binding: each second exploit must land in the pool the window already "
                 "owns, nobody changes pool, nobody is merged.",
-                [f"Opens {p.cve}" if p else "Browses the shop" for p in second], decisions,
+                [f"Opens {p.cve}" if p else self._browsed(w) for w, p in enumerate(second)], decisions,
                 [self._grab(b) for b in self.browsers], self._read_carts()))
 
             # Last step: open the cart page in every window -- what a shopper would see.

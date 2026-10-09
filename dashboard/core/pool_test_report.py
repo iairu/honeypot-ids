@@ -47,6 +47,39 @@ CART_PLAN = [[("ceramic-pour-over-dripper", 1), ("paper-filters-size-02", 2)],
              [("insulated-travel-tumbler", 1)],
              [("coffee-lover-gift-box", 1), ("pour-over-starter-kit", 1)]]
 
+# What a window that is not attacking looks at meanwhile, like a shopper would:
+# (path, what the report calls it). Read-only pages only -- nothing here may
+# change a cart or log anyone in.
+BROWSE_PAGES = [("/product/kenya-nyeri-aa/", "Kenya Nyeri AA"),
+                ("/terms-of-service/", "the Terms of Service"),
+                ("/product-category/brewing-gear/", "Brewing Gear"),
+                ("/product/glass-french-press/", "Glass French Press"),
+                ("/shipping-returns/", "Shipping & Returns"),
+                ("/product/ethiopia-guji-natural/", "Ethiopia Guji Natural"),
+                ("/product-category/drinkware/", "Drinkware"),
+                ("/faq/", "the FAQ"),
+                ("/product/stoneware-mug/", "Stoneware Mug"),
+                ("/privacy-policy/", "the Privacy Policy"),
+                ("/product/coffee-club-subscription/", "Coffee Club Subscription"),
+                ("/product-category/coffee/", "Coffee Beans"),
+                ("/about/", "Our Story"),
+                ("/product/sunrise-espresso-blend/", "Sunrise Espresso")]
+
+
+def browse_page(window: int, visit: int) -> tuple[str, str]:
+    """The `visit`-th page window `window` browses while it has nothing else to
+    do. Windows start at different points of BROWSE_PAGES, so they look at
+    different things at the same time."""
+    return BROWSE_PAGES[(window * 3 + visit) % len(BROWSE_PAGES)]
+
+
+def browse_action(labels: list[str]) -> str:
+    """Report text for the pages a window looked at during one step."""
+    if not labels:
+        return "Browses the shop"
+    seen = list(dict.fromkeys(labels))
+    return "Looks at " + ", ".join(seen)
+
 
 def window_plan(windows: int) -> list[tuple[str, str]]:
     """(first, second) exploit per window. Windows A-C use EXPLOIT_PLAN; further
