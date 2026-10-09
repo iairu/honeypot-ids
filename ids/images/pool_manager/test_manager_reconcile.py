@@ -358,6 +358,29 @@ class Reconcile(unittest.TestCase):
             self.mgr.remove_partial_pools()
         self.assertEqual(self.mgr.destroyed, [starting])
 
+    def test_unregistered_dead_pool_is_removed_and_frees_the_budget(self):
+        # Budget for exactly one runtime pool, taken by a pool that never got
+        # healthy (kept at start-up while starting, then failed).
+        self.m.MAX_MEMORY_MB = self.m.POOL_MEM_MB * (self.STATIC + 1)
+        dead, building = self.STATIC + 1, self.STATIC + 2
+        runtime = {dead}
+        self.mgr.runtime_pools = lambda: set(runtime)
+        self.mgr.pool_container_healthy = lambda n: n <= self.STATIC
+        self.mgr.pool_still_starting = lambda n: False
+        gone = self.mgr.destroy
+        self.mgr.destroy = lambda n: (runtime.discard(n), gone(n))
+        self.run_reconcile()
+        self.assertEqual(self.mgr.destroyed, [dead])
+        self.assertIsNone(self.r.get(self.m.CAPPED_KEY))   # the budget is free again
+        for i in range(self.STATIC):
+            self.assign(f"s{i}")
+        self.assign("w0")
+        self.mgr.in_flight.add(building)          # a build of this process is skipped
+        runtime.add(building)
+        self.run_reconcile(finish=False)
+        self.assertEqual(self.mgr.destroyed, [dead])
+        self.mgr.in_flight.discard(building)
+
 
 class ReconcileDatabaseLayer(Reconcile):
     """Database layer: only `honeypot_database` (pool 1) is compose-declared."""

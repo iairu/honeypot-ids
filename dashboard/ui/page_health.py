@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QSplitter, QVBoxLayout, QWidget,
 )
 
+from core import honeypot_layer
 from core.content_sync_status import parse_content_sync_log
 from core.docker_ctl import PROJECT_LABELS
 from core.shell_ctl import build_shell_command
@@ -543,7 +544,10 @@ class HealthPage(QWidget):
             return
 
         lines = ["<b>Content sync activity</b> (parsed from the log tail below):"]
-        for pool_num in (1, 2, 3):
+        # The compose-declared pools (one in the database layer), plus any pool
+        # pool_manager added at runtime that the log mentions.
+        static = (1,) if honeypot_layer.is_database() else (1, 2, 3)
+        for pool_num in sorted(set(static) | set(activity.per_pool)):
             pool = activity.per_pool.get(pool_num)
             if pool is None:
                 lines.append(f"Pool {pool_num}: no data yet")

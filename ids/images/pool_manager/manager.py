@@ -284,6 +284,22 @@ class Manager:
                 log(f"pool {n}: left half-built by an earlier run, removing")
                 self.destroy(n)
 
+    def remove_dead_pools(self) -> None:
+        """Every pass: remove runtime pools that are neither registered nor being
+        built and whose serving container is no longer healthy or starting
+        (e.g. one kept at start-up because it was still starting, that then
+        never became healthy). Such a pool can never be registered, yet it
+        counts against the resource budget, so with a low POOL_MAX_MEMORY_MB /
+        POOL_MAX_CPUS / POOL_MAX it would cap growth for good."""
+        building = set(self.in_flight)   # before READY: a build registers, then leaves in_flight
+        ready = {int(x) for x in self.redis.smembers(READY_KEY)}
+        for n in sorted(self.runtime_pools()):
+            if n <= STATIC_COUNT or n in building or n in ready:
+                continue
+            if not self.pool_container_healthy(n) and not self.pool_still_starting(n):
+                log(f"pool {n}: not healthy and not registered, removing")
+                self.destroy(n)
+
     def pool_still_starting(self, n: int) -> bool:
         """A finished WordPress pool whose eshop is running but not healthy
         yet: after a host reboot Docker restarts it together with this
@@ -726,6 +742,7 @@ class Manager:
     def reconcile(self) -> None:
         self.adopt_static_pools()
         self.adopt_runtime_pools()
+        self.remove_dead_pools()
         self.restore_passwords()
         self.release_idle_pools()
         self.drain_wakeups()
