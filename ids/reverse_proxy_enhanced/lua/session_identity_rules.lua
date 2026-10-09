@@ -115,8 +115,8 @@ function _M.verify(cookie, mac_fn)
 end
 
 -- Every session cookie the proxy rejects (edited, forged, unsigned) is logged
--- to this Redis list, newest first and capped, so a test (the dashboard's
--- Segmentation Validation tampering run) can prove the rejection happened.
+-- to this Redis list, newest first and capped, so a test can prove the
+-- rejection happened.
 -- A list rather than a key per cookie: a client inventing cookies can't grow
 -- Redis beyond REJECTIONS_MAX entries.
 _M.REJECTIONS_KEY = "session_cookie_rejections"

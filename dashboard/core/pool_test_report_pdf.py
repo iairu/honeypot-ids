@@ -7,7 +7,7 @@ core/exploit_report_pdf.py."""
 from __future__ import annotations
 
 from PyQt6.QtCore import QMarginsF, QPointF, QRectF, QSizeF, Qt, QUrl
-from PyQt6.QtGui import QFont, QFontMetrics, QPageLayout, QPageSize, QPainter, QPen
+from PyQt6.QtGui import QFont, QFontMetrics, QPageLayout, QPageSize, QPainter, QPen, QPolygonF
 from PyQt6.QtPrintSupport import QPrinter
 from PyQt6.QtGui import QColor, QTextDocument
 
@@ -18,7 +18,9 @@ from core.exploit_report_pdf import (_FONT_CSS_STACK, _GREEN, _GREY, _ORANGE, _R
 from core.pool_test_report import (BORROWED, CART_LOST, EXCLUSIVE, INCOMPLETE, MERGED, OWN,
                                    PRODUCTION, SHARED, SHARED_EXPECTED, STATES, UNSTABLE,
                                    PoolTestData, ScalingSummary, Verdict, _quantile, analyze,
-                                   cart_violations, load_stats, scaling_summary, usage_at)
+                                   CART_CHANGED, CART_CLEARED, CART_NONE, CART_RESTORED, CART_SAME,
+                                   CART_UNREADABLE, cart_marks, cart_resets, load_stats, scaling_summary,
+                                   usage_at)
 
 _STATUS_COLOR = {EXCLUSIVE: _GREEN, SHARED_EXPECTED: _ORANGE, INCOMPLETE: _GREY, MERGED: _RED,
                  CART_LOST: _RED, UNSTABLE: _ORANGE}
@@ -110,37 +112,50 @@ def _cart_section_html(data: PoolTestData) -> str:
     identical wherever the session is routed."""
     if not data.steps or not any(st.carts for st in data.steps):
         return ""
-    base: dict[int, object] = {}
+    marks, issues, notes = cart_marks(data.steps, cart_resets(data.cleared))
+    cleared_before = {}
+    for e in data.cleared:
+        if e.clears_cookies():
+            cleared_before.setdefault((e.step, e.window), e)
+    badge = {CART_UNREADABLE: ("unreadable", _GREY), CART_NONE: ("no cart yet", _GREY),
+             CART_CLEARED: ("empty since its cookies were cleared", _GREY),
+             CART_RESTORED: ("cart back after clearing", _BLUE_INK),
+             CART_SAME: ("same cart", _GREEN), CART_CHANGED: ("CART CHANGED", _RED)}
     rows = []
-    for step in data.steps:
+    for n, (step, row) in enumerate(zip(data.steps, marks)):
         cells = []
-        for i, c in enumerate(step.carts):
-            if c is not None and c.items and i not in base:
-                base[i] = c
-            ref = base.get(i)
+        for i, mark in enumerate(row):
             d = step.decisions[i] if i < len(step.decisions) else None
             where = (f"pool {d.pool}" if d is not None and d.pool is not None else "production")
-            if c is None:
-                mark = _badge("unreadable", _GREY)
-            elif ref is None:
-                mark = _badge("no cart yet", _GREY)
-            elif c.signature() == ref.signature():
-                mark = _badge("same cart", _GREEN)
-            else:
-                mark = _badge("CART CHANGED", _RED)
-            cells.append(f'<td>{mark}<br/><span style="font-size:8pt;color:#555;">on {_esc(where)}</span></td>')
+            text, color = badge[mark]
+            flag = ('<br/><span style="font-size:8pt;color:#1565c0;"><b>&#9670; cookies cleared '
+                    'before this step</b></span>' if (n, i) in cleared_before else "")
+            cells.append(f'<td>{_badge(text, color)}{flag}<br/>'
+                         f'<span style="font-size:8pt;color:#555;">on {_esc(where)}</span></td>')
         rows.append(f'<tr><td>{_esc(step.title)}</td>{"".join(cells)}</tr>')
     head = "".join(f"<th>{_esc(f.label)}</th>" for f in data.frames)
-    issues = cart_violations(data.steps)
-    verdict = ('<p style="color:#2e7d32;"><b>Every cart stayed exactly as filled, on production and in '
-               'every honeypot pool.</b></p>' if not issues else
+    ok = ('Every cart stayed exactly as filled, on production and in every honeypot pool.'
+          if not cleared_before else
+          'Every cart stayed exactly as filled, on production and in every honeypot pool, until its '
+          'window cleared its cookies; from then on it held only what the window had after clearing.')
+    verdict = (f'<p style="color:#2e7d32;"><b>{ok}</b></p>' if not issues else
                '<ul style="color:#c62828;">' + "".join(f"<li>{_esc(x)}</li>" for x in issues) + "</ul>")
+    if notes:
+        verdict += ('<ul style="color:#555;">' + "".join(f"<li>{_esc(x)}</li>" for x in notes) + "</ul>")
+    clearing = ('' if not cleared_before else
+                '<p style="color:#555;">Where a window cleared its cookies (marked &#9670;), WooCommerce\'s '
+                'cart cookie went with them, so the cart it filled is gone from the browser from that step '
+                'on and an empty cart there is expected. If a cart shows up again after that, the browser '
+                'did not bring it back: the stack restored it, and the report notes it below the table. '
+                'That restored cart is then the one the later steps are compared with. Clearing only localStorage or '
+                'sessionStorage leaves the cart cookie in place, so the cart must stay as it was.</p>')
     return ('<h2 style="color:#222;">Cart persistence</h2>'
             '<p style="color:#555;">A visitor diverted to a honeypot is served by a different database, so '
             'WooCommerce\'s own cart session does not exist there. The storefront therefore carries the '
             'cart in a cookie and rebuilds it on whichever instance serves the next request. Each window '
             'filled its cart on production; the cart was then read back after every step, through the same '
             'cookies and routing as the window\'s own traffic.</p>'
+            + clearing +
             '<table width="100%" cellspacing="0" cellpadding="4" border="1" style="border-collapse:collapse;">'
             f'<tr><th>Step</th>{head}</tr>' + "".join(rows) + '</table>' + verdict)
 
@@ -176,6 +191,53 @@ def _steps_html(data: PoolTestData, doc: QTextDocument) -> str:
             'style="border-collapse:collapse;">'
             f'<tr>{head}</tr><tr>{acts}</tr><tr>{decs}</tr>' + (f'<tr>{carts}</tr>' if carts else '') + f'<tr>{imgs}</tr></table>')
     return "".join(out)
+
+
+def _cleared_html(data: PoolTestData) -> str:
+    """Every time a window cleared its own browser data, and what the stack did
+    with it afterwards -- reported as observed, not judged."""
+    if data.clear_seed is None:
+        return ""
+    intro = ('<h2 style="color:#222;">Windows clearing their browser data</h2>'
+             '<p style="color:#555;">Between steps, random windows cleared their own data the way a '
+             'regular visitor does from the browser\'s settings: every cookie of the site, its '
+             'localStorage and sessionStorage, or both. Nothing was forged or rewritten. The table '
+             'shows what each window had before, and the session and route the stack gave it once '
+             'the next step settled. A window that lost its cookies also lost WooCommerce\'s cart '
+             f'cookie, so its cart starts over there. Random seed: {data.clear_seed}.</p>')
+    if not data.cleared:
+        return intro + '<p style="color:#777;">No window cleared its data in this run.</p>'
+
+    def where(pool, route):
+        if pool is not None:
+            return f"pool {pool}"
+        return "production" if route in ("", "PRODUCTION") else route.lower()
+    rows = []
+    for e in data.cleared:
+        label = data.frames[e.window].label if e.window < len(data.frames) else f"Window {e.window + 1}"
+        step = data.steps[e.step].title if e.step < len(data.steps) else "?"
+        before = f"{_short(e.before_session)}<br/>{_esc(where(e.before_pool, ''))}"
+        if not e.resolved:
+            after, badge = "&ndash;", _badge("not observed", _GREY)
+        else:
+            after = f"{_short(e.after_session)}<br/>{_esc(where(e.after_pool, e.after_route))}"
+            badge = (_badge("same session", _BLUE_INK) if e.same_session()
+                     else _badge("fresh session", _BLUE_INK) if e.after_session
+                     else _badge("no session", _GREY))
+        rows.append(
+            f'<tr><td>{_mmss(e.t)}</td><td>{e.step + 1}: {_esc(step)}</td><td><b>{_esc(label)}</b></td>'
+            f'<td>{_esc(e.what())}<br/><span style="font-size:8pt;color:#555;">{_esc(e.removed())}</span></td>'
+            f'<td style="font-size:8pt;">{before}</td><td style="font-size:8pt;">{after}</td>'
+            f'<td>{badge}<br/><span style="font-size:8pt;color:#555;">{_esc(e.outcome())}</span></td></tr>')
+    same = sum(1 for e in data.cleared if e.resolved and e.same_session())
+    fresh = sum(1 for e in data.cleared if e.resolved and e.after_session and not e.same_session())
+    summary = (f'<p style="color:#555;">{len(data.cleared)} clearing(s): {same} kept their session, '
+               f'{fresh} got a fresh one.</p>')
+    return (intro + summary
+            + '<table width="100%" cellspacing="0" cellpadding="4" border="1" '
+            'style="border-collapse:collapse; color:#333;"><tr><th>Time</th><th>Before step</th>'
+            '<th>Window</th><th>Cleared</th><th>Session before</th><th>Session after</th>'
+            '<th>What the stack did</th></tr>' + "".join(rows) + '</table>')
 
 
 def _runs_html(data: PoolTestData) -> str:
@@ -237,7 +299,7 @@ def _evidence_html(data: PoolTestData) -> str:
 
 def render_pdf(data: PoolTestData, out_path: str) -> Verdict:
     family = _report_font_family()
-    verdict = analyze(data.frames, data.pool_state, data.steps)
+    verdict = analyze(data.frames, data.pool_state, data.steps, data.cleared)
     owners = {f.pool: f.label[-1] for f in data.frames if f.pool is not None}
     verdict.findings.extend(pool_evidence.cross_traffic(data.evidence, owners))
     summ = scaling_summary(data)
@@ -261,7 +323,10 @@ def render_pdf(data: PoolTestData, out_path: str) -> Verdict:
              f'Generated: {_esc(data.generated_at)}<br/>'
              f'Target: {_esc(data.target_label)} &nbsp; ({_esc(data.base_url)})<br/>'
              f'Exploits: {_esc(data.exploit)}<br/>'
-             f'Windows: {len(data.frames)}</td></tr></table><hr/>',
+             f'Windows: {len(data.frames)}<br/>'
+             'Browser data cleared: ' + (f'{len(data.cleared)} time(s), in random windows'
+                                         if data.clear_seed is not None else 'off')
+             + '</td></tr></table><hr/>',
              '<h2 style="color:#222;">Result</h2>',
              f'<p>{_badge(verdict.status.replace("_", " ").upper(), _STATUS_COLOR.get(verdict.status, _RED))} '
              f'&nbsp;<b>{_esc(verdict.headline)}</b></p>',
@@ -286,6 +351,7 @@ def render_pdf(data: PoolTestData, out_path: str) -> Verdict:
         width=640))
     parts.append('<h2 style="color:#222;">Windows</h2>')
     parts.append(_frames_table(data))
+    parts.append(_cleared_html(data))
     scaling, _next_fig = _scaling_html(data, doc, family, 2)
     parts.append(scaling)
     parts.append(_round_robin_html(data))
@@ -490,6 +556,8 @@ def scaling_timeline_figure(data: PoolTestData, summ: ScalingSummary, family: st
         items.append(("#b0bec5", "build: create / register"))
     if removals:
         items.append((_REMOVED, "pool removed (scale-down)"))
+    if data.cleared:
+        items.append((_INK, "window cleared its browser data (diamond)"))
     H = int(_legend(None, ml, plot_bottom + 24, items, family, plot_w)) + 8
 
     img, p = vector_figures.new_figure(W, H)
@@ -533,6 +601,14 @@ def scaling_timeline_figure(data: PoolTestData, summ: ScalingSummary, family: st
             _bar(p, X(t0), X(t1), y, bar_h, _STATE_FILL[state])
             if pool is not None:
                 _text_in(p, X(t0), X(t1), y, bar_h, f"pool {pool}", _STATE_INK[state], family)
+        for e in data.cleared:
+            if e.window == w:   # a small black diamond where the window cleared its data
+                x = X(e.t)
+                p.setPen(QPen(QColor("#ffffff"), 1))
+                p.setBrush(QColor(_INK))
+                p.drawPolygon(QPolygonF([QPointF(x, y - 2), QPointF(x + 5, y + bar_h / 2),
+                                         QPointF(x, y + bar_h + 2), QPointF(x - 5, y + bar_h / 2)]))
+                p.setBrush(Qt.BrushStyle.NoBrush)
 
     # Build rows.
     if builds or removals:
@@ -855,7 +931,9 @@ def _scaling_html(data: PoolTestData, doc: QTextDocument, family: str, fig: int)
         "orange: a borrowed pool while its own was being built, red: shared because the "
         "resource limit was reached), and every pool built during the run, its phases shaded "
         "dark to light. Dashed grey arrows: a finished pool handed to the window that waited "
-        "for it. Numbered dotted lines: the steps below.", width=640))
+        "for it. Numbered dotted lines: the steps below."
+        + (" Black diamonds: a window cleared its browser data." if data.cleared else ""),
+        width=640))
     fig += 1
     if builds_done:
         out.append(diagrams.figure_html(
