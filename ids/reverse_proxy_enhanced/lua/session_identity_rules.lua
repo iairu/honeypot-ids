@@ -114,6 +114,41 @@ function _M.verify(cookie, mac_fn)
     return id, "valid"
 end
 
+-- Every session cookie the proxy rejects (edited, forged, unsigned) is logged
+-- to this Redis list, newest first and capped, so a test (the dashboard's
+-- Segmentation Validation tampering run) can prove the rejection happened.
+-- A list rather than a key per cookie: a client inventing cookies can't grow
+-- Redis beyond REJECTIONS_MAX entries.
+_M.REJECTIONS_KEY = "session_cookie_rejections"
+_M.REJECTIONS_MAX = 1000
+
+--- What to log about a rejected session cookie.
+---
+--- @param  cookie       string    The cookie's value as received.
+--- @param  status       string    verify()'s status ("malformed" | "bad_signature").
+--- @param  now          number    Epoch seconds.
+--- @param  hash_fn      function  hash_fn(s) -> hex digest; the cookie itself is
+---                                never stored, only its hash (a test matches it
+---                                against the value it planted).
+--- @param  scored       boolean   Whether the rejection was scored as tampering
+---                                (only with a stable signing key).
+--- @param  tamper_score number    Score added when scored.
+--- @param  fingerprint  string|nil  The request's recovery fingerprint.
+--- @return table
+function _M.rejection_record(cookie, status, now, hash_fn, scored, tamper_score, fingerprint)
+    local claimed = type(cookie) == "string" and cookie:match("^([^.]*)") or nil
+    return {
+        at = now,
+        status = status,
+        cookie_sha1 = hash_fn(type(cookie) == "string" and cookie or ""),
+        -- The session id the cookie claimed, when it has the shape of one.
+        claimed_id = _M.is_valid_id(claimed) and claimed or "",
+        scored = scored and true or false,
+        score = scored and (tamper_score or 0) or 0,
+        fingerprint = fingerprint or "",
+    }
+end
+
 --- Canonical string the recovery fingerprint is a hash of.
 ---
 --- @param  fields  table    Values keyed by FINGERPRINT_FIELDS names, plus

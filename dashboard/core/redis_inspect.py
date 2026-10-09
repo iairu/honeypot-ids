@@ -431,3 +431,11 @@ def request_scaledown(remote: RemoteConfig | None, session_ids: list[str], ttl: 
               "redis.call('SET', KEYS[2], '1', 'EX', ARGV[1]) return 1")
     _run_redis_cli(remote, "EVAL", script, "2", "honeypot_pool:release",
                    "honeypot_pool:scaledown_now", str(ttl), *session_ids, timeout=timeout)
+
+
+def cookie_rejections(remote: RemoteConfig | None, timeout: float = 15.0) -> list[str]:
+    """The proxy's log of rejected session cookies (session_cookie_rejections,
+    newest first, one JSON object per line; see session_identity_rules.lua) --
+    how the tampering run proves a forged cookie was refused."""
+    return _run_redis_cli(remote, "LRANGE", "session_cookie_rejections", "0", "-1",
+                          timeout=timeout).splitlines()

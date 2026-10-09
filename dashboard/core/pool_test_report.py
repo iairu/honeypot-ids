@@ -100,6 +100,7 @@ MERGED = "merged"
 INCOMPLETE = "incomplete"
 UNSTABLE = "unstable"
 CART_LOST = "cart_lost"
+TAMPER_MISSED = "tamper_missed"
 
 
 @dataclass
@@ -191,13 +192,160 @@ def parse_cart(store_api_json: str) -> CartState | None:
         return None
 
 
-def cart_violations(steps: list["StepResult"]) -> list[str]:
+# ---- session tampering ------------------------------------------------------
+#
+# With tampering on, the run makes random windows attack their own session
+# between steps, the way an attacker would try to shed or swap it:
+#   DELETE  clear the session cookie and/or the browser storage. The proxy must
+#           re-identify the window by its passive fingerprint and hand it back
+#           the SAME session (and so the same pool).
+#   FORGE   rewrite the session cookie (and localStorage) to a session the
+#           server never signed. The proxy must reject it as not server-signed
+#           (session_cookie_rejections in Redis) and never serve the claimed
+#           session -- in particular not another window's.
+
+DELETE, FORGE = "delete", "forge"
+TAMPER_KINDS = (DELETE, FORGE)
+
+# Variants, picked at random per event: (key, report text).
+DELETE_VARIANTS = [("session_cookie", "deleted its SERVERID session cookie"),
+                   ("storage", "cleared its localStorage and sessionStorage"),
+                   ("all", "cleared all site data (every cookie, localStorage, sessionStorage)")]
+FORGE_VARIANTS = [("invented", "rewrote its session to an invented session id with a made-up signature"),
+                  ("hijack", "rewrote its session to another window's session id with a made-up signature"),
+                  ("unsigned", "stripped the signature off its own session id")]
+VARIANT_TEXT = dict(DELETE_VARIANTS + FORGE_VARIANTS)
+
+# Chance that a step in the tampering phase gets a tamper event.
+TAMPER_CHANCE = 0.5
+
+
+def tamper_schedule(steps: list[int], kinds: list[str], rng) -> dict[int, list[str]]:
+    """{step number: [kind, ...]} -- which tampering happens before which step.
+    Each step gets one event with TAMPER_CHANCE; every enabled kind is then
+    guaranteed at least one event, so the report always has evidence for it."""
+    if not steps or not kinds:
+        return {}
+    out: dict[int, list[str]] = {}
+    for n in steps:
+        if rng.random() < TAMPER_CHANCE:
+            out.setdefault(n, []).append(rng.choice(kinds))
+    for kind in kinds:
+        if not any(kind in ks for ks in out.values()):
+            out.setdefault(rng.choice(steps), []).append(kind)
+    return out
+
+
+@dataclass
+class TamperEvent:
+    """One tampering a window did to its own session, and what the proxy made of it."""
+    t: float                      # seconds since the run started
+    window: int
+    step: int                     # index into PoolTestData.steps of the step it happened in
+    kind: str                     # DELETE | FORGE
+    variant: str                  # a key of DELETE_VARIANTS / FORGE_VARIANTS
+    before_session: str           # the window's genuine session id
+    before_pool: int | None = None
+    planted: str = ""             # FORGE: the cookie value written into the window
+    claimed_session: str = ""     # FORGE: the other session that cookie claimed ("" for
+                                  # "unsigned", which claims the window's own id)
+    victim: int | None = None     # FORGE hijack: the window whose session was claimed
+    after_session: str = ""       # session id the proxy handed the window afterwards
+    after_pool: int | None = None
+    resolved: bool = False        # the window has loaded a page since, and was read back
+    rejected: bool | None = None  # FORGE: found in the proxy's rejected-cookie log
+    rejection_status: str = ""    # "bad_signature" | "malformed"
+    scored: bool | None = None    # FORGE: rejection scored as tampering (stable signing key)
+    score: int = 0
+
+    def reidentified(self) -> bool:
+        """Back in its own session: the fingerprint (or the untouched cookie) won."""
+        return bool(self.before_session) and self.after_session == self.before_session
+
+    def caught(self) -> bool:
+        if not self.resolved:
+            return False
+        if self.kind == DELETE:
+            return self.reidentified()
+        # A forged session must be rejected and never served.
+        return bool(self.rejected) and not (self.claimed_session
+                                            and self.after_session == self.claimed_session)
+
+    def what(self) -> str:
+        text = VARIANT_TEXT.get(self.variant, self.variant)
+        if self.kind == FORGE and self.victim is not None:
+            text = text.replace("another window's", f"window {self.victim + 1}'s")
+        return text
+
+    def outcome(self) -> str:
+        """Plain-language result for the report."""
+        if not self.resolved:
+            return "not checked: the window loaded no page after it before the run ended"
+        if self.kind == DELETE:
+            if self.reidentified():
+                return ("re-identified: handed back its own session"
+                        + (f" (pool {self.after_pool})" if self.after_pool is not None else ""))
+            if not self.after_session:
+                return "MISSED: the window got no session back"
+            return "MISSED: the window was given a new session, its old one was lost"
+        parts = []
+        if self.rejected:
+            parts.append(f"rejected as not server-signed ({self.rejection_status.replace('_', ' ')})")
+            if self.scored:
+                parts.append(f"scored as tampering (+{self.score})")
+        else:
+            parts.append("MISSED: the proxy never logged the cookie as rejected")
+        if self.claimed_session and self.after_session == self.claimed_session:
+            parts.append("MISSED: the proxy served the forged session")
+        elif self.reidentified():
+            parts.append("re-identified to its own session")
+        elif self.after_session:
+            parts.append("given a new session")
+        return "; ".join(parts)
+
+
+def parse_rejections(lines: list[str]) -> list[dict]:
+    """The proxy's rejected-cookie log (session_cookie_rejections, one JSON per line)."""
+    out = []
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(r, dict) and r.get("cookie_sha1"):
+            out.append(r)
+    return out
+
+
+def match_rejection(planted: str, rejections: list[dict]) -> dict | None:
+    """The log entry for the cookie value a window planted, if the proxy logged it."""
+    import hashlib
+    digest = hashlib.sha1(planted.encode()).hexdigest()
+    return next((r for r in rejections if r.get("cookie_sha1") == digest), None)
+
+
+def cart_resets(tamper: list[TamperEvent] | None) -> set[tuple[int, int]]:
+    """(step index, window) where the window wiped all its site data: WooCommerce's
+    own cart cookie went with it, so an emptied cart there is expected."""
+    return {(e.step, e.window) for e in tamper or [] if e.kind == DELETE and e.variant == "all"}
+
+
+def tamper_findings(tamper: list[TamperEvent] | None) -> list[str]:
+    """One line per tampering the proxy did not catch."""
+    return [f"Window {e.window + 1} {e.what()} and the stack did not catch it: {e.outcome()}."
+            for e in tamper or [] if e.resolved and not e.caught()]
+
+
+def cart_violations(steps: list["StepResult"], resets: set[tuple[int, int]] | None = None) -> list[str]:
     """Carts must stay exactly as filled, however the session is routed. The
-    baseline is each window's cart in the first step that has one."""
+    baseline is each window's cart in the first step that has one, and starts
+    over where `resets` (see cart_resets()) says the window wiped its cookies."""
     out = []
     base: dict[int, tuple[CartState, str]] = {}
-    for step in steps:
+    for n, step in enumerate(steps):
         for i, c in enumerate(step.carts):
+            if resets and (n, i) in resets:
+                base.pop(i, None)
             if c is None:
                 if i in base:
                     out.append(f"Window {i + 1}: cart could not be read in '{step.title}'.")
@@ -327,6 +475,10 @@ class PoolTestData:
     # The forced scale-down at the end: {"requested", "done" (None = timed out),
     # "sessions", "pools_before", "pools_after", "idle_timeout"}
     scaledown: dict = field(default_factory=dict)
+    # Session tampering (empty when it was switched off).
+    tamper: list[TamperEvent] = field(default_factory=list)
+    tamper_kinds: list[str] = field(default_factory=list)   # what was switched on
+    tamper_seed: int | None = None
 
 
 def classify(batch: list[Sample]) -> list[str]:
@@ -563,11 +715,20 @@ def sharing_justified(state: dict) -> bool:
     return not state.get("free") and bool(ready) and all(owners.get(n, 0) >= 1 for n in ready)
 
 
-def analyze(frames: list[FrameResult], state: dict, steps: list[StepResult] | None = None) -> Verdict:
+def analyze(frames: list[FrameResult], state: dict, steps: list[StepResult] | None = None,
+            tamper: list[TamperEvent] | None = None) -> Verdict:
     by_pool: dict[int, list[str]] = {}
     for f in frames:
         if f.pool is not None:
             by_pool.setdefault(f.pool, []).append(f.label)
+
+    # First: a forged session the proxy accepted also shows up as a merge or a
+    # pool change below, and this says why.
+    missed = tamper_findings(tamper)
+    if missed:
+        pools = ", ".join(f"{f.label} \u2192 pool {f.pool}" for f in frames)
+        return Verdict(TAMPER_MISSED, "A tampered session was not caught",
+                       missed + [pools + "."] + sticky_violations(steps or []), by_pool)
 
     seen: dict[str, str] = {}
     merged: list[str] = []
@@ -603,7 +764,7 @@ def analyze(frames: list[FrameResult], state: dict, steps: list[StepResult] | No
         moved.append("Some windows were already diverted before attacking (step 1): the host "
                      "IP carries bad reputation from earlier tests. Use 'Unpoison host IP' on "
                      "the Attack Simulation page and run the report again.")
-    cart_issues = cart_violations(steps or [])
+    cart_issues = cart_violations(steps or [], cart_resets(tamper))
     shared = {n: labels for n, labels in by_pool.items() if len(labels) > 1}
     if not shared and cart_issues:
         pools = ", ".join(f"{f.label} \u2192 pool {f.pool}" for f in frames)
